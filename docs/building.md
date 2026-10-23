@@ -51,13 +51,19 @@ Update in Settings disposes the old revision and applies the new one in the same
 - Registrations made through the services (`ctx.pages.register`, `ctx.shortcuts.register`, `ctx.agents.register`, ...) are removed by Buzz when the plugin's scope ends.
 - Test it: disable and enable the plugin several times, then count listeners, nodes, timers and observers after a forced GC. The counts must not grow (`plugins/vim/test/leak.spec.mjs` does this).
 
-## 4. No network, no keys, no eval
+## 4. No network, no keys, no eval (one reviewed exception)
 
-- No `fetch`, WebSocket or remote media from a plugin.
-- No keys, tokens or secrets in a plugin, its settings or its logs.
-- No `eval`, `new Function` or code loaded from strings.
+The rule: no `fetch`, WebSocket or remote media from a plugin; no keys, tokens or secrets in a plugin, its settings or its logs; no `eval`, `new Function` or code loaded from strings.
 
-Plugins run unsandboxed in the app's own page, so these are our rules, not something Buzz enforces. A plugin that needs more is a different design and gets reviewed as one.
+Plugins run unsandboxed in the app's own page, so these are our rules, not something Buzz enforces. The exception is a **connector**: a plugin whose whole job is to show or change something in one outside service. It may reach the network and hold a credential only if all of this holds:
+
+- **One declared origin.** The manifest names the service's exact origin in `host.networkOrigins` (for example `https://api.example.com`), and the plugin reaches it only through `ctx.host.request`, Buzz's own HTTP client, which refuses any other origin and follows no redirects. Never `fetch`, WebSocket or a remote image from the page; show initials instead of avatars. The install review lists the origin, so a reader sees it before installing.
+- **The user's own credential, and nothing else.** The user pastes their own key in the plugin's settings card. The plugin carries no key of its own, and none is in the repository, the manifest, a build, a fixture, a screenshot or a test log. Tests use a made-up key against a fake server.
+- **Stored plainly and said plainly.** Buzz has no credential store for plugins, so the key sits in the app profile's `localStorage` under the plugin's id, in plain text, and any other installed plugin could read it. The plugin's README says that in so many words and recommends a key with only the scopes the plugin needs.
+- **Never shown, never logged.** After saving, the key is not rendered anywhere (the card says "Key saved" with Replace and Remove). It goes into one request header and nowhere else: not a URL, a console message, an error message, a stack or a trace. Network errors from the host are replaced with generic text before they are shown, since they can name the request.
+- **A test says so.** The browser spec proves the key is not in the page after saving, not in the console, and that nothing reaches the service except through the host. The unit tests check that no error carries it.
+
+A plugin that needs more (several origins, a credential that is not the user's own, a secret held for others, a server of its own) is a different design and gets reviewed as one. [`plugins/linear`](../plugins/linear) is the worked example.
 
 ## 5. Measure before and after big changes
 

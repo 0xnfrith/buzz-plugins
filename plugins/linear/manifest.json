@@ -1,0 +1,13 @@
+{
+  "id": "megatech.linear",
+  "name": "Linear",
+  "apiVersion": 1,
+  "description": "Your Linear board inside Buzz: a column for each workflow state, drag a card to change its state.",
+  "discovery": {
+    "category": "developer-tools-and-integrations",
+    "tags": ["Linear", "Kanban", "Issues"]
+  },
+  "host": {
+    "networkOrigins": ["https://api.linear.app"]
+  }
+}

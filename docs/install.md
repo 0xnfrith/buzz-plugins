@@ -23,7 +23,7 @@ Buzz remembers the folder. When the files in it change, the plugin's details sho
 
 Notes:
 
-- In this repository the list shows the folders under `plugins/`: `plugins/vim` (Vim mode) and `plugins/key-probe` (a measuring tool used by the vim tests; you do not need it).
+- In this repository the list shows the folders under `plugins/`: `plugins/vim` (Vim mode), `plugins/linear` (Linear board) and `plugins/key-probe` (a measuring tool used by the vim tests; you do not need it).
 - Folders with a `manifest.json` but no built `plugin.js` are listed under **Folders skipped** ("No built plugin.js beside manifest.json; build the plugin first").
 - Do not paste a GitHub `tree/...` URL (a link to a folder on a branch). Buzz rejects it before cloning. Give the repository, and the branch or tag in its own field.
 - Each plugin installs and updates on its own. Its details pane shows its source (repository, branch or tag, and path) and a **Check for updates** button. Git is only checked when you press it; Buzz does not follow the repository by itself.

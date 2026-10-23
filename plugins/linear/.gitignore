@@ -1,0 +1,3 @@
+node_modules/
+test/fake-linear/schema.graphql
+test/real-app/out/
