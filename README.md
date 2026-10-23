@@ -43,3 +43,7 @@ Start from Block's own starter (`buzzodz plugin init`, see [Block's plugin docs]
 ## Credits
 
 Buzz is made by [Block](https://github.com/block/buzz-app). Everything here is by [0xnfrith](https://github.com/0xnfrith).
+
+## License
+
+Apache License 2.0, the same license as Buzz. See [`LICENSE`](LICENSE).
