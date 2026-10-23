@@ -1,0 +1,430 @@
+# Vim mode for Buzz: what the plugin API reaches
+
+The question was whether a vim-mode plugin is possible, and what trying it teaches about the plugin system. This file is the answer. The plugin itself is `plugin.js` in this folder.
+
+Everything below was read from block/buzz-app at commit `d92bfb2c` (main, 2026-10-22) and checked by running the plugin in that app's own browser test harness. See "What was and was not verified" before trusting any claim about a Mac.
+
+## Verdict
+
+A useful vim mode is possible, but only partly through the plugin API. Roughly half of what a vim user expects works through documented services (keys, modes, pages, channel navigation, opening a thread, focusing the message box). The rest needs the plugin to reach into the app's markup, which works today because plugins are not sandboxed, but which is unsupported and will break when Block changes its components. Switching communities is the clearest case: no service reaches them at all, so the plugin drives the community switcher the way a pointer would.
+
+| Vim behaviour | Works? | How it gets there |
+| --- | --- | --- |
+| Normal and insert mode | Yes | Mode follows focus. The shortcut service already refuses plain keys while a text box has focus, so insert mode is "a text box is focused" and normal mode is everything else. API. |
+| Plain-key bindings (`j`, `k`, `h`, `l`, `g`, `G`, `[`, `]`, `/`, `?`, digits) | Yes | `shortcuts.register` accepts a bare key. API. |
+| Counts (`5j`) and `gg` | Yes | The service has no chords or sequences, so the plugin keeps its own pending-key state and registers each digit and `g` separately. API. |
+| `i` / `a`: focus the message box | Yes | A composer tool receives a documented `focus()` command. The plugin registers an invisible tool and calls that command. API. |
+| Switch channel (`l` on a channel, `[`, `]`) | Yes | `navigation.open({ kind: "conversation", ... }, { focus: "preserve" })`. API. The channel ids and the order of the channel list come from the sidebar markup (DOM). |
+| Esc: leave the message box | Yes | A shortcut with `allowInEditable`, plus `blur()` on the text box. API plus DOM. In a thread pane it needs a capture-phase listener (see below). |
+| `j` / `k` through messages | Yes, as DOM | The host has no "selected message". The plugin keeps a cursor id for each message pane (the channel's list and a thread's list), paints it with a CSS rule keyed by `data-message-id`, and scrolls the row into view. With a thread beside the channel, the pane that has the keys gets a 2px accent line under its header and a strong cursor row; the other pane's row goes faint. DOM. |
+| `gg`, `G`, `Ctrl-d`, `Ctrl-u` | Yes, as DOM | Scrolls the timeline element. DOM. |
+| `h` / `l`: move focus between channel list, message list, thread pane | Yes, as DOM | Finds each region by its `data-*` markers and calls `focus()`. DOM. |
+| `/` search | Yes, indirectly | Presses the host's own Cmd/Ctrl+F by dispatching a synthetic `keydown` on the window. The host's dispatcher does not check `isTrusted`. |
+| Switch community (`{`, `}`, `C`) | Yes, as DOM only | No service lists or selects communities. The plugin clicks the switcher's trigger, reads its rows, clicks one, and hides the popover with CSS meanwhile. DOM. |
+| Go to a page (`gt`, `gT`, `gi`, `gm`, ...) and Settings (`gs`) | Yes | `pages.snapshot()` lists the primary pages and `navigation.open` opens one. Settings is a navigation target (`{ version: 1, kind: "settings", scope }`, the call the host's own settings shortcut makes). API. The order the app shows them in is shell policy and is copied into the plugin. |
+| Reply to, or open the menu of, the message under the cursor (`r`, `m`) | Yes, as DOM only | The row's action bar is built lazily. A synthetic Tab keydown on `window` (the host's own "keyboard user" signal) builds it on every row, and the plugin clicks Reply or More. DOM. |
+| `j` / `k` inside the host's menus and the community switcher | Yes, as DOM | Moves focus along the roving list, like the host's arrow keys. |
+| Open the thread of the message under the cursor (`o`, Enter) | Yes, API plus DOM | The relay read model says which thread the message belongs to and `navigation.open` opens it, wherever the user's "Open threads in" setting puts threads. API. Moving focus into the new thread is DOM. |
+| Close the thread (`q`) | Yes, as DOM only | Sends the window event the native Close Tab menu (Cmd+W) sends. DOM. |
+| Hide or show the thread pane (`zc`, `zo`) | Yes, as DOM only | Clicks the pane's own toggle button. The threads stay open. DOM. |
+| Widen, narrow, widest, reset the thread pane (`>`, `<`, `\|`, `=`) | Yes, as DOM only | Sends the host's own keyboard commands to the split handle. No API reaches a pane's size. DOM. |
+| Vim inside the message box (caret motions, `x`, `dd`, `dw`, `u`) | Yes, DOM only, on by default | A capture-phase `keydown` listener plus `Selection.modify` and `execCommand`. The Vim mode page has a switch for it. Chromium only so far. |
+| Visual mode in the message box (`v`, `V`, motions, `y`, `d`, `x`, `c`) | Yes, DOM only | The same listener, `Selection.modify`, `Range` and `setBaseAndExtent` for the highlight, `execCommand("delete")` and a `copy` event for the actions. See "Normal and visual mode inside the message box". |
+| React to, edit or delete the message under the cursor | Not directly | Only what the message menu offers is reachable, by `m` and then `j`, `k`, Enter. No API calls an existing message action. |
+| Multi-key chords as a first-class feature, operators and motions in the message list, registers, macros, visual mode in the message list | No | Not expressible with the key service. (Visual mode in the message *box* works, as DOM.) |
+
+## Status and open ideas
+
+**API** (documented services): shortcuts, the `focus()` command of a composer tool (`i` `a`), `pages` and `navigation` (`gt` and friends, channel switching, opening a thread).
+
+**DOM-only** (works today because plugins are not sandboxed; none of it is a contract, and each item breaks quietly if the markup changes)
+
+- The message cursor, scrolling, region focus (`h` `l`), and every selector in "How the DOM reach-through works".
+- Communities (`}` `{` `C`): the plugin clicks the host's switcher.
+- Message actions (`r` `m`): the plugin wakes the lazily built action bar with a synthetic Tab keydown on `window`, then clicks its buttons.
+- `q`, `zc` `zo`, `>` `<` `|` `=`: the host's window event for closing a tab, its toggle button and its split handle.
+- Everything inside the message box: normal and visual mode, which use a capture-phase `keydown`, `Selection.modify`, `Range`, `execCommand` and a `copy` listener.
+
+**To run the tests**: check out block/buzz-app at `d92bfb2c`, run `pnpm install --frozen-lockfile` and `pnpm exec playwright install chromium` in it, then `test/run.sh <that checkout>` (about a minute and a half; it copies the plugin and the spec into the checkout). WebKit does not run on the Linux test VM, so a Mac stays a manual check.
+
+**Open ideas**
+
+1. Check everything on a Mac (WKWebView). The least certain parts: the clipboard in visual mode `y`, `Selection.modify`, and the shifted keys `{` `}` `<` `>` `|`.
+2. Open choices: `>` widens the thread whatever has focus (vim's own `Ctrl-w >` widens the window you are in); whether to add `p` and a register after `y`; whether `o` should swap the ends of a visual highlight.
+3. Visual mode in the message list (select several messages, then copy or delete), and `e` and `dd` on a message. Neither has a route except the message menu; see the gap table.
+4. A tester saw Esc right after clearing a draft (`i`, Ctrl+A, Backspace) leave INSERT with one press, once, and could not reproduce it. With text-normal mode on by default the first Esc now stays in the box, so check that nothing swallows a press.
+5. Slow or empty communities: `}` and `{` were only tried against an instant fixture with two communities.
+6. Ask Block for the API items in "What a fuller vim plugin would need from Block"; with a key-event service, editor commands and a focus service most of the DOM list above disappears.
+
+## How a plugin works, as far as it matters here
+
+A plugin is a folder with `manifest.json` and a single self-contained `plugin.js`. The module exports `inject`, a list of service names, and `apply(ctx)`. `ctx` is a Cordis context. Buzz starts `apply` once every injected service exists, and disposes whatever the plugin registered when it is disabled, replaced, or the app closes. Register your own resources with `ctx.effect(() => cleanup)`. React is not bundled: the host's copy arrives as `ctx.react`. There is no build step and no way to import anything. (`docs/plugin-architecture.md`, "Plugin module contract".)
+
+External plugins are loaded by importing the file through a blob URL (`src/plugins/modules.ts`). They run in the same JavaScript context as the app. The architecture doc says so plainly: "Plugins are trusted code executing in the app's JavaScript context. They are not sandboxed" (line 194). That sentence is the reason the DOM techniques below work at all.
+
+The public services, from `src/plugins/author.ts`:
+
+| Service | What it gives a plugin | Used by this plugin |
+| --- | --- | --- |
+| `react` | The host's React | Page UI |
+| `pages` | Register a page, with an optional nav badge and sidebar | The "Vim mode" page and its `N` / `I` badge |
+| `shortcuts` | Register exact-chord shortcuts, with `when`, `allowInEditable`, `allowInModal`, `repeat` | All the keys |
+| `navigation` | Open pages, settings and conversations. `snapshot()` and `subscribe()` | Channel switching, current channel, opening Settings and the Vim mode page |
+| `relay` | A read model of the session: connection, channels, profiles, reads, unread | Only to find the viewer and community for navigation |
+| `conversation` | Register composer tools, accessories, completions, message renderers, link and inline renderers, message actions. Reusable `Composer`, `Message`, `Thread`, `Tabs` components | The focus-bridge composer tool |
+| `panels` | Register panels that match a target | Not used |
+| `notifications`, `settingsCards`, `host`, `agents`, `decisions`, `browser`, `identityNames` | Not relevant to keyboard control | Not used |
+
+## What the API can reach, and the traps inside it
+
+### The shortcut service (`src/features/shortcuts/service.ts`, `bindings.ts`)
+
+- A binding is `{ key, mod?, ctrl?, shift?, alt? }`. `key` is the logical `KeyboardEvent.key`, compared case-insensitively, and modifiers must match exactly. A bare `{ key: "j" }` is legal and matches plain `j` only.
+- The dispatcher is one `keydown` listener on `window`, in the bubbling phase (`service.ts:116`). Every handler the page registers locally, including the message editor, runs first. An event that is already `defaultPrevented` is never consumed (`service.ts:60`).
+- By default a binding does not run when the event path contains an input, textarea, select, content-editable element or `role="textbox"` (`bindings.ts:106`), while a `dialog[open]` or `[aria-modal]` exists, or on a held key. `allowInEditable`, `allowInModal` and `repeat` opt in.
+- `when()` is a free-form predicate, so modes are easy: gate every binding on your own state.
+- Host chords win. They are matched first and reserved even when unavailable. This plugin avoids them and registers one chord of its own (Cmd/Ctrl+Shift+E, turn Vim keys on or off).
+- Users can rebind any registered shortcut in Settings, Shortcuts, so every vim key here is rebindable, and every one shows up there under "Vim mode".
+- Key matching uses the logical key, so on macOS an Option chord arrives as a composed character, and Shift+digit arrives as punctuation. The docs list this as a known limitation (lines 1749-1757). `?` here is `{ key: "?", shift: true }`, which is right for a US layout and untested elsewhere.
+
+### What the plugin does not get from the service
+
+- No key event. A handler runs with no arguments, so a plugin cannot see which key fired, cannot see keys it did not register, and cannot cancel or rewrite them.
+- No chords or sequences, and no "any key" handler. The docs say the same (line 1714).
+- No ordering control. A plugin cannot run before the editor or before a host handler.
+
+### Escape is the clearest case of that last point
+
+Two host behaviours sit in front of any plugin shortcut:
+
+1. In a side pane, the pane's React `onKeyDown` closes the active tab on Escape from anywhere inside it (`src/features/panels/PanelWorkspace.tsx:366`). It runs before the window listener, so a plugin shortcut on Escape never gets the chance. Pressing Esc in a thread's reply box closes the thread.
+2. Any open tooltip or popover consumes the first Escape before the window listener sees it. A probe confirmed it: with two tooltips open the first Esc closed them and the mode stayed INSERT, and the second Esc left the box; with the pointer parked elsewhere the first Esc worked. A real user will meet the same thing after hovering a button.
+
+The plugin handles the first by adding a `keydown` listener on `document` in the capture phase, only where the host would close a pane, and only when the box is not editing a message and no completion menu is open. It calls `escape()` itself and stops the event. Esc from the thread's message list no longer closes the thread (the same listener swallows it there, `q` closes it). That is a DOM technique, not an API.
+
+### Focusing things
+
+- The documented way to focus a composer is the `focus()` command that a composer tool receives. It exists only inside a mounted tool component, and it is revoked when the tool or destination goes away. The plugin registers a tool that renders nothing and parks the command, with the channel and thread it belongs to, so `i` can call it. Test 1 and the thread test assert that this path was taken, not the DOM fallback.
+- There is no documented way to blur anything, move focus to the channel list, or focus the message list. The plugin uses `element.focus()` and `blur()`.
+- The host's own focus actions (Cmd/Ctrl+L focus the message box, F8 or Cmd+Shift+H/L focus a pane) are host shortcuts. Plugins cannot call a host shortcut, but they can press its chord (see "Indirect command bus").
+
+### Navigation
+
+`navigation.open(target, { focus: "preserve" })` opens a conversation without moving keyboard focus into the message box. The Channels page honours it (`src/bundled/channels/ChannelsPage.tsx:979` and `:1575`). This matters: clicking a channel in the sidebar makes the host focus the message box (the test asserts it), which would throw a vim user straight into insert mode. The documented call avoids that. To build the target the plugin needs the viewer and community origin from `relay.snapshot()`.
+
+### Pages
+
+`pages.snapshot()` returns every registered page with `key` (`pluginId/id`), `title`, `primary` and `placement`. `navigation.open({ version: 1, kind: "page", pluginId, pageId }, { focus: "preserve" })` opens one, and `navigation.snapshot().entry.target` says where the user is. That is enough for `gt` and `gT` without touching markup. Two catches. The API gives no display order, so the plugin copies the shell's rule (the four top bar pages, then the bundled order, then alphabetical) from `AppShell.tsx` and `presentation.ts`; a plugin page that sets `placement: "topbar"` joins the top group. And the Messages page registers as "Channels" but the app calls it "Messages" (`presentation.ts`), so `gm` matches it by key. Opening Messages reopens the last conversation, and `focus: "preserve"` keeps the keyboard out of its message box.
+
+`gs` opens Settings. Settings is not a page: it is a navigation target, `navigation.open({ version: 1, kind: "settings", scope })`, with `scope` the viewer and community origin from `relay.snapshot()` (or `null` without a community), the same call the host's own "Open Settings" shortcut makes (`src/app/App.tsx`, `openSettingsSection`). The app already binds **Cmd+, on a Mac and Ctrl+, elsewhere** to it (`src/app/shortcuts.ts`, id `settings`, allowed while a text box has focus), so `gs` is the vim-style spelling for the normal mode and the chord still works everywhere, in the message box too. A plain key `s` is only meaningful after `g`.
+
+### Communities
+
+There is no community service. The switcher (`CommunityPicker.tsx`) is a popover: a trigger button labelled `Community switcher: <name>`, and a dialog labelled `Switch community` whose rows are `Personal space` and `Switch to <name>`, the current one marked `aria-current`. The plugin does what a pointer would: click the trigger, wait for the dialog, pick the row at the right distance from the current one, click it, wait for the trigger label to change, then wait for the new community's channel buttons and focus the list. A CSS rule hides the dialog (`opacity: 0`, no transition) while this runs so it does not flash. The wait for channels ends if any key is pressed meanwhile, so a late landing never steals focus from someone who has moved on. After a switch the host also focuses the message box by itself, which is why the landing does not wait for a quiet focus.
+
+### Message actions
+
+A message row's action bar (Reply, Copy link, More) is built lazily on desktop: only when the pointer enters the row, focus lands in it, or Tab is pressed (`useMessageActionBarReady`). The cursor message may have none of those, so the plugin sends one synthetic Tab keydown to `window`, which the host answers by building every row's bar without moving focus, then clicks the control with `.click()`. The Reply button opens the thread and focuses its reply box; the More button opens a menu that the host focuses on its first item. The request pins the cursor message first, so it cannot fire later on a different message.
+
+### Threads and the thread pane
+
+How the app lays threads out, from the source: a thread is a tab. The device-local setting "Open threads in" (Settings, Appearance; stored as `buzz-thread-placement.v1` in `localStorage`) puts new threads either in a pane beside the channel (`side`, the default) or as a tab over the channel (`main`). Only the side pane has a split. Its handle is an ARIA separator labelled "Resize main and secondary panels" (`usePanelSplit.tsx:78`). The pane can be no narrower than 316 px and no wider than the page minus 320 px (`usePanelSplit.tsx:61-62`), and starts at about half the page. The width is React state, not saved to storage as far as the source shows. The pane can also be hidden without closing its threads, with a toggle button (`ChannelsPage.tsx:1631`).
+
+| Key | What it does | How it gets there |
+| --- | --- | --- |
+| `o`, Enter | Open the thread of the message under the cursor and move into its message list, in normal mode | **API** to open: `relay.snapshot().session.channels.window(channelId).rows` is a read model of the loaded messages, and gives the thread root of a message that is itself a reply. `navigation.open({ kind: "conversation", channelId, messageId, threadRootId }, { focus: "preserve" })` then opens the thread; a root message passes its own id as both. This is the same address the host's "View thread" link uses, and it honours the placement setting. **DOM** to land: wait for the pane's message list to mount and call `focus()` on it. Enter is only ours while the message list itself has focus; on a button it keeps its native meaning (the shortcut service consumes every key it matches, so claiming Enter everywhere would stop Enter on a focused channel button). |
+| `q` | Close the thread: the active tab of the pane that has focus, or of the thread pane when focus is in the message list | **DOM**. Dispatches `buzz:close-active-tab` on `window`, the same event the native Close Tab menu sends for Cmd+W (`close-request.js`, `PanelWorkspace.tsx:273`). The host handles it and marks it handled, which tells the plugin something closed. It closes one tab, so with several threads open `q` closes the visible one. In the message list with no thread open, nothing happens. Afterwards the host leaves focus on a header button, so the plugin puts it back on the message list. |
+| `zc`, `zo` | Hide the thread pane, keeping its threads open, and show it again | **DOM**. Clicks the button marked `data-tab-pane-toggle`, picking the one whose `aria-expanded` says it can do the job. `o` after `z` is `zo`; `c` after `z` is `zc`. A pending `z` expires after 1.5 s, like `g`. |
+| `>`, `<` | Widen, narrow the thread pane by 48 px a press; a count multiplies (`3>` is 144 px); held keys repeat | **DOM**. The host gives the split handle keyboard control (`ResizeHandle.tsx:137-147`): Shift+Left widens the right-hand pane by 48 px, Shift+Right narrows it. The plugin dispatches those key events on the handle, without moving focus. Each step reads the pane's width as it is, so a count waits one frame between steps (sending three at once moved it once). Stops at the pane's minimum and maximum. |
+| `\|`, `=` | Widest the pane allows, and back to its default width | **DOM**. The handle's End key, and a double click on it (the host's reset). |
+| Leader, then `h` `l` `q` `<` `>` `\|` `=` (and `c`) | The leader is a setting on the Vim mode page: Space (the default on Windows and Linux), Ctrl-w (the default on a Mac), Ctrl-b, Ctrl-Space, comma or backslash. Then `h` / `l` move to the next pane (from a message box to the next pane's box, from a list to its list), `q` and `c` close the thread, `<` `>` `\|` `=` resize it. It works from the message list, the channel list and a NORMAL message box; a Ctrl chord also works while typing | **DOM**: the plugin's own capture-phase `keydown` listener, registered ahead of the others, because the keys it takes (`h`, `l`, `q`) are text commands inside the message box, where the shortcut service never runs. It replaces the Mac-only Ctrl-w prefix, which was an ordinary shortcut. Ctrl-w is offered only on a Mac because on Windows and Linux the host owns it (close tab). A plain leader is ignored in INSERT (Space has to type a space), off the Messages page (Space keeps scrolling) and on a focused button or checkbox (Space keeps its meaning); the keyup of a swallowed key is swallowed too, so a button does not click on the release. |
+
+Choices worth knowing about. `>` widens the thread and `<` narrows it, whatever has focus. Vim's `Ctrl-w >` widens the window you are in, which would shrink the thread when focus is in the message list. The request was to expand or shrink the thread, so the thread is the subject. With threads placed in the main pane there is no split: `o` opens a tab over the channel and `q` closes it, and the resize keys do nothing. `o` and Enter act only in the message list; in a thread pane or the channel list they do nothing.
+
+What the API does not reach. Nothing in `ctx.panels` opens, closes, hides or sizes the built-in thread tabs: `panels.register` adds a card the host may show (see `PanelsService`), nothing more. No service reports the pane's width. A page that a plugin owns could lay out its own split, but the Channels page's is the host's.
+
+### Indirect command bus
+
+The host exposes no command API, and the docs say there is no "command bus" (line 1655). Two undocumented ways to reach host actions exist anyway:
+
+- Synthetic chords. `window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey / ctrlKey, bubbles: true, cancelable: true }))` runs the host's "Search this conversation". The return value of `dispatchEvent` says whether a host shortcut took it. It breaks if the user rebinds that chord in Settings.
+- Window events. The host's tab actions listen for `buzz:close-active-tab`, `buzz:next-tab` and `buzz:previous-tab` on `window` (`PanelWorkspace.tsx:273`). They are not documented. `q` sends the first; the other two are unused, and listed because they show how the host wires its own actions.
+
+## What the plugin API cannot reach
+
+| Gap | Evidence | Consequence for vim |
+| --- | --- | --- |
+| A key hook that sees events before the editor, or at all | The dispatcher is a bubbling window listener with an argument-less `run` (`service.ts:58-116`) | No modal keymaps, no sequences, no operator-pending mode, no vim inside the message box without a raw DOM listener |
+| Editor commands beyond `insertText`, `insertMention`, `insertResource`, `focus` | `ComposerToolProps`, `src/features/conversation/contracts.ts:22-57` | No caret motions, selection, delete, copy or undo through the API. The text and visual modes use `Selection.modify`, `Range`, `execCommand` and a `copy` event against the editor's own contenteditable |
+| A selected message | The timeline has `data-message-id` rows and a scroller, no selection state (`ChannelTimeline.tsx:997`) | The cursor is invented by the plugin and drawn with CSS |
+| Message actions as commands | Reply, react, edit and delete live in a floating action bar that appears when a row is hovered or focused (`MessageActionBar.tsx`, `useFloatingActionBar.ts`). `conversation` can register new message actions but cannot call the host's | `r` and `m` work by waking the bar and clicking its buttons. `e` and `dd` have no direct route |
+| Communities | No service in `src/plugins/author.ts` mentions them. `relay.snapshot()` gives only the viewer and the origin of the community on screen | `{`, `}` and `C` click the host's switcher (`CommunityPicker.tsx`) |
+| A channel list service | The sidebar is React state inside the Channels page | The plugin reads channel buttons from the DOM to find order and the selected one |
+| Pane and focus services | Focus rules live in `src/app/focus-navigation.ts`, private to the host | Regions are found with `data-main-workspace`, `data-panel-workspace` and `data-sidebar-section` |
+| Opening, closing, hiding or sizing a pane | `ctx.panels` registers cards only. Tabs are `useChannelTabState`, the split is `usePanelSplit`, both host-private | `q`, `zc`, `zo` and the resize keys drive the host's own close event, toggle button and split handle |
+| Scrolling the timeline, or loading older history on demand | Older pages load only on a user scroll gesture (`ChannelTimeline.tsx:931-993`) | `gg` goes to the oldest message that is already loaded |
+| A command palette or callable host commands | Docs, line 1714 | Search and focus are reached by pressing chords |
+| Plugin storage | "Plugin-specific persistent data has no host API yet" (docs, line 192) | The toggles persist in `localStorage` under `megatech.vim-mode.settings.v2` |
+| A status-line slot | Pages can add a nav badge, nothing else | The mode shows as a nav badge plus an overlay element the plugin appends to `document.body` and pins to the window's bottom-right corner |
+| A dialog or overlay service | None. A message action can mount a dialog, but only from a message's menu | `?` draws its own dialog (`role="dialog" aria-modal`, a dimmed backdrop, the host's `ui-card` class) on `document.body` and swallows keys while it is open |
+| Physical-key matching | Docs, lines 1749-1757 | Option and non-US layouts are unreliable |
+
+## What a fuller vim plugin would need from Block
+
+Listed in the order that would unlock the most.
+
+1. A key-event service for plugins: capture-phase and bubble-phase handlers that receive the event, can consume it, can declare a priority relative to host handlers (Escape above all), and can register sequences. Modal keymaps could then be real.
+2. Editor commands for composer tools: read and set the caret and selection (anchor and head, so a highlight can be drawn and read back), delete a range, write text to the clipboard, undo and redo, and blur. With these, vim inside the message box, visual mode included, needs no `Selection.modify` and no DOM listener.
+3. A focus and selection service: named regions (channel list, timeline, thread, composer) with `focus(region)`, pane commands (open, close and hide a thread, read and set the split width), plus a host-owned "cursor message" with `select(id)`, `scrollTo(id)` and the actions that act on it (reply, react, edit, delete). This replaces the DOM cursor, the scroller code, the synthetic Tab that wakes the action bar, and every selector.
+4. A command bus: host actions as named, callable commands (search, focus composer, next channel, close tab). It would replace the synthetic chord and make every host shortcut scriptable.
+5. A channel list service: the visible channels in order, the selected one, and unread state, as data. The same for communities: list, selected, `select(id)`.
+6. A small persistent store for plugins.
+7. A status-line slot for modal indicators.
+8. Physical-key matching for Option chords and other layouts.
+
+A different route also exists and is the supported one: a plugin can own a whole page, using `conversation.ui.Composer`, `.Message`, `.Thread` and `.Tabs` with the session's channel data. Inside its own React tree it controls every key. The cost is that it must rebuild the channel list and the message list, and `conversation.ui` has no timeline component. It would be a vim client for Buzz instead of a vim mode for the Buzz window. This plugin did not attempt it.
+
+## How the DOM reach-through works, and how it can break
+
+Every selector was read from the source at `d92bfb2c` and is exercised by the test run.
+
+| Purpose | Selector or technique | Where it comes from |
+| --- | --- | --- |
+| Message list | `[data-message-scroller]`, `tabIndex=0`, `aria-label="Channel message history"` | `ChannelTimeline.tsx:997` |
+| A message row | `[data-message-id]` (the list is virtualised, so only mounted rows exist) | `MessageRow.tsx:830` |
+| Main pane, thread pane | `[data-main-workspace]`, `[data-panel-workspace]` | `PanelWorkspace.tsx:342` |
+| Channel rows | `[data-sidebar-section] button[data-channel-id]`, selected one has `aria-current="page"` | `ChannelSidebarRow.tsx:44-46` |
+| Message box | `[data-tab-focus]` that is a textbox | `MessageComposer.tsx:2046`, `focus-navigation.ts` |
+| Modes | `focusin` and `focusout` on `document`, capture phase | |
+| Community switcher | `nav[aria-label="Communities"] button[aria-label^="Community switcher"]` and `[role="dialog"][aria-label="Switch community"]` | `CommunityPicker.tsx:194-231` |
+| Message action bar | `[aria-label="Message actions"] button[aria-label="Reply"]` inside the row, built after a Tab keydown on `window` | `MessageActionBar.tsx`, `useFloatingActionBar.ts:43-104` |
+| Host menus | `[role="menu"] [role="menuitem"]`, focus moved with `.focus()` | Base UI menus |
+| Thread pane split | `hr[aria-label="Resize main and secondary panels"]`, sent Shift+Left, Shift+Right, End and a double click | `usePanelSplit.tsx:78`, `ResizeHandle.tsx:136-147` |
+| Hide or show the thread pane | `[data-tab-pane-toggle][aria-expanded="true" or "false"]`, clicked | `ChannelsPage.tsx:1631`, `:1758`, `:1852` |
+| Close a thread | `window` event `buzz:close-active-tab` | `PanelWorkspace.tsx:245-273`, `src-tauri/src/close-request.js` |
+| Active pane | `html[data-vim-on]`, `html[data-vim-panes]` (a thread pane is visible beside the channel) and `html[data-vim-region]`, with one CSS rule that restyles the `::after` of `[data-main-workspace] > header` or `[data-panel-workspace] > header` (the host's 1px separator) for the region that has the keys. Each pane's cursor row is a rule scoped to that pane's workspace | The same `<style>` element as the cursor paint; the tests read the attributes and the computed style of the `::after` |
+| Cursor paint | A `<style>` element with a rule keyed by message id. The rule survives the list unmounting and remounting a row | The desktop CSP allows inline styles (`style-src 'self' 'unsafe-inline'`, `src-tauri/tauri.conf.json`) |
+| Text and visual mode | `Selection.modify`, `Range` and `Selection.setBaseAndExtent`, `document.execCommand("delete")`, a `copy` event, a synthetic Cmd/Ctrl+Z, a capture-phase `keydown` and `pointerdown` listener | The message box is a ProseMirror editor |
+
+None of these is a contract. A renamed attribute, a changed pane structure or a swapped editor breaks the matching feature without any error. The plugin degrades quietly: a missing selector means a key that does nothing, and the shortcuts, the mode indicator and the page keep working.
+
+## One NORMAL mode
+
+There is one normal mode. A pane is one column: its messages, then its message box at the bottom, and the cursor moves through both.
+
+| Key | Where | What |
+| --- | --- | --- |
+| `j` | On the newest message (the list scrolled to its end) | Down into the pane's message box, in NORMAL, at the start of the draft. In a pane with no messages the box is the only stop. Without the page's switch for composer editing the box has no NORMAL mode, so nothing happens |
+| `k` | In the box, on its first row | Up into the newest message of the pane. On a second line, or on a wrapped row below the first, `k` goes up a row as before. "First row" is decided by moving the caret to the start of its row: it is the first row if nothing is before it |
+| `h` | In the box, at the very start of the draft and not able to move | Into the other pane's box (the thread's from the channel's, and back), at the end of its draft |
+| `l` | In the box, on the last character of the draft and not able to move | Into the other pane's box, at the start of its draft |
+| `gg` `G` | The message list, or the draft | First and last message, or first and last line |
+| Esc | INSERT, then the box | NORMAL in the box; a second Esc stays there (it used to leave the box). With composer editing off the box has no NORMAL and Esc leaves it for the list as before. In a message list Esc does nothing: the plugin swallows the Esc that the host would turn into "close this thread's tab", so `q` and the leader's `q` are the way to close a thread |
+| `?` | The box in NORMAL | The help dialog, as in the lists |
+| Leader, then `h` `l` `q` `<` `>` `\|` `=` | Anywhere | See the table of keys above. In a message box `h` and `l` both go to the other pane's box (from anywhere in the draft); with no other pane they fall back to the list keys (`h` from the channel's box reaches the channel list) |
+
+The crossing keys act only when the key could not move at all, and only in NORMAL: not in VISUAL, not after `d`. `Backspace` counts as `h` in the box, so at the very start of the draft it crosses too (a known quirk).
+
+**Found while building it.** The host's React handler on a pane stops an Esc from reaching the window while a thread is open, not only in the thread's own pane: Esc in the channel's box did nothing once a thread was beside it (no label change, the shortcut service never saw the key). The plugin already intercepted Esc in capture for the thread's box; it now does for the channel's box as well (`onEscapeCapture`). Until then, the keys that cross between the two boxes were the first thing to use that state.
+
+The second thing found: the editor puts its own saved selection back about 20 ms after a box gains focus, and ignores selection changes for about 50 ms after that, so a caret placed at once (start of the draft, end of the draft) was overwritten and the box came up with the caret where the editor had left it. The plugin places the caret immediately, tells the editor with a `selectionchange` event, and places it again 80 ms later unless a key has come in. In that 80 ms the caret may still be at the editor's old place, which matters to a test (it waits for the offset) and not to a person.
+
+The third: `?` in a NORMAL box opened the help and shut it in the same keypress. The plugin's text-key listener opens it and the help's own listener, the next one on the same node, got the same `keydown` and read the `?` as "close". Moving focus to the dialog and back also made the box INSERT, since any focus into a box means INSERT. The help now ignores the event that opened it, and a box that had NORMAL gets NORMAL back when the help closes (`helpOpenedBy`, `helpReturnMode`). The first full run of the new tests caught it; the key had always worked from the lists, where the shortcut service opens the help.
+
+**The key table.** Written from the requested key table: `j` `k` and `gg` `G` are messages outside the box and draft lines inside it; `o` `r` `m` `[` `]` `{` `}` `gi...` stay in the lists; `i` `a` `v` `V` are the box's (`i` and `a` also work from a list, as before, and focus the box in INSERT); `?` and the leader work in both. Decided without it, and easy to flip: the leader is a choice from a list (Space, Ctrl-w, Ctrl-b, Ctrl-Space, comma, backslash), not a free key; `Backspace` in the box is `h`; the 400 ms re-reading and the 1.5 s timeout of a pending leader (like a pending `g`) are the plugin's own.
+
+## The g page keys, wherever the keys are
+
+`gi` `gm` `ga` `gr` `gw` `gv` `gs` `gt` `gT` worked in the lists and did nothing in a message box in NORMAL, which the one-NORMAL-mode change made the place the cursor is most of the time (found on a Mac). Cause: in the lists the keys go through the shortcut service, in the box through the plugin's own key handler, where `g` is only the start of `gg`, `ge` and `gE`, so `g` then `i` fell through to plain `i` (INSERT) and `g` then `s` or `m` did nothing. Now both routes end in one function, `goPage`: in the box, `g` then one of `i m a r w v t T s` goes to the page (visual mode keeps its own `g` keys, and `dg` is not a page key). Plugin API for the navigation (`pages`, `navigation.open`), DOM for the key handler. The tests press every one of these from the channel's list, the thread's list, the channel list, the channel's box and the thread's box, and a few of them with the platform reported as a Mac.
+
+## Keys inside the Settings dialog
+
+Every other dialog and menu keeps the plugin's keys off. Settings is the exception, because it is a list and a detail like the app: `j` `k` move through its sections (the host draws a focus ring only after Tab, an arrow or Home/End, so the plugin sets the host's own `html[data-keyboard-navigation]` flag first, as the host's `focusWithKeyboard` does), `l` or `Enter` opens the section and goes into it (focus lands on the host's `#settings-content`, where `j` `k` scroll the section), `h` comes back to the list on the open section. From the close button, where the dialog puts focus, the first `j` or `k` enters the list. Esc closes the dialog, which the host already did. The keys act only when focus is inside the Settings dialog and not in a field, a select, a combobox or a menu, so typing and every other dialog (the "discard changes" question, search) are untouched; the community address button at the top of the list is not a section and is skipped. **Plugin API: none** (no keyboard service for a dialog; the page-opening `gs` is API). **DOM:** the dialog containing `nav[aria-label="Settings sections"]`, its buttons without an `aria-label`, `#settings-content`, and the focus-ring flag, so a renamed landmark stops the keys quietly.
+
+## Normal and visual mode inside the message box
+
+On by default, since `v` was asked for. The Vim mode page has a switch ("Normal and visual mode inside the message box") that turns it off: Esc then leaves the box at once and no key is swallowed. Esc inside the box enters a text-normal mode that keeps focus and swallows plain keys; another Esc stays there, and Esc inside a thread's reply box does the same without closing the thread. The cursor leaves the box by `k` on its first row, by `h` / `l` at the ends of the draft, or by the leader key (see "One NORMAL mode"). Keys: `h j k l`, the word motions `w b e ge` and `W B E gE`, `0 ^ $`, `gg G`, `f t F T` with `;` and `,` (see "Motions" below), counts, `i a I A`, `x`, `dd`, `d` with any of those motions, `u`, and `v` / `V` for visual mode. In this mode Enter does nothing, so a stray Enter cannot send a draft.
+
+**All of it is DOM-only.** Nothing here goes through a documented service: the plugin API has no editor command beyond `insertText`, `insertMention`, `insertResource` and `focus`. The plugin listens to `keydown` in the capture phase on `document`, moves the caret with `Selection.modify`, draws the highlight with `Selection.setBaseAndExtent`, deletes with `document.execCommand("delete")`, copies through a `copy` event, and asks for undo with a synthetic Cmd/Ctrl+Z. The editor is ProseMirror, so every key the plugin swallows and every selection it sets is something the editor sees only as a DOM change. If Block swaps the editor, this whole section stops working and everything else keeps working.
+
+### Motions
+
+All of them work in normal mode, in visual mode (they move the cursor end) and after `d`, and all take a count (`3w`, `2fx`, `3G`).
+
+| Keys | What they do |
+| --- | --- |
+| `w` `b` `e` `ge` | Words. A word is a run of letters, digits and underscore, or a run of any other non-blank characters, so `foo.bar` is three words. `w` goes to the next word start and `b` to the previous; `e` to the end of this word, or of the next when already on an end; `ge` to the end of the previous word. `w`, `b` and `ge` stop on an empty line, `e` skips it |
+| `W` `B` `E` `gE` | The same with WORDs: any run of non-blank characters (`foo.bar` is one) |
+| `f`x `t`x `F`x `T`x | Find x on this line only: onto it (`f`), just before it (`t`), and the same backwards (`F` lands on it, `T` just after it). `2fx` finds the second x. If there are not that many the cursor stays. The character after `f` can be any character, a digit included |
+| `;` `,` | Repeat the last `f` `t` `F` `T`, and repeat it the other way. A repeated `t` or `T` that is already next to its character goes on to the next one |
+| `0` `^` `$` | Start of the line, first non-blank, end of the line. A line is the text between two line breaks, however it wraps on screen (before, they acted on the wrapped row). `$` rests on the last character, like vim, so `$` then `x` takes that character and never the line break |
+| `gg` `G` | First line, last line; `3G` and `3gg` go to line 3. They land on the line's first non-blank character. After `d` they are ignored (vim takes whole lines there) |
+| `h` `l` | One character. The cursor rests on a character, so `l` on the last character of a line stays there instead of crossing to the next line |
+
+With `d`, a motion that lands on a character takes that character too (`de`, `df,`, `dt)`, `d$`, `dge` take both ends), and one that lands before it does not (`dw`, `db`, `dF`). Vim's special case holds: `dw` on the last word of a line takes the word and leaves the line break. `Esc` cancels a half-typed command (`d`, `g`, `f`) and keeps the mode. The bar shows the pending keys.
+
+How it works: every motion is built from two reads, the character under the cursor and the character before it (`Selection.modify` plus `toString`), because the platforms disagree about `Selection.modify`'s own "word" granularity. That makes the motions slow on very long drafts (a few reads per character walked) but identical in Chromium and WebKitGTK; both were run (the 10 browser tests, and the keys by hand in the real Linux app). Not done: `%`, `{` `}`, `*`, `H` `M` `L`, text objects, `dG` and `dgg` as line deletes, a sticky column for `j` and `k`, and the `cpo` ways of treating `cw`.
+
+### Visual mode
+
+| Key | In text-normal mode | In visual mode |
+| --- | --- | --- |
+| `v` | Start a characterwise highlight on the character under the cursor | Leave visual mode (from `V`: switch to characterwise) |
+| `V` | Start a linewise highlight of the current line | Leave visual mode (from `v`: switch to linewise) |
+| `h j k l`, every motion in "Motions", counts | Move the caret | Move the cursor end of the highlight |
+| `y` | | Copy the highlight to the clipboard; the caret goes to its start |
+| `d`, `x` | | Delete the highlight. `V` takes the lines whole, with the newline after them (before them, for the last lines) |
+| `c` | | Delete the highlight and go to insert mode. `V` keeps one empty line |
+| Esc | | Back to text-normal mode with the caret on the cursor end |
+| a click, focus leaving the box | | Ends visual mode |
+
+How it works, and what to know:
+
+- **Inclusive, like vim.** A caret is the gap between two characters; vim's cursor is on the character after it. The plugin keeps two `Range`s, the anchor and the cursor, each a gap, and derives the highlight after every key: growing to the right it stops one character past the cursor, growing to the left it starts one character past the anchor. So `v` alone highlights one character, `vll` three, and `vh` two. A motion starts from the stored cursor, not from the highlight. The cursor never rests past the last character of a line (so `$` highlights through the last character, not the newline).
+- **A line is the text between two newlines.** In the test build the message box keeps a draft as one paragraph with literal newlines (Shift+Enter), and Chromium's `paragraphboundary` granularity finds line ends in it. A draft made of several real paragraphs was not tried.
+- **`y` goes to the system clipboard only.** There is no register and no `p`. The copy goes through a capture-phase `copy` listener of the plugin's that writes the highlight's text, because the first version used the browser's own copy and the test sometimes copied the previous highlight. ProseMirror's copy handler serializes the editor's own selection, which most likely lagged a keystroke behind the DOM highlight. It is plain text, with no formatting, and a linewise yank has no trailing newline. If the webview refuses `execCommand("copy")`, the plugin falls back to `navigator.clipboard.writeText`. `d`, `x` and `c` do not touch the clipboard; `u` is the way back.
+- **Not done:** `o` (swap ends), `gv`, text objects (`iw`, `aw`), `p`, `P`, registers, `J`, `>`, `U`, `~`, and Ctrl-v block mode. Vim's sticky column through a short line is not kept: each `j` or `k` starts from where the cursor is. A highlight made with the mouse is not adopted by `v`.
+- **Leaving the box.** Leaving it by any route (`k` up, the leader key, or Esc when the box has no NORMAL mode) blurs the box and also clears the selection. `blur()` alone is not enough in WebKit (found in the real Linux app, WebKitGTK; a Mac's WKWebView most likely does the same): the text of a key goes to the editor that holds the selection even when it has no focus, so after leaving by Esc every plain key the plugin does not bind (`x`, `y`, `z`, `0` ...) typed into the draft while the label said NAV (the name the list mode had then). Chromium clears the caret on blur, which is why the browser tests never saw it; the test now checks that the selection is not inside the box. `i` still resumes where the caret was, because the editor keeps its own selection state.
+- **`u`** puts the caret at the start of what it restored, as vim does. The editor leaves the restored text selected, and the next `x` or `V` used to act on all of it.
+- Esc from insert steps the caret back one character, like vim. So after Esc Esc, `i` from the message list resumes *before* the last character and `a` resumes after it. `a` also steps past the character under the caret now (it used to move forward unconditionally, which could cross a line).
+- Things from before still hold: ProseMirror merges edits within about half a second into one undo step. `d` waits 1.5 seconds for its motion, then forgets it.
+
+### The switch and the saved settings
+
+The first version saved all three switches whenever one changed, so a saved `composerNormal: false` could not be told from a choice. The settings now live under `megatech.vim-mode.settings.v2` and only a switch the user flipped is saved. A `v1` record still supplies `enabled` and `statusLine` and is ignored for `composerNormal`, so someone who changed the status line before this version gets the new default.
+
+## The mode label and the help dialog
+
+**Labels.** The label in the window's bottom-right corner says the mode and, after it, the pane that has the keys (`main`, `side` for a thread, `sidebar`): `-- NORMAL --  main` whether the cursor is in the messages or in the message box, then `-- INSERT --`, `-- VISUAL --` and `-- VISUAL LINE --`. The first versions had two normal modes, `NAV` (the app's, in the lists) and `NORMAL` (the box's, once `NORMAL (text)`), and told them apart by the label; where the focus is now shows only in the pane word and in the cursor row or the caret. The pane word is on every label, and the pending keys (a count, `d`, `g`, `f`, `leader`) follow it.
+
+**Where it sits.** Pinned to the window's bottom-right corner (`position: fixed`, 10 px in from the right, 2 px up from the bottom), whichever pane or thread tab has the keys, and clear of every composer's send button and toolbar. It went through two other placements. The first was this same corner, which was on top of the send button of the thread pane. The second was geometry: just under the composer card of the pane that has the keys, inside the card or in the corner when there was no room. That one broke on a Mac in two ways: in a single pane the label sat under the box instead of in the corner, and with a second thread tab open it jumped into the channel's pane. The cause of the second was `composerOf`, which looked only at the first message box in a pane's markup; a pane with several thread tabs keeps every tab's box in the page (the inactive ones `inert`), so the first one is a hidden tab's, the lookup found nothing, and the label fell back to the channel's box. `composerOf` now looks through all of them for the one that shows, which also fixes `i` and the box-to-box keys (`l` at the end of a draft, the leader's `h` `l`) with a second tab open, and `j` into the box of a thread tab placed in the main pane (the channel's box under it is the first one in the markup there); the label no longer depends on any composer. Smaller than before: 11 px monospace, no side padding beyond 6 px. The tests measure the corner and every composer button's box in a single pane, with a thread beside the channel, and with three thread tabs. [DOM]
+
+**The help dialog (`?`).** The plugin API has no dialog or overlay service: `registerMessageAction` mounts a component, but only from a message's menu, and no service opens a panel from a key. So `?` draws its own: a dimmed full-window backdrop with a centred card (`role="dialog" aria-modal="true" aria-label="Vim keys"`, the host's `ui-card` class for the look), appended to `document.body`, listing the keys grouped NORMAL (messages and panes), NORMAL (the message box), INSERT, VISUAL from the same table the Vim mode page uses. While it is open the host's shortcut service stands down by itself (it refuses plain keys while an `aria-modal` element exists) and a capture-phase `keydown` listener of the plugin's own takes every key: `j` `k` (and the arrows) scroll by 48 px (a count multiplies), Ctrl-d and Ctrl-u half the card, `gg` `G` (and Home and End) the top and the bottom, `q`, Esc and `?` close it, a click on the backdrop closes it, and every other plain key is swallowed so nothing reaches the page behind it. Chords with Cmd or Alt, and Ctrl chords other than Ctrl-d and Ctrl-u (Ctrl+Shift+E to turn the keys off), still pass. Closing puts focus back on the element that had it, so you are where you were. It is [DOM]: nothing about it is a contract. The page for the switches is still there (`gv`, or the sidebar entry).
+
+## Theme
+
+The plugin draws with the host's own theme tokens, not colours of its own, so it follows Settings → Appearance (Mode, Accent color) the moment the user changes it. The tokens are CSS custom properties that the host sets on `<html>` from `data-accent` and `data-color-mode` (`src/shared/theme/service.ts`, `src/shared/design-system/styles/tokens.css`); a rule or an inline style that says `var(--accent-9)` is re-resolved by the browser on every change, so the plugin has no listener, no timer and no restart. The plugin API has no theme service; this is [DOM]. Each use carries a fallback (the old amber, a dark badge) in case a later host stops defining a token.
+
+| Where | Token | Why |
+| --- | --- | --- |
+| The line under the active pane's header, the cursor bubble's outline, the label's border | `--accent-9` | The accent's strong fill, the same one the host paints the selected channel and the send button with |
+| The cursor bubble's lift | `--affordance-backdrop-pressed` (white at 16% on dark, black at 10% on light), laid over the bubble's own fill as a one-colour gradient | The host's own hover treatment: a step up in brightness on dark and a step darker on light, on received and own bubbles alike, with no colour of ours. A neutral grey is the fallback |
+| The message box while it has the keys (INSERT, or NORMAL in it) | `--affordance-backdrop-pressed` mixed into transparent at 40% (`color-mix`), laid over the box's own fill | The same lift as the cursor bubble, a much fainter step (about 4% on light, 6% on dark). The box is the `<form>` around the textbox, found with `:has()` |
+| The faint outline of the pane that does not have the keys | `--accent-9` mixed into transparent at 45% (`color-mix`) | A translucent accent works on any surface, light or dark |
+| The label's ground and ink | `--surface-popover`, `--text-standard` | The host's own floating surface and body text, which swap between light and dark mode |
+| The ring on the focused channel in the list | `--border-focus` | The host's focus colour. The selected channel is itself an `--accent-9` pill, so an accent ring would vanish on it |
+| The help dialog | The host's `ui-card` class | Its ground, ink and border come from the host, so it follows both settings with no code of ours. The dimmed backdrop is black at 45% in both modes |
+
+**The active-pane line.** An outline on the pane's outer box was tried first and did not hold: the message list inside scrolls in a layer of its own that paints over it, so below the header only the corners showed (seen in the Linux app, and reported from a Mac, where the thread pane's frame covered only its tab strip). The line is now the header's own `::after`: the host draws a 1px separator there (`.panel-header::after`, inset from both sides), and with the keys in that pane the plugin makes it 2px, accent-coloured and flush to both edges. It sits inside the header's box, so nothing can paint over it, it spans the full width of the pane, and no element is added to the page. The pane without the keys keeps the host's 1px separator. Shown only with a thread beside the channel; a lone pane is trivially the active one.
+
+**The cursor is a bubble lift.** The cursor row is marked on its message bubble, not on the row (as requested): the bubble goes up a step in brightness (the host's `--affordance-backdrop-pressed` laid over its fill) and gets a 2px accent outline; the row keeps no tint and no bar. The pane without the keys shows where it was left with a 1px outline at 45% and no lift. The bubble is the element with `data-message-action-anchor` inside the row's `[data-bubble]` content (the host's class names are hashed, these attributes are not; a solo-card wrapper that carries the same attribute is excluded). A row with no bubble (`[data-bubble]` is the host's own flag: a picture, a session card, a huddle line) gets the 2px outline round the whole message (`> [data-layout]`) instead; that case is tested by taking the flag off a row, since the fixture has no such message. This replaces the left bar and its margin trick (the bar used to meet the header line, `margin-left: -P; padding-left: P`, re-read every 400 ms): with no bar there is nothing to align, so the timer and the padding read are gone. `:has()` is needed for the no-bubble case (Safari 15.4, Chromium 105). Dark: the bubble gets brighter; light: it gets a step darker, which is the host's own hover direction, and it is what reads against a white page.
+
+**The lift goes to the box while the box has the keys.** With the keys in a message box (INSERT, or NORMAL in the box) the message right above it used to stay lifted, so it was unclear which of the two was active. Now the pane's cursor row is drawn like the other pane's: the place is kept, as the 1px outline at 45%, and the lift is gone; the box takes a much fainter copy of the same lift (the token mixed to 40%, a 4% step on light and a 6% step on dark, no outline of its own). Moving back into the list swaps them again. The hand-over follows real focus, not the mode label: `paintCursor` reads `document.activeElement` (a message box is an editable inside `[data-tab-focus]`), and the box rule is `html[data-vim-on] form:has(<textbox>:focus)`, so it also covers a thread's reply box and goes with the master switch. The host has no focus style of its own on the box (`.composer` has no `:focus-within` rule), which is why there was nothing to tell the box from the list. On light the 4% step is subtle by design; the one number to turn is `BOX_LIFT` (40).
+
+**Checked.** In the real Linux app the accent was switched in Settings → Appearance with the Settings dialog still open, and the label's border changed colour at once; the line, the rows and the label were then screenshot with Citrus (the default), Magenta and Cobalt, in Light and in Dark. A Mac's WKWebView was not run. `color-mix` needs Safari 16.2 or later, which the host's own tokens already require.
+
+## Measuring the plugin
+
+The rule is measure first, refactor second, measure again. The measuring is built in and off by default, so it can be run on any machine (it was written for a Mac, where the page process grew from 567 MB to 3,260 MB in 90 minutes and nothing here has reproduced that).
+
+**The trace.** The Vim mode page has a *Performance trace* select (Off, Key to paint, Full). *Key to paint* times every key from its `keydown` reaching the window to the frame after it (a message posted after `requestAnimationFrame` arrives once that frame is on screen) and the page's event-loop lag once a second. *Full* also times each of the plugin's own handlers (inclusive of the handlers they call) and counts, per handler, the calls to `querySelectorAll`, `closest`, `getBoundingClientRect`, `getClientRects`, `Selection.modify`, `toString`, `scrollIntoView` and `focus`, with the time spent in each (those calls are wrapped on the prototypes while Full is on, so Full slows the page a little). **Ctrl+Alt+Shift+P** copies the numbers as JSON to the clipboard, **Ctrl+Alt+Shift+R** starts over. The JSON also holds the revision counter (`applied` and `disposed`, which differ by one while the plugin is on), and what the page holds at that moment (DOM nodes, message rows, images, stylesheets, iframes, canvases, thread tabs, and the JS heap where the engine reports it, which WebKit does not). Two dumps minutes apart show whether it is the page or the plugin that grows. Nothing is kept, sent or written anywhere else; the buffers are rings of 5,000 entries.
+
+**The specs** (run with `test/perf.sh /path/to/buzz-app with|without [repeats]`; `without` removes the plugin from the fixture list, which a switch inside the plugin cannot do, since its focus handlers would still run):
+
+| Spec (`SPEC=`) | What it does |
+| --- | --- |
+| `perf.spec.mjs` | key to paint, median and p95, for `j` ×100 after 20 warm-ups, 73 typed characters, and `w` `b` `0` `$` ×50 each, plus the page's idle layouts and style recalculations per second (CDP `Performance.getMetrics`) |
+| `leak.spec.mjs` | switches the plugin off and on six times (the host's own dispose-and-apply path) and counts, after a forced GC: page listeners, DOM nodes, live `setInterval`, `setTimeout`, animation frames, observers, the plugin's own nodes and `data-vim-*` attributes, the revision counter, and that one `j` still moves one message |
+| `idle.spec.mjs` | heap after GC, nodes and listeners every 15 s for `IDLE_MINUTES`, with `SCENARIO=idle` (nobody there), `keys` (one key every 250 ms) or `busy` (a loop of the list, the message box, a thread tab, the help and channel switches) |
+
+**Numbers** (all on a Linux test VM: 2 CPUs, no GPU, Xvfb).
+
+| What | Result |
+| --- | --- |
+| Update the plugin 5 times in the real app (bytes changed each time) | revisions applied 6 / disposed 5; page RSS 839 → 830 MB over 20 min; the host 103 → 122 MB, most of it in the first minute |
+| Dispose and re-apply 6 times, Chromium | listeners, nodes, timers, frames and observers identical each cycle; the plugin's `<style>` and badge gone while off; no `data-vim-*` left on `<html>`; heap after GC grows ~145 KB a cycle on and ~180 KB a cycle off, so it is the Settings pane, not the plugin |
+| Idle 30 min, real app, plugin on | page RSS 851 → 830 MB (range 811–869), host 122 MB flat |
+| Idle 15 min, real app, plugin off (control) | 857 → 844 MB (831–882), host 125 MB flat |
+| Idle 15 min, real app, an earlier build (400 ms placement timer) | 871 → 830 MB (811–897) |
+| `gg`, 20 × `j`, 20 × `k` held 5.5 min, real app, the same earlier build | 866 → 878 MB (814–916), host 122 → 125 MB |
+| Busy session 15 min, real app (134 cycles of list, box, a thread tab, help, channel switch) | page 880 → 850 MB (828–917); host 126 → 141 MB (a 12 MB step four minutes in, then ~0.4 MB a minute; no control run for the host) |
+| Busy session 6 min, Chromium, the latest and the earlier build | heap after GC 21.9 → ~27 MB in the first two minutes, then flat on both; nodes 3,069–3,813 and listeners 793–951 on both (they follow the open thread tab and the help) |
+| Idle 5 min, Chromium | heap slope −6 KB/min with the plugin removed, +7 KB/min on the earlier build, −0.4 on an intermediate one, +0.9 on the latest; nodes and listeners flat on all |
+
+So nothing the plugin does grows with time, with updates or with a busy session on Linux. The Mac growth is not reproduced; a dump from that Mac minutes apart (the page counts above) or the same session with the plugin disabled would split the host from the plugin.
+
+**Key to paint.** Chromium (fixture, 200 messages, median / p95 in ms): `j` and `k` ×100 8–10 / 19–21 with the plugin and nothing to compare without it; typing 12–14 / 21–48 with and without; `w` `b` `0` `$` 7–9 / 18–25. In the real app (WebKitGTK, one key every 120 ms by `xdotool`): `w` `b` `0` `$` ×50 each 12 / 19, max 35; `j` ×100 on a list that has settled 11 / 18, max 65; typing 73 characters 72 / 148, max 205 (the host's editor; the plugin does nothing for a plain letter).
+
+**The one finding: the first screens of a list.** On a list that has just been entered (a channel opened or `gg` from the bottom) the first 20 to 35 `j` presses take 140 to 550 ms each, and the rest 2 to 20 ms. With the Full trace over such a run, `moveCursor` took 2,460 ms in 72 calls, and 2,424 ms of that was `Element.scrollIntoView` (35 calls, about 69 ms each); the rest of `moveCursor` (`querySelectorAll`, `closest`, `getClientRects`, `focus`) 36 ms, and `rowsOf`, `paintCursor`, `eligible` and the key handlers under 60 ms in all. The cursor `<style>` was rewritten 35 times in that run. `scrollIntoView` is the first call after that rewrite that needs layout, so the cost is the forced style recalculation and layout of the host's list (rows still mounting, images still loading), not the scroll itself; the trace cannot tell the two apart, and the refactor will (cursor as an attribute, not stylesheet text, then layout read before the write).
+
+## What was and was not verified
+
+Run with `test/run.sh` against block/buzz-app `d92bfb2c`: the production web build, a fixture relay, headless Chromium on Linux, the plugin installed through the same registration code as a bundled plugin. Eighty-nine tests, all passing against the final `plugin.js`.
+
+| Test | What it proves |
+| --- | --- |
+| The label's place | In the window's bottom-right corner (within 16 px of the right edge and 8 px of the bottom) and touching no composer or composer button, in a single pane, with a thread beside the channel (in every mode, in the list and in the box, in both panes), and with three thread tabs open (whichever tab has the keys, after picking another tab). With three tabs `i` and `l` from the channel's box reach the visible tab's box, not the first tab's |
+| The cursor mark | On the bubble: the host's lift token over its fill and a 2px accent outline in the pane that has the keys, a faint 1px outline and no lift in the other, no tint and no bar on the row; the same on an own bubble; the whole message outlined when it has no bubble; the lift and outline change with the accent and the mode (a different lift token on light and on dark) |
+| The box takes the lift | With the keys in the channel's box (INSERT, then NORMAL after Esc, and NORMAL entered with `j` past the newest message) the cursor row keeps its place (same id) and shows only the 1px outline at 45%, with no lift, and the box's form has a gradient of the token at 40% (alpha under half the bubble lift's); back in the list the bubble is lifted again and the box has none. In a thread's reply box neither list is lifted and only the reply box is; the channel's box is not. The box's lift is the light and dark mode's own token, and is gone with the master switch. Red on the version before the change (3 of 3) |
+| Mode follows focus | Plain keys type in the message box, Esc leaves it with the draft intact, `i` returns through the tool's `focus()` |
+| `j` / `k`, counts, `gg`, `G` | The message cursor lands on the expected message ids |
+| Active pane | With a thread beside the channel, `data-vim-panes` is set and only the pane that has the keys has the 2px accent line under its header, as wide as the whole pane; its cursor bubble is lifted and outlined and the other pane's is only faintly outlined (the rows themselves have no tint or bar), and both follow `h`, `l` and `q`. With the channel list focused neither pane has a line (the list has its own ring), and with one pane nothing does. Moving into a message list (`h` then `l`) marks the newest message before any `j` or `k` |
+| Theme | Setting `data-accent` and `data-color-mode` on `<html>`, as Settings → Appearance does, changes the line, the cursor row and the label's border, ground and ink at once, and each equals what the host's token resolves to |
+| Membership rows | With "was added" rows in the fixture, `G` and `k` never put the cursor on one, and `o` opens a real thread with no "This destination couldn't open" page. Red before the fix (the cursor sat on the membership row) |
+| Channel list | `h` focuses the channel list, `j` moves, `l` opens and returns to the message list, `[` and `]` switch channel; navigation with `focus: "preserve"` leaves the message box unfocused; a pointer click on a channel focuses it |
+| Dialogs | No key acts on the page behind Settings |
+| Settings keys | `gs` then `j` enters the list on the open section, `j` `k` move and open nothing, `l` opens and goes into the section, `j` `k` scroll it, `h` comes back to the list, `Enter` opens like `l`, Esc closes; nothing reaches the page behind. A field in Settings still types `jkhl`; the "discard changes" question and the search dialog keep the keys off |
+| `/` and `gv` | The host's own search dialog opens; the Vim mode page opens, with its keys grouped by mode, and a lone `v` does nothing |
+| Master switch | Ctrl+Shift+E turns every key off and on |
+| Thread pane | `l` and `h` move between panes, `i` focuses the reply box, Esc makes it NORMAL without closing the thread, `k` goes up out of it, `q` closes the thread, and Esc in the thread's message list does nothing (it no longer closes the thread) |
+| Communities | `}` and `{` walk Personal space, Primary and Secondary, stop at the ends, honour a count, hide the popover, and land in the new community's channel list; `C` and `h` at the left edge open the switcher, `j`, `k`, Enter and Esc work in it |
+| Message actions | `r` with no cursor does nothing (and cannot fire later), `m` opens the message menu with focus on its first item, `j` and `k` wrap through it, Esc closes it, `r` opens the thread on the cursor message and focuses the reply box |
+| Open and close a thread | `o` with no cursor does nothing; with one it opens that message's thread beside the channel and lands in its message list in normal mode (and nothing takes focus back later); `q` closes it and focus returns to the message list; Enter reopens it; `q` from the message list closes the pane's tab; `g` then `o` or `q` is a page letter, not an action |
+| A message with replies | `o` opens its thread with the replies in it, and `j` walks them |
+| Enter | On a focused channel button Enter still opens the channel, and `o` in the channel list does nothing. With the Enter guard removed the test goes red |
+| Resize | `>` widens by 48 px (the pane's measured width agrees with the handle's `aria-valuenow`), `3>` by 144, `<` narrows, `\|` reaches the handle's maximum and `>` stays there, `=` returns to the starting width, `9<` stops at the minimum, focus stays put, and with no thread the keys do nothing |
+| Hide and show | `zc` hides the pane (the toggle then reads "open"), focus returns to the message list, a bare `c` does nothing, `zo` shows the same thread again |
+| Threads placed in the main pane | With `buzz-thread-placement.v1` set to `main`, `o` opens a tab over the channel, `j` works in it, there is no split, `q` closes the tab and the channel's list has focus again |
+| One NORMAL mode | `j` past the newest message drops into the box in NORMAL and `k` on its first row goes back up (also on a second line and on a wrapped row); `h` at the start and `l` at the end of a draft cross to the other pane's box, both ways, entering at the start or the end; `j` past the last reply drops into the reply box; with composer editing off nothing crosses. Esc in the channel's box with a thread open reaches NORMAL |
+| Esc and `?` | Esc in a NORMAL box stays in NORMAL, keeps the draft, with a thread open too; Esc in a message list leaves a thread open and `q` closes it; `?` in a NORMAL box opens the help and closing it returns to the box |
+| Leader | Space then `h` `l` `q` `<` `>` moves, closes and resizes from the lists and from a NORMAL box, keeps a box-to-box place, and anything else only cancels; Space types a space in INSERT; the page's select changes the leader and saves it; a Ctrl chord (Ctrl-b) works in INSERT; on a Mac the default is Ctrl-w |
+| The g page keys | `gi` `ga` `gr` `gw` `gv` `gt` `gs` and `gm` from the channel's list, the thread's list, the channel list, the channel's box and the thread's box (in a box nothing is typed, no INSERT, the draft stays), and `gi` `gm` `gs` from the list and the box with the platform reported as a Mac |
+| Pages | `gt` and `gT` walk Messages, Reminders, Agents in the app's order; `gi`, `gm`, `gw` jump by name; Messages opens without focusing the message box; a lone `t` does nothing |
+| Disable | Disabling the plugin in Settings removes the overlay, the cursor rule and every key |
+| Scrolling | Ctrl-d and Ctrl-u move the message list |
+| Text mode (on by default) | Motions, `x`, `dw`, `dd`, `u`, `i a A I`, two-step Esc, and Esc stepping the caret back one character. After Esc Esc, `a` resumes after the last character and `i` before it |
+| Motions | `w b e ge` on a draft mixing letters, punctuation, underscore and digits, with counts; `W B E gE`; `f t F T` with `;` and `,`, counts, a digit as the target, a failed find leaving the cursor put, and a repeated `t` going on; Esc cancelling a half-typed `f`; `gg G 3G 3gg` landing on the first non-blank; `0 ^ $` on a wrapped line; `$` then `x` keeping the line break; `l` not crossing lines; the same motions growing a visual highlight; `d` with `e f t W 2w ge F`, and `dw` on the last word of a line keeping the break |
+| Visual mode, characterwise | `v` highlights the character under the cursor, motions extend it to the right (inclusive: `vll` is three characters, `w` lands on the first letter of the next word, `$` reaches the last character), to the left (`vhh` is three, `b` by words) and across the starting character; counts; `v`, `V` and Esc leave or switch; Esc keeps the caret on the cursor end; a click ends it; keys with no meaning do not type |
+| Visual mode, linewise | `V` highlights the line, `j` and `k` grow it both ways and past the anchor; `v` then `j` crosses lines |
+| Visual operators | `y` puts the highlight on the clipboard (read back through `navigator.clipboard`) and leaves the draft; `d` and `x` delete it and `u` restores it; `c` deletes and types in insert mode; `Vd` takes whole lines with their newline (first line, middle line, last lines, only line) and leaves the caret on the next line; `Vc` keeps one empty line; `Vy` copies the lines |
+| Visual mode in a thread | In a reply box the highlight works, Esc ends it without closing the thread, a second Esc stays in NORMAL, and the thread stays open |
+| The switch | On by default. Switched off (saved), one Esc leaves the box and `v` is only a letter. The page's checkbox is checked, and unchecking saves `{"composerNormal":false}` and nothing else. An old `v1` record keeps `statusLine` but not its `composerNormal` |
+
+Not verified:
+
+- **macOS and WKWebView.** On a Mac the app runs in the system WebView. WebKit could not be run on the test VM (it needs system libraries that could not be installed there). Key handling, focus after clicks, and `Selection.modify` can differ there.
+- **The real installer.** The browser build cannot install external plugins, so the "Load from folder" path (blob import of `plugin.js`, manifest checks) was not exercised. The module follows the same contract as the `counter` and `shortcut-counter` examples.
+- **Real community switching.** The fixture switches instantly and both communities share channel ids, so the wait for the new community's channels and the cancel-on-keypress rule ran only against an instant load. A slow relay, a community with no channels and a third community are untested.
+- **The action bar on a real pointer device.** The harness runs a pointer-capable browser, so the lazy-build path (`floating`) is the one tested. On a device without a fine pointer the host builds the bar at once (`useMessageActionBarReady`), a path nothing here exercised.
+- **Older history.** The fixture holds one window of messages. Pressing `k` at the top, and a real mouse wheel, loaded nothing in the fixture, so paging of older history was not exercised.
+- **Control-based chords on a Mac.** Ctrl-d and Ctrl-u are bound as `ctrl` on Apple platforms (the service's rule) and as `mod` elsewhere. The test ran the Linux binding.
+- **The thread keys and the leader on a Mac.** `Ctrl-w` as the default leader was tested in Chromium with `navigator.platform` set to `MacIntel`, which exercises the plugin's Mac branch but not WKWebView, a real Mac keyboard, or the native Close Tab menu path (a native menu accelerator would take Ctrl-w before the page saw it; the old prefix had the same exposure). On macOS WebKit, `k` on the first row may move the caret to the start of the draft rather than not move, which the plugin handles by asking for the start of the row instead of watching the caret move, but that was not run there. `<`, `>` and `|` need Shift; the shortcut service matches the logical key, so other layouts may differ.
+- **A reply shown in the message list.** `o` on a message that is itself a reply (one sent to the channel) takes its thread root from the read model. The fixture's message list only has top-level messages, so that lookup always fell back to the message's own id.
+- **Whether the pane width survives a restart**, and what the desktop app does with a very narrow window (the pane's maximum is the page minus 320 px).
+- **Visual mode on a Mac.** Everything in visual mode is new `Selection.modify` and `Range` work, and `execCommand("copy")` and `navigator.clipboard.writeText` in the system webview are the least certain parts: the copy listener, the fallback to the async clipboard and the clipboard permission prompt were not exercised in WebKit. Whether WebKit's `paragraphboundary` stops at a newline in a pre-wrapped line was not tried either.
+- **Visual mode on a long or wrapped draft.** The tests use short drafts. `j` and `k` move by visual line (wrapped lines count), the same as in normal mode, and no test wraps.
+- **Leaving the window in visual mode.** A click or a focus move into the box ends visual mode (the highlight stays, as a plain selection). Switching to another app and back was not tried; if the browser sends a focus event to the box on return, it ends visual mode too.
+- **Pasting.** There is no `p`: a yank can be pasted with the system paste, and nothing was checked about what the editor does with that paste beyond plain text.
+- **Non-US layouts, IME composition, a screen reader, dark mode contrast of the overlay.**
+- **Long sessions on a Mac or on a developer build.** Idle, update and busy runs on Linux (above) grow nothing, but one Mac grew 567 → 3,260 MB in 90 minutes with a developer build and real data, and that was not reproduced. WebKit reports no JS heap size, so only the page process RSS was read there. A GPU, a real relay with live traffic, and a developer build's React were not part of any run.
+
+## Files
+
+| File | What it is |
+| --- | --- |
+| `manifest.json` | Plugin id `megatech.vim-mode`, API v1, no host access |
+| `plugin.js` | The plugin. Every behaviour is tagged `[API]` or `[DOM]` in the comments |
+| `README.md` | How to load it and what to try |
+| `test/vim.spec.mjs`, `test/run.sh` | The Playwright spec and the script that runs it inside a block/buzz-app checkout |
+| `test/perf.spec.mjs`, `test/leak.spec.mjs`, `test/idle.spec.mjs`, `test/perf.sh` | The measuring specs and the script that runs them with or without the plugin (see "Measuring the plugin") |
+| `screenshots/` | The plugin in the fixture app |
