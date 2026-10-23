@@ -16,7 +16,7 @@ A useful vim mode is possible, but only partly through the plugin API. Roughly h
 | `i` / `a`: focus the message box | Yes | A composer tool receives a documented `focus()` command. The plugin registers an invisible tool and calls that command. API. |
 | Switch channel (`l` on a channel, `[`, `]`) | Yes | `navigation.open({ kind: "conversation", ... }, { focus: "preserve" })`. API. The channel ids and the order of the channel list come from the sidebar markup (DOM). |
 | Esc: leave the message box | Yes | A shortcut with `allowInEditable`, plus `blur()` on the text box. API plus DOM. In a thread pane it needs a capture-phase listener (see below). |
-| `j` / `k` through messages | Yes, as DOM | The host has no "selected message". The plugin keeps a cursor id for each message pane (the channel's list and a thread's list), paints it with a CSS rule keyed by `data-message-id`, and scrolls the row into view. With a thread beside the channel, the pane that has the keys gets a 2px accent line under its header and a strong cursor row; the other pane's row goes faint. DOM. |
+| `j` / `k` through messages | Yes, as DOM | The host has no "selected message". The plugin keeps a cursor id for each message pane (the channel's list and a thread's list), marks its row with an attribute (`data-vim-cursor`, drawn by a static stylesheet and put back by a MutationObserver when the virtual list mounts the row again or a page builds its list anew), and scrolls the row into view. With a thread beside the channel, the pane that has the keys gets a 2px accent line under its header and a strong cursor row; the other pane's row goes faint. DOM. |
 | `gg`, `G`, `Ctrl-d`, `Ctrl-u` | Yes, as DOM | Scrolls the timeline element. DOM. |
 | `h` / `l`: move focus between channel list, message list, thread pane | Yes, as DOM | Finds each region by its `data-*` markers and calls `focus()`. DOM. |
 | `/` search | Yes, indirectly | Presses the host's own Cmd/Ctrl+F by dispatching a synthetic `keydown` on the window. The host's dispatcher does not check `isTrusted`. |
@@ -202,8 +202,8 @@ Every selector was read from the source at `d92bfb2c` and is exercised by the te
 | Thread pane split | `hr[aria-label="Resize main and secondary panels"]`, sent Shift+Left, Shift+Right, End and a double click | `usePanelSplit.tsx:78`, `ResizeHandle.tsx:136-147` |
 | Hide or show the thread pane | `[data-tab-pane-toggle][aria-expanded="true" or "false"]`, clicked | `ChannelsPage.tsx:1631`, `:1758`, `:1852` |
 | Close a thread | `window` event `buzz:close-active-tab` | `PanelWorkspace.tsx:245-273`, `src-tauri/src/close-request.js` |
-| Active pane | `html[data-vim-on]`, `html[data-vim-panes]` (a thread pane is visible beside the channel) and `html[data-vim-region]`, with one CSS rule that restyles the `::after` of `[data-main-workspace] > header` or `[data-panel-workspace] > header` (the host's 1px separator) for the region that has the keys. Each pane's cursor row is a rule scoped to that pane's workspace | The same `<style>` element as the cursor paint; the tests read the attributes and the computed style of the `::after` |
-| Cursor paint | A `<style>` element with a rule keyed by message id. The rule survives the list unmounting and remounting a row | The desktop CSP allows inline styles (`style-src 'self' 'unsafe-inline'`, `src-tauri/tauri.conf.json`) |
+| Active pane | `html[data-vim-on]`, `html[data-vim-panes]` (a thread pane is visible beside the channel) and `html[data-vim-region]`, with one CSS rule that restyles the `::after` of `[data-main-workspace] > header` or `[data-panel-workspace] > header` (the host's 1px separator) for the region that has the keys. Each pane's cursor row rule is scoped to that pane's workspace | The same `<style>` element as the cursor paint; the tests read the attributes and the computed style of the `::after` |
+| Cursor paint | An attribute, `data-vim-cursor` (its value is the pane, `main` or `side`), on the cursor's row element in each pane, drawn by rules in a `<style>` element that is written once. One MutationObserver on `<body>` (children added, and `data-message-id` changed) puts the attribute back when the virtual list unmounts and mounts the row again, when a page that was left is entered and builds its list anew, or when a row element is given another message's id; with every cursor row mounted it does nothing. Whether a pane's mark is the strong or the faint one comes from `html[data-vim-region]` and `html[data-vim-box]`. (It was a rule keyed by message id in a `<style>` rewritten on every move: replacing a stylesheet's text makes the engine rebuild its rules and restyle the page) | The desktop CSP allows inline styles (`style-src 'self' 'unsafe-inline'`, `src-tauri/tauri.conf.json`) |
 | Text and visual mode | `Selection.modify`, `Range` and `Selection.setBaseAndExtent`, `document.execCommand("delete")`, a `copy` event, a synthetic Cmd/Ctrl+Z, a capture-phase `keydown` and `pointerdown` listener | The message box is a ProseMirror editor |
 
 None of these is a contract. A renamed attribute, a changed pane structure or a swapped editor breaks the matching feature without any error. The plugin degrades quietly: a missing selector means a key that does nothing, and the shortcuts, the mode indicator and the page keep working.
@@ -348,18 +348,61 @@ The rule is measure first, refactor second, measure again. The measuring is buil
 | Idle 15 min, real app, an earlier build (400 ms placement timer) | 871 → 830 MB (811–897) |
 | `gg`, 20 × `j`, 20 × `k` held 5.5 min, real app, the same earlier build | 866 → 878 MB (814–916), host 122 → 125 MB |
 | Busy session 15 min, real app (134 cycles of list, box, a thread tab, help, channel switch) | page 880 → 850 MB (828–917); host 126 → 141 MB (a 12 MB step four minutes in, then ~0.4 MB a minute; no control run for the host) |
+| Held keys 24.5 min, real app, before the refactor (the cursor rule rewritten on every move): `g g j j j k k k G k k k j j j` in a loop at 8 keys a second, 12,600 keys, `held.sh` | page 357 MB cold → 462 → 479 (mean of the first and last third after minute 8), +1.4 MB/min, range 444–492; host 208 → 214 MB |
+| The same, after the refactor (the attribute cursor) | 402 MB cold → 515 → 543, +2.3 MB/min, range 492–557; host 208 → 215 MB |
+| The same, plugin off: the host's own Home / Down / Up / End in a loop | 435 MB cold → 684 → 731, +3.9 MB/min, range 638–759; host 208 → 214 MB. A heavier job than the two above (Home and End walk the whole loaded history, which `j` and `k` over the mounted rows never mount) |
 | Busy session 6 min, Chromium, the latest and the earlier build | heap after GC 21.9 → ~27 MB in the first two minutes, then flat on both; nodes 3,069–3,813 and listeners 793–951 on both (they follow the open thread tab and the help) |
 | Idle 5 min, Chromium | heap slope −6 KB/min with the plugin removed, +7 KB/min on the earlier build, −0.4 on an intermediate one, +0.9 on the latest; nodes and listeners flat on all |
 
-So nothing the plugin does grows with time, with updates or with a busy session on Linux. The Mac growth is not reproduced; a dump from that Mac minutes apart (the page counts above) or the same session with the plugin disabled would split the host from the plugin.
+So nothing the plugin does grows with time, with updates or with a busy session on Linux. Held keys make the page process rise slowly (1–4 MB/min, one run each, swinging ±40 MB), and they do so with the plugin off as well, so that rise is the host and WebKit under key-driven scrolling. The build that rewrote the cursor's stylesheet on every move did not climb faster than the one that sets an attribute, so rewriting the style text is not what leaks here; one Mac grew about 30 MB/min (11 GB in 6 hours, a developer build, 22 communities) and none of these runs came near it. All of this is WebKitGTK on a Linux test VM, not WKWebView. The Mac growth is not reproduced; a dump from that Mac minutes apart (the page counts above) or the same session with the plugin disabled would split the host from the plugin.
 
 **Key to paint.** Chromium (fixture, 200 messages, median / p95 in ms): `j` and `k` ×100 8–10 / 19–21 with the plugin and nothing to compare without it; typing 12–14 / 21–48 with and without; `w` `b` `0` `$` 7–9 / 18–25. In the real app (WebKitGTK, one key every 120 ms by `xdotool`): `w` `b` `0` `$` ×50 each 12 / 19, max 35; `j` ×100 on a list that has settled 11 / 18, max 65; typing 73 characters 72 / 148, max 205 (the host's editor; the plugin does nothing for a plain letter).
 
-**The one finding: the first screens of a list.** On a list that has just been entered (a channel opened or `gg` from the bottom) the first 20 to 35 `j` presses take 140 to 550 ms each, and the rest 2 to 20 ms. With the Full trace over such a run, `moveCursor` took 2,460 ms in 72 calls, and 2,424 ms of that was `Element.scrollIntoView` (35 calls, about 69 ms each); the rest of `moveCursor` (`querySelectorAll`, `closest`, `getClientRects`, `focus`) 36 ms, and `rowsOf`, `paintCursor`, `eligible` and the key handlers under 60 ms in all. The cursor `<style>` was rewritten 35 times in that run. `scrollIntoView` is the first call after that rewrite that needs layout, so the cost is the forced style recalculation and layout of the host's list (rows still mounting, images still loading), not the scroll itself; the trace cannot tell the two apart, and the refactor will (cursor as an attribute, not stylesheet text, then layout read before the write).
+**The one finding: the first screens of a list.** On a list that has just been entered (a channel opened or `gg` from the bottom) the first 20 to 35 `j` presses take 140 to 550 ms each, and the rest 2 to 20 ms. With the Full trace over such a run, `moveCursor` took 2,460 ms in 72 calls, and 2,424 ms of that was `Element.scrollIntoView` (35 calls, about 69 ms each); the rest of `moveCursor` (`querySelectorAll`, `closest`, `getClientRects`, `focus`) 36 ms, and `rowsOf`, `paintCursor`, `eligible` and the key handlers under 60 ms in all. The cursor `<style>` was rewritten 35 times in that run. `scrollIntoView` is the first call after that rewrite that needs layout, so it was where the cost showed up; the trace could not say whether the scroll or the rewrite caused it. The refactor's experiments did (next section): it was the rewrite.
+
+**After the refactor: the slow keys were the stylesheet rewrite.** Five builds, each installed in the real app and run through `keys.sh first-j` (three app restarts each, `gg`, then 100 `j` at one key per 120 ms), on the test VM:
+
+| Build | What differs from the line above | First 35 `j`, median per restart (ms) |
+| --- | --- | --- |
+| Before the refactor: one 2,336-line closure | the cursor is a rule rewritten in a `<style>` on every move, and the row is revealed with `scrollIntoView` | 135 / 140 / 151 |
+| the TypeScript port, a pure move | nothing in behaviour | 130 / 136 / 175 |
+| + the row revealed from rects read first, no `scrollIntoView` | layout reads before writes | 131 / 158 / 170 |
+| the port + the cursor as `data-vim-cursor` on the row and one static `<style>` (`scrollIntoView` kept) | the rewrite is gone | 12 / 15 / 15 |
+| both changes together: the refactored plugin | | 13 / 14 / 16 |
+
+Reading the row's rects first changed nothing by itself; replacing the rewritten rule with an attribute did all of it. Why a rewrite is that slow in the first seconds of a list was not isolated (the likely reason is that every rewrite invalidates the style of the host's rows while they are still mounting); that it is the rewrite, and not the scroll, is what the runs show. The attribute is set on one row, so a move now touches two elements and no stylesheet; a `MutationObserver` on the document puts the mark back when the list mounts the row again.
+
+**What the 100 `j` are.** After a restart the page has mounted only 20 or 21 rows of the channel (6 once the newest messages were tall; it follows their height). `gg` and then `j` walk those rows, the next `j` goes past the newest message and focuses the message box (NORMAL), and the other 79 are caret moves in the empty box. So "the first 35 against the rest" mixes list moves with box keys; `summary.py` splits where the list ends. Real app, the test VM, three restarts each (for 20 keys the p95 is the maximum):
+
+| | List moves | The step into the box | Box keys |
+| --- | --- | --- | --- |
+| Before | n = 21, median 222 / 249 / 259 ms, max 365–424 | 125 / 165 / 191 ms | median 9–10 |
+| After | n = 20, median 15 / 18 / 18 ms, max 65 / 66 / 81 | 145 / 146 / 175 ms | median 7–9 |
+| the host's own Home + Down scroll over the same rows (plugin on) | median 17 / 16 / 15, p95 26 / 64 / 30 | | |
+| the same, plugin off | median 16 / 16 / 16, p95 27–30 | | |
+
+List moves are 13–16 times faster and now cost what the host's own scrolling costs. **The step into the box is the one slow key left, and it costs the same on both builds.** In a Full trace of a cold run (which slows the page) the plugin's `moveCursor` for that key took 16 ms or less while the key's paint took 239 ms: the rest is the browser and the host's editor taking focus.
+
+**The rest of the real-app run** (`run.sh`, 14.5 minutes of idle each; medians / p95 in ms):
+
+| | Before | After |
+| --- | --- | --- |
+| `w` `b` `0` `$` ×50 each, NORMAL | 12 / 18 | 13 / 21 (max 109) |
+| Typing 73 characters, plugin on | 83 / 153 | 77 / 153 |
+| Typing 73 characters, plugin off | 79 / 156 | 81 / 166 |
+| Idle page RSS, plugin on | 459 → 419 MB (−2.7 MB/min) | 556 → 511 MB (−3.1 MB/min) |
+| Idle page RSS, plugin off | 526 → 394 MB (−9.1 MB/min) | 516 → 507 MB (−0.6 MB/min) |
+| Host process, plugin on | 209 → 210 MB | 209 → 209 MB |
+
+Typing and NORMAL motions are bound by the frame (about 12 ms), not by the plugin: the script part of a NORMAL key is about 1 ms. Idle memory falls after a restart on every build and with the plugin off, so there is nothing for the refactor to change there.
+
+**Planned in the refactor and dropped, with the reason.** A `set()` that does nothing when nothing changed: the keys never call `set()` for a repeat, so there is nothing to skip. Cached pane and box lookups: `rowsOf` costs 0.17 ms a key. Probing the word motions for a cheaper path: the script part of a NORMAL key is about 1 ms inside a 12 ms frame.
+
+**Accepted from an independent read of the port, not fixed.** The label's `<div>` and the cursor's `<style>` are created, and `navigator.platform` is read, when the module is imported rather than when it is applied. The host evaluates a revision's module once and reuses it when the revision is enabled again, so the same two elements go back on the page (`ctx.effect` removes them on dispose, and the leak spec counts them over six cycles); `apply` resets every module variable first. A revision that was disposed and is applied again therefore starts from a clean state, not from the state it was disposed with.
 
 ## What was and was not verified
 
-Run with `test/run.sh` against block/buzz-app `d92bfb2c`: the production web build, a fixture relay, headless Chromium on Linux, the plugin installed through the same registration code as a bundled plugin. Eighty-nine tests, all passing against the final `plugin.js`.
+Run with `test/run.sh` against block/buzz-app `d92bfb2c`: the production web build, a fixture relay, headless Chromium on Linux, the plugin installed through the same registration code as a bundled plugin. Ninety-two tests, all passing against the final `plugin.js`.
 
 | Test | What it proves |
 | --- | --- |
@@ -423,8 +466,29 @@ Not verified:
 | File | What it is |
 | --- | --- |
 | `manifest.json` | Plugin id `megatech.vim-mode`, API v1, no host access |
-| `plugin.js` | The plugin. Every behaviour is tagged `[API]` or `[DOM]` in the comments |
+| `plugin.js` | The plugin as the app loads it: one self-contained module, built from `src/` (do not edit it by hand) |
+| `src/` | The source, in TypeScript, one module per concern (see "Source layout"). Every behaviour is tagged `[API]` or `[DOM]` in the comments |
+| `package.json`, `pnpm-lock.yaml`, `tsconfig.json`, `vite.config.ts`, `scripts/ship.mjs` | The build: type-check, bundle with Vite, copy the bundle next to the manifest |
 | `README.md` | How to load it and what to try |
 | `test/vim.spec.mjs`, `test/run.sh` | The Playwright spec and the script that runs it inside a block/buzz-app checkout |
 | `test/perf.spec.mjs`, `test/leak.spec.mjs`, `test/idle.spec.mjs`, `test/perf.sh` | The measuring specs and the script that runs them with or without the plugin (see "Measuring the plugin") |
+| `test/screenshots.spec.mjs` | Takes the pictures in `screenshots/` in the fixture app, light and dark (run it with `perf.sh`, see `README.md`) |
 | `screenshots/` | The plugin in the fixture app |
+
+## Source layout
+
+`src/index.ts` is the entry (`inject` and `apply`); `pnpm build` (`npm run build` works too) type-checks `src/` and bundles it into `plugin.js`, the only file the app loads (the app never runs a build: commit the built file with the source). A module holds one concern and keeps its state in module variables; `apply` resets them first, because the host reuses an evaluated module when a revision is enabled again.
+
+| Module | What it holds |
+| --- | --- |
+| `index.ts`, `lifecycle.ts` | `apply`, and what the plugin puts on the page and takes off again (`ctx.effect`): listeners, the stylesheet, the label |
+| `state.ts`, `constants.ts`, `types.ts` | The immutable state snapshot and its subscribers, the pending count/operator timer; selectors, leaders, storage keys |
+| `dom.ts`, `focus.ts` | Lookups in the host's markup (panes, timelines, message rows, the message box), and mode-follows-focus |
+| `cursor.ts`, `theme.ts` | The message cursor per pane (an attribute on its row, kept on the row by a MutationObserver) and the one stylesheet, from the host's theme tokens |
+| `panes.ts`, `communities.ts`, `pages.ts`, `threads.ts` | Moving between regions and channels, the community switcher, `gt`/`gi`/`gs`, thread open/close/hide/resize and the message actions |
+| `box.ts`, `caret.ts`, `motions.ts`, `visual.ts`, `normal.ts` | The message box: INSERT and NORMAL as stops in a pane's column, caret primitives, the motions, VISUAL, and the NORMAL key handler |
+| `leader.ts`, `escape.ts`, `menus.ts`, `settings-dialog.ts` | The leader key, Esc beside a thread pane, `j`/`k` in the host's menus, keys inside the Settings dialog |
+| `shortcuts.ts`, `key-list.ts`, `page.ts`, `help.ts`, `status.ts` | The shortcut registrations, the key list shown on the Vim mode page and in the `?` dialog, the page, the dialog, the label |
+| `perf.ts` | The opt-in performance trace (see "Measuring the plugin") |
+| `host-api.ts`, `globals.d.ts` | The parts of the host API the plugin uses, typed by hand, and the DOM features TypeScript's library lacks (`Selection.modify`) |
+
