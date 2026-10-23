@@ -661,6 +661,142 @@ var cursorRow = () => {
 	const id = cursors[cursorPane()];
 	return scroller && id ? rowsOf(scroller).find((row) => row.dataset.messageId === id) : void 0;
 };
+// src/communities.ts
+var communityTrigger = () => document.querySelector(COMMUNITY_TRIGGER);
+var communityPopup = () => [...document.querySelectorAll(COMMUNITY_POPUP)].find(visible);
+var communityRows = (popup) => [...popup.querySelectorAll("button:not([disabled])")].filter((row) => row.matches("[aria-label^=\"Switch to \"]") || row.textContent?.trim() === "Personal space");
+async function openCommunityPicker() {
+	const trigger = communityTrigger();
+	if (!trigger) return;
+	if (!communityPopup()) trigger.click();
+	const popup = await settle(communityPopup);
+	const rows = popup ? communityRows(popup) : [];
+	focusEl(rows.find((row) => row.hasAttribute("aria-current")) ?? rows[0]);
+}
+var switching = false;
+var resetCommunities = () => {
+	switching = false;
+};
+var switchCommunity = async (direction) => {
+	const steps = takeCount() * direction;
+	const trigger = communityTrigger();
+	if (!trigger || switching) return;
+	switching = true;
+	const root = document.documentElement;
+	root.dataset.vimDriving = "";
+	const region = state.region;
+	const before = trigger.getAttribute("aria-label");
+	const oldRows = new Set(channelRows());
+	let switched = false;
+	try {
+		if (!communityPopup()) trigger.click();
+		const popup = await settle(communityPopup);
+		const rows = popup ? communityRows(popup) : [];
+		const at = rows.findIndex((row) => row.hasAttribute("aria-current"));
+		const target = rows[clamp(at + steps, 0, rows.length - 1)];
+		if (at < 0 || !target || target === rows[at]) {
+			if (popup) trigger.click();
+			await settle(() => !communityPopup());
+			if (available(region)) goRegion(region);
+			return;
+		}
+		target.click();
+		await settle(() => !communityPopup() && communityTrigger()?.getAttribute("aria-label") !== before);
+		clearCursors();
+		switched = true;
+	} finally {
+		delete root.dataset.vimDriving;
+		switching = false;
+	}
+	if (!switched) return;
+	const epoch = keyEpoch;
+	if (await settle(() => {
+		const first = channelRows()[0];
+		return first && !oldRows.has(first);
+	}, 5e3) && keyEpoch === epoch) goRegion("sidebar");
+};
+// src/panes.ts
+var openChannel = async (row) => {
+	const { status, viewer, origin } = ctx.relay.snapshot();
+	if (status === "ready" && viewer && origin) try {
+		if ((await ctx.navigation.open({
+			version: 1,
+			kind: "conversation",
+			scope: {
+				viewer,
+				communityOrigin: origin
+			},
+			channelId: row.dataset.channelId
+		}, { focus: "preserve" })).status === "opened") return true;
+	} catch {}
+	row.click();
+	return false;
+};
+var REGIONS = [
+	"sidebar",
+	"main",
+	"side"
+];
+var available = (region) => region === "sidebar" ? channelRows().length > 0 : !!timelineOf(region);
+var ensureCursor = async (pane) => {
+	if (cursors[pane]) return;
+	const row = await settle(() => {
+		const scroller = timelineOf(pane);
+		return scroller && nearestVisible(scroller, pane === "main");
+	}, 1e3);
+	if (row && !cursors[pane] && !disposed) selectRow(row);
+};
+var goRegion = (region) => {
+	const was = document.activeElement;
+	if (isEditable(was) && inComposer(was)) {
+		document.getSelection()?.removeAllRanges();
+		set({
+			textMode: "insert",
+			visual: ""
+		});
+	}
+	if (region === "sidebar") {
+		const rows = channelRows();
+		focusEl(rows.includes(document.activeElement) ? document.activeElement : selectedRow() ?? rows[0]);
+	} else focusEl(timelineOf(region));
+	set({ region });
+	if (region !== "sidebar") ensureCursor(region);
+};
+var shiftRegion = (direction) => {
+	const order = REGIONS.filter(available);
+	const from = order.includes(state.region) ? order.indexOf(state.region) : order.indexOf("main");
+	const next = order[clamp(from + direction, 0, order.length - 1)];
+	if (!next || next === state.region) {
+		if (direction < 0 && from <= 0) openCommunityPicker();
+		return;
+	}
+	const row = document.activeElement;
+	if (state.region === "sidebar" && direction > 0 && row?.matches?.("[data-sidebar-section] button[data-channel-id]")) {
+		(row.getAttribute("aria-current") === "page" ? Promise.resolve() : openChannel(row)).then(() => afterLayout(() => goRegion("main")));
+		return;
+	}
+	goRegion(next);
+};
+var moveSidebar = (steps) => {
+	const rows = channelRows();
+	if (!rows.length) return;
+	const base = rows.includes(document.activeElement) ? rows.indexOf(document.activeElement) : rows.indexOf(selectedRow());
+	focusEl(rows[clamp(base < 0 ? 0 : base + steps, 0, rows.length - 1)]);
+	set({ region: "sidebar" });
+};
+var step = (direction) => {
+	const n = takeCount() * direction;
+	if (state.region === "sidebar") moveSidebar(n);
+	else moveCursor(n);
+};
+var switchChannel = (direction) => {
+	const rows = channelRows();
+	const at = rows.indexOf(selectedRow());
+	const row = rows[clamp(at + direction * takeCount(), 0, rows.length - 1)];
+	if (!row || row === rows[at]) return;
+	clearCursors();
+	openChannel(row).then(() => afterLayout(() => state.region === "main" && goRegion("main")));
+};
 // src/focus.ts
 var syncFocus = timed("syncFocus", () => {
 	if (disposed) return;
@@ -1112,9 +1248,10 @@ var enterBox = (pane, at) => {
 	syncFocus();
 	return true;
 };
-var otherBox = () => {
-	const target = state.region === "side" ? "main" : "side";
-	return composerOf(target) ? target : void 0;
+var boxStep = (direction) => {
+	const beside = state.region === "main" && direction > 0 ? "side" : state.region === "side" && direction < 0 ? "main" : void 0;
+	if (beside && composerOf(beside) && enterBox(beside, direction > 0 ? "start" : "end")) return;
+	shiftRegion(direction);
 };
 var leaveBox = (el, pane) => {
 	el.blur();
@@ -1160,142 +1297,6 @@ var pressHostChord = (key) => !(document.activeElement ?? document.body).dispatc
 	cancelable: true,
 	composed: true
 }));
-// src/panes.ts
-var openChannel = async (row) => {
-	const { status, viewer, origin } = ctx.relay.snapshot();
-	if (status === "ready" && viewer && origin) try {
-		if ((await ctx.navigation.open({
-			version: 1,
-			kind: "conversation",
-			scope: {
-				viewer,
-				communityOrigin: origin
-			},
-			channelId: row.dataset.channelId
-		}, { focus: "preserve" })).status === "opened") return true;
-	} catch {}
-	row.click();
-	return false;
-};
-var REGIONS = [
-	"sidebar",
-	"main",
-	"side"
-];
-var available = (region) => region === "sidebar" ? channelRows().length > 0 : !!timelineOf(region);
-var ensureCursor = async (pane) => {
-	if (cursors[pane]) return;
-	const row = await settle(() => {
-		const scroller = timelineOf(pane);
-		return scroller && nearestVisible(scroller, pane === "main");
-	}, 1e3);
-	if (row && !cursors[pane] && !disposed) selectRow(row);
-};
-var goRegion = (region) => {
-	const was = document.activeElement;
-	if (isEditable(was) && inComposer(was)) {
-		document.getSelection()?.removeAllRanges();
-		set({
-			textMode: "insert",
-			visual: ""
-		});
-	}
-	if (region === "sidebar") {
-		const rows = channelRows();
-		focusEl(rows.includes(document.activeElement) ? document.activeElement : selectedRow() ?? rows[0]);
-	} else focusEl(timelineOf(region));
-	set({ region });
-	if (region !== "sidebar") ensureCursor(region);
-};
-var shiftRegion = (direction) => {
-	const order = REGIONS.filter(available);
-	const from = order.includes(state.region) ? order.indexOf(state.region) : order.indexOf("main");
-	const next = order[clamp(from + direction, 0, order.length - 1)];
-	if (!next || next === state.region) {
-		if (direction < 0 && from <= 0) openCommunityPicker();
-		return;
-	}
-	const row = document.activeElement;
-	if (state.region === "sidebar" && direction > 0 && row?.matches?.("[data-sidebar-section] button[data-channel-id]")) {
-		(row.getAttribute("aria-current") === "page" ? Promise.resolve() : openChannel(row)).then(() => afterLayout(() => goRegion("main")));
-		return;
-	}
-	goRegion(next);
-};
-var moveSidebar = (steps) => {
-	const rows = channelRows();
-	if (!rows.length) return;
-	const base = rows.includes(document.activeElement) ? rows.indexOf(document.activeElement) : rows.indexOf(selectedRow());
-	focusEl(rows[clamp(base < 0 ? 0 : base + steps, 0, rows.length - 1)]);
-	set({ region: "sidebar" });
-};
-var step = (direction) => {
-	const n = takeCount() * direction;
-	if (state.region === "sidebar") moveSidebar(n);
-	else moveCursor(n);
-};
-var switchChannel = (direction) => {
-	const rows = channelRows();
-	const at = rows.indexOf(selectedRow());
-	const row = rows[clamp(at + direction * takeCount(), 0, rows.length - 1)];
-	if (!row || row === rows[at]) return;
-	clearCursors();
-	openChannel(row).then(() => afterLayout(() => state.region === "main" && goRegion("main")));
-};
-// src/communities.ts
-var communityTrigger = () => document.querySelector(COMMUNITY_TRIGGER);
-var communityPopup = () => [...document.querySelectorAll(COMMUNITY_POPUP)].find(visible);
-var communityRows = (popup) => [...popup.querySelectorAll("button:not([disabled])")].filter((row) => row.matches("[aria-label^=\"Switch to \"]") || row.textContent?.trim() === "Personal space");
-async function openCommunityPicker() {
-	const trigger = communityTrigger();
-	if (!trigger) return;
-	if (!communityPopup()) trigger.click();
-	const popup = await settle(communityPopup);
-	const rows = popup ? communityRows(popup) : [];
-	focusEl(rows.find((row) => row.hasAttribute("aria-current")) ?? rows[0]);
-}
-var switching = false;
-var resetCommunities = () => {
-	switching = false;
-};
-var switchCommunity = async (direction) => {
-	const steps = takeCount() * direction;
-	const trigger = communityTrigger();
-	if (!trigger || switching) return;
-	switching = true;
-	const root = document.documentElement;
-	root.dataset.vimDriving = "";
-	const region = state.region;
-	const before = trigger.getAttribute("aria-label");
-	const oldRows = new Set(channelRows());
-	let switched = false;
-	try {
-		if (!communityPopup()) trigger.click();
-		const popup = await settle(communityPopup);
-		const rows = popup ? communityRows(popup) : [];
-		const at = rows.findIndex((row) => row.hasAttribute("aria-current"));
-		const target = rows[clamp(at + steps, 0, rows.length - 1)];
-		if (at < 0 || !target || target === rows[at]) {
-			if (popup) trigger.click();
-			await settle(() => !communityPopup());
-			if (available(region)) goRegion(region);
-			return;
-		}
-		target.click();
-		await settle(() => !communityPopup() && communityTrigger()?.getAttribute("aria-label") !== before);
-		clearCursors();
-		switched = true;
-	} finally {
-		delete root.dataset.vimDriving;
-		switching = false;
-	}
-	if (!switched) return;
-	const epoch = keyEpoch;
-	if (await settle(() => {
-		const first = channelRows()[0];
-		return first && !oldRows.has(first);
-	}, 5e3) && keyEpoch === epoch) goRegion("sidebar");
-};
 // src/threads.ts
 var rowControl = async (label) => {
 	const id = cursorRow()?.dataset.messageId;
@@ -1410,8 +1411,7 @@ var leaderHere = (el) => {
 };
 var leaderPane = (direction) => {
 	clearPending();
-	const other = isEditable(document.activeElement) && inComposer(document.activeElement) ? otherBox() : void 0;
-	if (other && enterBox(other, other === "side" ? "start" : "end")) return;
+	if (isEditable(document.activeElement) && inComposer(document.activeElement)) return boxStep(direction);
 	shiftRegion(direction);
 };
 var LEADER_THEN = {
@@ -1495,7 +1495,7 @@ var groups = () => {
 				],
 				[
 					`${L}  then  h  l  q  <  >  |  =`,
-					"The leader key, for pane commands that work from anywhere, the message box too: h and l move to the pane on the left or right (from a message box, to the other pane's box), q closes the thread, < > | = resize it. Change the leader on the Vim mode page",
+					"The leader key, for pane commands that work from anywhere, the message box too: h and l move to the pane on the left or right (from a message box, to the box of the pane beside it, or to the channel list), q closes the thread, < > | = resize it. Change the leader on the Vim mode page",
 					"DOM"
 				],
 				[
@@ -1591,8 +1591,8 @@ var groups = () => {
 			rows: [
 				["h  j  k  l", "Move the caret (counts work)"],
 				["k  (on the first row)", "Go up out of the box into the newest message of the pane"],
-				["h  (at the very start)  l  (at the very end)", "Go on into the other pane's box: the thread's from the channel's, and back"],
-				[`${L}  then  h  l  q  <  >  |  =`, "The leader key works here too, from anywhere in the draft: h and l go to the other pane's box, q closes the thread, < > | = resize it"],
+				["h  (at the very start)  l  (at the very end)", "Go one pane left or right: the thread's box is right of the channel's, which is right of the channel list (nothing lies right of the thread)"],
+				[`${L}  then  h  l  q  <  >  |  =`, "The leader key works here too, from anywhere in the draft: h and l go one pane left or right, q closes the thread, < > | = resize it"],
 				["w  b  e  ge", "Words: letters, digits and underscore are one word, any other run of characters is another"],
 				["W  B  E  gE", "WORDs: any run of non-blank characters"],
 				["0  ^  $", "Start of the line, first non-blank, end of the line. A line runs between two line breaks, however it wraps"],
@@ -1890,10 +1890,7 @@ var textKey = timed("textKey", (key) => {
 	}
 	if (motion) {
 		if (key === "k" && onFirstRow(selection)) return boxUp(state.region === "side" ? "side" : "main");
-		if (key === "h" || key === "l") {
-			const across = (key === "l" ? atDraftEnd(selection) : atDraftStart(selection)) && otherBox();
-			if (across) return void enterBox(across, key === "l" ? "start" : "end");
-		}
+		if (key === "h" && atDraftStart(selection) || key === "l" && atDraftEnd(selection)) return boxStep(key === "l" ? 1 : -1);
 		motion.run(selection, n, typed);
 		clampCursor(selection);
 		return;

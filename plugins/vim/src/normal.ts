@@ -4,7 +4,7 @@
 // capture-phase listener that swallows plain keys while the composer is in text-normal mode
 // and moves the caret with Selection.modify.
 import { apple } from "./constants";
-import { boxUp, enterBox, enterInsert, otherBox } from "./box";
+import { boxStep, boxUp, enterInsert } from "./box";
 import {
   atDraftEnd,
   atDraftStart,
@@ -70,14 +70,10 @@ const textKey = perf.timed("textKey", (key: string) => {
     return;
   }
   if (motion) {
-    // k on the first row goes up into the newest message; h at the very start and l at the very
-    // end of the draft go on into the other pane's box (a key that could not move anyway).
+    // k on the first row goes up into the newest message; h at the very start and l at the very end of the
+    // draft (a key that could not move anyway) go one pane left or right, as in the lists.
     if (key === "k" && onFirstRow(selection)) return boxUp(state.region === "side" ? "side" : "main");
-    if (key === "h" || key === "l") {
-      const across = (key === "l" ? atDraftEnd(selection) : atDraftStart(selection)) && otherBox();
-      // Moving right enters the other box at the start of its draft, moving left at the end.
-      if (across) return void enterBox(across, key === "l" ? "start" : "end");
-    }
+    if ((key === "h" && atDraftStart(selection)) || (key === "l" && atDraftEnd(selection))) return boxStep(key === "l" ? 1 : -1);
     motion.run(selection, n, typed);
     clampCursor(selection); // the cursor rests on a character, as in vim
     return;

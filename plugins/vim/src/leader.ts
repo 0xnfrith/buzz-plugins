@@ -1,14 +1,14 @@
 // ---- The leader key [DOM] ---------------------------------------------------------------
 // A prefix for the pane commands that must work from anywhere: inside the message box every plain
 // key is a text command, so `h` `l` `q` `<` `>` cannot be the pane keys there. Leader then h or l
-// moves between panes (from a message box to the next pane's box, from a list to its list), q
+// moves between panes (from a message box to the box of the pane beside it, from a list to its list), q
 // closes the thread, < > | = resize the thread pane. Our own capture-phase listener, ahead of the
 // others, so it sees the keys before the editor, the shortcut service or the host's tab handling.
 // A chord leader (Ctrl-...) cannot be typing, so it also works in INSERT; a plain one (Space,
 // comma) works only where plain keys are ours: the message list, the channel list, a NORMAL box.
 import { apple, LEADERS, SCROLLER, SIDEBAR_ROW } from "./constants";
 import { contextOk, inComposer, isEditable, timelineOf } from "./dom";
-import { enterBox, otherBox } from "./box";
+import { boxStep } from "./box";
 import { isHelpOpen } from "./help";
 import { shiftRegion } from "./panes";
 import { armPending, bumpKeyEpoch, clearPending, set, state } from "./state";
@@ -27,13 +27,11 @@ const leaderHere = (el: Element | null) => {
   if (isEditable(el)) return inComposer(el) && state.composerNormal && state.textMode === "normal";
   return el.matches(SCROLLER) || el.matches(SIDEBAR_ROW);
 };
-// In a message box, h and l both mean "the other pane's box"; with no other pane they fall back to
-// moving between the panes as in the lists (h from the channel's box reaches the channel list).
+// h and l move one pane left or right, from a message box too (see boxStep): h from the channel's box
+// reaches the channel list, whether or not a thread is open.
 const leaderPane = (direction: number) => {
   clearPending();
-  const inBox = isEditable(document.activeElement) && inComposer(document.activeElement);
-  const other = inBox ? otherBox() : undefined;
-  if (other && enterBox(other, other === "side" ? "start" : "end")) return;
+  if (isEditable(document.activeElement) && inComposer(document.activeElement)) return boxStep(direction);
   shiftRegion(direction);
 };
 const LEADER_THEN: Record<string, () => void> = {

@@ -951,7 +951,7 @@ test.describe("one NORMAL mode: a pane is its messages and, at the bottom, its m
     await expect(mainScroller(page)).toBeFocused();
   });
 
-  test("h at the very start and l at the very end of a draft go on into the other pane's box, both ways", async ({
+  test("h at the very start and l at the very end of a draft go one pane left or right: the thread's box, the channel's box, the channel list", async ({
     page,
     app,
   }) => {
@@ -961,7 +961,7 @@ test.describe("one NORMAL mode: a pane is its messages and, at the bottom, its m
     await page.keyboard.type("reply text");
     await press(page, "Escape");
     await expect(bar(page)).toHaveText("-- NORMAL --  side");
-    await press(page, "0", "h"); // the very start of the thread's draft: the channel's box
+    await press(page, "0", "h"); // the very start of the thread's draft: the channel's box, to its left
     await expect(composer(page)).toBeFocused();
     await expect(bar(page)).toHaveText("-- NORMAL --  main");
     await page.keyboard.type("x"); // NORMAL: no typing
@@ -973,16 +973,76 @@ test.describe("one NORMAL mode: a pane is its messages and, at the bottom, its m
     await expect(replyBox(page)).toBeFocused();
     await expect(bar(page)).toHaveText("-- NORMAL --  side");
     await expect.poll(() => draft(page, "Alpha")).toBe("hello");
-    await press(page, "$", "l"); // the end of the thread's draft: back to the channel's box, at its start
+    // The thread is the rightmost pane: nothing lies to its right, so l stays where it is (it used to jump back).
+    await press(page, "$", "l");
+    await expect(replyBox(page)).toBeFocused();
+    await expect(bar(page)).toHaveText("-- NORMAL --  side");
+    await press(page, "0", "h"); // left again: the channel's box, at the end of its draft
     await expect(composer(page)).toBeFocused();
     await expect(bar(page)).toHaveText("-- NORMAL --  main");
-    // The editor puts its own saved caret back on focus; the plugin places its caret again a moment later.
-    await expect.poll(() => offset(page)).toBe(0);
-    await press(page, "h"); // the very start of the channel's draft: the thread's box, at its end
-    await expect(replyBox(page)).toBeFocused();
-    await expect.poll(() => replyBox(page).evaluate((el) => el.textContent)).toBe("reply text");
     await press(page, "x"); // the caret really is on the last character
-    await expect.poll(() => replyBox(page).evaluate((el) => el.textContent)).toBe("reply tex");
+    await expect.poll(() => draft(page, "Alpha")).toBe("hell");
+    // Left once more: the channel list, as h does from the message list. It used to go back to the thread's box.
+    await press(page, "0", "h");
+    await expect(bar(page)).toHaveText("-- NORMAL --  sidebar");
+    await expect(page.locator("button[data-channel-id]:focus")).toContainText("Alpha");
+    await expect(composer(page)).not.toBeFocused();
+    await expect.poll(() => draft(page, "Alpha")).toBe("hell");
+    await expect.poll(() => replyBox(page).evaluate((el) => el.textContent)).toBe("reply text");
+  });
+
+  for (const tabCount of [1, 2, 3]) {
+    test(`with ${tabCount} thread tab${tabCount > 1 ? "s" : ""} open, h from the channel's box goes to the channel list whichever pane the cursor came from, and l from the thread's box stays`, async ({
+      page,
+      app,
+    }) => {
+      await open(page, app);
+      const tabs = page.locator('[data-panel-workspace] [role="tab"][data-tab-value^="thread:"]');
+      await openThreadBeside(page);
+      for (let count = 2; count <= tabCount; count++) {
+        await press(page, "h", "k", "o"); // from the channel's list one message further up, a new thread tab
+        await expect(tabs).toHaveCount(count);
+      }
+      await press(page, "i");
+      await expect(replyBox(page)).toBeFocused();
+      await press(page, "Escape");
+      await expect(bar(page)).toHaveText("-- NORMAL --  side");
+      await press(page, "h"); // left from the thread's box: the channel's box
+      await expect(composer(page)).toBeFocused();
+      await expect(bar(page)).toHaveText("-- NORMAL --  main");
+      await press(page, "h"); // left again: the channel list, not back to the thread's box
+      await expect(bar(page)).toHaveText("-- NORMAL --  sidebar");
+      await expect(page.locator("button[data-channel-id]:focus")).toContainText("Alpha");
+      await expect(replyBox(page)).not.toBeFocused();
+      // Right: from the channel's box to the thread's (the tab that shows), and no further.
+      await composer(page).click();
+      await press(page, "Escape");
+      await expect(bar(page)).toHaveText("-- NORMAL --  main");
+      await press(page, "l");
+      await expect(replyBox(page)).toBeFocused();
+      await expect(bar(page)).toHaveText("-- NORMAL --  side");
+      await press(page, "l");
+      await expect(replyBox(page)).toBeFocused();
+      await expect(bar(page)).toHaveText("-- NORMAL --  side");
+    });
+  }
+
+  test("with no thread open, h at the very start of the channel's draft reaches the channel list and l at the very end stays", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    await composer(page).click();
+    await page.keyboard.type("abc");
+    await press(page, "Escape");
+    await expect(bar(page)).toHaveText("-- NORMAL --  main");
+    await press(page, "l"); // on the last character; there is no pane to the right
+    await expect(composer(page)).toBeFocused();
+    await expect(bar(page)).toHaveText("-- NORMAL --  main");
+    await press(page, "0", "h");
+    await expect(bar(page)).toHaveText("-- NORMAL --  sidebar");
+    await expect(page.locator("button[data-channel-id]:focus")).toContainText("Alpha");
+    await expect.poll(() => draft(page, "Alpha")).toBe("abc");
   });
 
   test("j past the last reply drops into the reply box, and k goes back up", async ({ page, app }) => {
@@ -1090,7 +1150,28 @@ test.describe("the leader key", () => {
     await expect(bar(page)).toHaveText("-- NORMAL --  main");
   });
 
-  test("in a NORMAL message box it works too: h and l go to the next pane's box, q closes the thread", async ({
+  test("in a NORMAL message box h and l go by position too: with a thread open h from the channel's box reaches the channel list and l from the thread's box stays", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    await openThreadBeside(page);
+    await press(page, "i");
+    await press(page, "Escape");
+    await expect(bar(page)).toHaveText("-- NORMAL --  side");
+    await leader(page, "l"); // the thread is the rightmost pane
+    await expect(replyBox(page)).toBeFocused();
+    await expect(bar(page)).toHaveText("-- NORMAL --  side");
+    await leader(page, "h");
+    await expect(composer(page)).toBeFocused();
+    await expect(bar(page)).toHaveText("-- NORMAL --  main");
+    await leader(page, "h"); // left of the channel's box is the channel list, not the thread's box
+    await expect(bar(page)).toHaveText("-- NORMAL --  sidebar");
+    await expect(composer(page)).not.toBeFocused();
+    await expect(replyBox(page)).not.toBeFocused();
+  });
+
+  test("in a NORMAL message box it works too: h and l go to the box of the pane beside it, q closes the thread", async ({
     page,
     app,
   }) => {

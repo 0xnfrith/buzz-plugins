@@ -5,6 +5,7 @@ import { composerOf, focusEl, inComposer, isEditable, afterLayout, regionOf, row
 import type { ConversationToolProps } from "./host-api";
 import { clampCursor, isBreak, peek, stepRight } from "./caret";
 import { selectRow } from "./cursor";
+import { shiftRegion } from "./panes";
 import { syncFocus } from "./focus";
 import { leaveVisual } from "./visual";
 import { bar } from "./status";
@@ -118,10 +119,16 @@ export const enterBox = (pane: Region, at: "start" | "end") => {
   syncFocus();
   return true;
 };
-// The other message pane, if it has a box on screen: the thread's from the channel's, and back.
-export const otherBox = (): "main" | "side" | undefined => {
-  const target = state.region === "side" ? "main" : "side";
-  return composerOf(target) ? target : undefined;
+// One pane left (-1) or right (+1) from a message box, by position and not by where the cursor came from:
+// the thread's pane is right of the channel's, which is right of the channel list. Into the box of the pane
+// beside it when that has one on screen (the thread's from the channel's going right, the channel's from the
+// thread's going left); anywhere else the step is the same as in the lists, so `h` from the channel's box
+// reaches the channel list and `l` from the thread's box, the rightmost pane, goes nowhere.
+export const boxStep = (direction: number) => {
+  const beside = state.region === "main" && direction > 0 ? "side" : state.region === "side" && direction < 0 ? "main" : undefined;
+  // Moving right enters the box at the start of its draft, moving left at the end.
+  if (beside && composerOf(beside) && enterBox(beside, direction > 0 ? "start" : "end")) return;
+  shiftRegion(direction);
 };
 // Out of the box into its pane's message list. blur() alone is not enough in WebKit (Linux, and most
 // likely a Mac's WKWebView): a key's text goes to the editor that holds the selection even when it
