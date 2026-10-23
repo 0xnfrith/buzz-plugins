@@ -3,6 +3,9 @@
 
 rss   page and host resident memory: the mean of the first and the last sixth of the samples, the range, the slope.
 keys  the probe's key -> paint samples: count, median, p95, max; and, for a cold-list run, the first 35 keys against the rest.
+      For a first-j run it also splits the 100 `j` where the list ends: only the rows the page has mounted (about 20) are list
+      moves, the next `j` steps into the message box, and the rest are caret moves in the empty box. The step into the box is
+      taken to be the last key of 100 ms or more among the first 40 (it is a guess from the timings alone).
 """
 import json
 import statistics as st
@@ -39,6 +42,15 @@ def keys(path):
     print(f"{path}: {line('all', samples)}")
     if "first-" in path and len(samples) > 40:
         print(f"    first 35: {line('', samples[:35])}\n    rest:     {line('', samples[35:])}")
+    if "first-j" in path and len(samples) > 40:
+        slow = [i for i, ms in enumerate(samples[:40]) if ms >= 100]
+        if slow:
+            step = slow[-1]
+            print(
+                f"    list moves: {line('', samples[:step])}\n"
+                f"    step into the box: key {step + 1} = {samples[step]:.0f} ms\n"
+                f"    box keys:   {line('', samples[step + 1:])}"
+            )
 
 
 if __name__ == "__main__":

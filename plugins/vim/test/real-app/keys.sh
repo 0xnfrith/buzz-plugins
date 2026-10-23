@@ -2,8 +2,10 @@
 # keys.sh OUTDIR LABEL SCENARIO...: key -> paint in the real app, measured by the probe plugin (plugins/key-probe/), one JSON per scenario.
 #   first-j      Vim mode on.  Restart the app, enter the long channel ([ then ], by key), gg, then j x100, one key per 120 ms;
 #                FIRST_J_RUNS times (3), one file each.
-#   first-scroll   Vim mode off or on.  Enter the long channel cold (a click on each channel), click the message list,
-#                then the host's own Up arrow x100 (it scrolls the list back through its history), the control for first-j.
+#   first-scroll   Vim mode off or on.  The control for first-j, over the same rows: restart the app, enter the long channel (a
+#                click on each channel), click the message list, Home (the top of the loaded history, where gg goes), then the
+#                host's own Down arrow x100; FIRST_J_RUNS times (3), one file each. (It used to be Up from the bottom, which
+#                walks other rows than first-j does.)
 #   typing       either.  Click the message box, type 73 characters, one per 100 ms, then clear the box.
 #   normal       Vim mode on.  i, type a line, Esc, then w b 0 $ x50 each (one key per 80 ms), then clear the box.
 # The Vim plugin's own trace stays Off (the probe is the measurement). Run with the app otherwise idle, on the same
@@ -35,10 +37,15 @@ for scenario in "$@"; do
       done
       continue ;;
     first-scroll)
-      cold_by_clicks; click $LIST 1; xdotool mousemove "$PARK_X" "$PARK_Y"
-      probe_reset
-      xdotool key --delay 120 $(repeat Up 100); sleep 1
-      probe_dump "$f" ;;
+      for run in $(seq "${FIRST_J_RUNS:-3}"); do
+        [ "${COLD:-restart}" = restart ] && { restart_app; focus_app; }
+        cold_by_clicks; click $LIST 1; xdotool mousemove "$PARK_X" "$PARK_Y"
+        xdotool key --delay 200 Home; sleep 2
+        probe_reset
+        xdotool key --delay 120 $(repeat Down 100); sleep 1
+        probe_dump "$out/$label-first-scroll-$run.json"; python3 "$HERE/summary.py" keys "$out/$label-first-scroll-$run.json"
+      done
+      continue ;;
     typing)
       click $BOX 1; xdotool mousemove "$PARK_X" "$PARK_Y"
       probe_reset
