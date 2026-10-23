@@ -141,6 +141,8 @@ test("switching the plugin off and on leaves nothing behind", async ({ page, app
     enabledRows.push(await look(`enabled ${i}`));
   }
   await page.getByRole("button", { name: "Close Settings", exact: true }).click();
+  // Not before the dialog is gone: while it closes a key still belongs to it, and the first k was lost now and then.
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   const steps = await cursorSteps();
   result.steps = steps;
   result.enabled = enabledRows;
