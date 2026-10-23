@@ -6,7 +6,7 @@ These are the rules every plugin in this repository follows. Block's own referen
 
 - A plugin is a folder with `manifest.json` (`id`, `name`, `apiVersion: 1`) and one self-contained `plugin.js` module that exports `inject` (the host services it needs) and `apply(ctx)`.
 - `ctx` is a Cordis context. React comes from the host as `ctx.react`. Nothing is imported at run time: no npm packages, no separate CSS or assets.
-- Small plugins (like the vim plugin) can be written directly as `plugin.js`. Larger UI starts from Block's starter (`buzzodz plugin init`), which builds to the same two files.
+- Small plugins can be written directly as `plugin.js`. A plugin with many parts is TypeScript built to the same one file: the vim plugin is 29 modules in `src/`, bundled by Vite with the config Block's starter (`buzzodz plugin init`) scaffolds. Buzz installs from a folder or a Git URL and never runs a build, so commit the built `plugin.js` with its source.
 - Module evaluation must be pure. Work starts in `apply`, which must finish within ten seconds.
 
 ## 1. Plugin API first
