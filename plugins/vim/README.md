@@ -11,14 +11,20 @@ Move through Buzz with vim keys: normal and insert modes, `j` and `k` through me
 
 ## Screenshots
 
-Taken in Buzz's own browser test harness with its fixture data, on an earlier version of the plugin (the message cursor was then a bar beside the row; it is now a lift on the message bubble).
+Taken in Buzz's own browser test harness with its fixture data (`test/screenshots.spec.mjs`), in light and dark mode.
 
-| | |
+| Light | Dark |
 | --- | --- |
-| ![NORMAL mode, the cursor on a message](screenshots/normal-message-cursor.png) | ![NORMAL mode in the channel list](screenshots/normal-channel-list.png) |
-| NORMAL, the cursor on a message | NORMAL, in the channel list |
-| ![INSERT mode in the message box](screenshots/insert.png) | ![Visual-mode motions in the message box](screenshots/motions.png) |
-| INSERT, typing in the message box | Motions growing a visual highlight in the message box |
+| ![NORMAL, the cursor on a message: its bubble lifted, with a thin accent outline](screenshots/normal-cursor-light.png) | ![The same in dark mode](screenshots/normal-cursor-dark.png) |
+| NORMAL: the cursor on a message. The bubble goes up a step in brightness (a step darker in light mode) and gets a thin accent outline | The same in dark mode |
+| ![INSERT in the message box: the box has a faint lift and the message above is not lifted](screenshots/insert-light.png) | ![The same in dark mode](screenshots/insert-dark.png) |
+| INSERT: the box has the keys, so it takes a much fainter lift and the message above gives up its own | The same in dark mode |
+| ![NORMAL in the message box](screenshots/box-normal-light.png) | ![VISUAL mode in the message box](screenshots/box-visual-dark.png) |
+| NORMAL inside the message box | VISUAL: a motion grows the highlight |
+| ![A thread beside the channel: the pane that has the keys has an accent line under its header](screenshots/thread-pane-light.png) | ![The same in dark mode](screenshots/thread-pane-dark.png) |
+| A thread beside the channel: the pane that has the keys has a 2 px accent line under its header | The same in dark mode |
+| ![The channel list has the keys](screenshots/channel-list-light.png) | ![The key list, opened with ?](screenshots/help-dark.png) |
+| The channel list has the keys: a ring on the current channel | The key list, opened with `?` |
 
 ## Try this
 
@@ -66,4 +72,9 @@ Which steps behaved differently, and for any that did nothing, whether the label
 
 ## For developers
 
-`test/run.sh PATH_TO_BLOCK_BUZZ_APP_CHECKOUT` runs `test/vim.spec.mjs` against that checkout's browser harness. See `test/run.sh` for the one-time setup.
+The source is TypeScript in `src/`, one module per concern (see "Source layout" in `NOTES.md`). The app loads only the built `plugin.js` next to the manifest and never runs a build, so the built file is committed with the source.
+
+- **Build**: `pnpm install --frozen-lockfile`, then `pnpm build` (Node 22 or newer; `npm run build` works too). It type-checks `src/` and bundles it into `plugin.js`, unminified so that what you install is readable.
+- **Browser tests**: `test/run.sh PATH_TO_BLOCK_BUZZ_APP_CHECKOUT` runs `test/vim.spec.mjs` against that checkout's browser harness. See `test/run.sh` for the one-time setup.
+- **Measuring**: `test/perf.sh`, `test/real-app/` and "Measuring the plugin" in `NOTES.md`.
+- **Screenshots**: `SPEC=screenshots.spec.mjs test/perf.sh PATH_TO_BLOCK_BUZZ_APP_CHECKOUT with 1` writes the pictures above into `SHOTS_DIR`.
