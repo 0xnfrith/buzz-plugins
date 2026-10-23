@@ -1,0 +1,17 @@
+{
+  "name": "megatech.vim-mode",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc",
+    "build": "tsc && vite build && node scripts/ship.mjs"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "typescript": "7.0.2",
+    "vite": "8.2.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

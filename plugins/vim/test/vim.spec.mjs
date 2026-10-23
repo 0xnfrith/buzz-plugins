@@ -321,6 +321,50 @@ test("gt and gT cycle the pages in the order the app shows them; gi and gm jump 
   expect(await where()).toBe("buzz.workflows/workflows");
 });
 
+test("the cursor mark is on its message again after the Messages page is left and entered", async ({ page, app }) => {
+  await open(page, app);
+  await press(page, "k", "k");
+  const id = await cursor(page);
+  expect(id).toBeDefined();
+  // The mark is an attribute on the row element. Leaving the page throws the whole list away and entering builds a new one.
+  const marked = () =>
+    page.evaluate(
+      (id) => document.querySelector(`[data-message-scroller] [data-message-id="${id}"]`)?.getAttribute("data-vim-cursor") ?? null,
+      id,
+    );
+  expect(await marked()).toBe("main");
+  await press(page, "g", "i");
+  await expect.poll(marked).toBeNull();
+  await press(page, "g", "m");
+  await expect.poll(marked).toBe("main");
+  expect(await cursor(page)).toBe(id);
+  await expect(page.locator("[data-vim-cursor]")).toHaveCount(1);
+});
+
+test("the cursor mark follows its message id when a row element is given another id", async ({ page, app }) => {
+  await open(page, app);
+  await press(page, "k", "k");
+  const id = await cursor(page);
+  // A virtual list may reuse a row element for another message. Swap the ids of the marked row and the one above it.
+  const other = await page.evaluate((id) => {
+    const rows = [...document.querySelectorAll("[data-message-scroller] [data-message-id]")];
+    const a = rows.find((row) => row.dataset.messageId === id);
+    const b = rows.find((row) => row !== a && !row.hasAttribute("data-membership-row"));
+    const bId = b.dataset.messageId;
+    a.dataset.messageId = bId;
+    b.dataset.messageId = id;
+    return bId;
+  }, id);
+  const has = (id) =>
+    page.evaluate(
+      (id) => [...document.querySelectorAll("[data-message-scroller] [data-message-id]")].filter((row) => row.dataset.messageId === id).map((row) => row.getAttribute("data-vim-cursor")),
+      id,
+    );
+  await expect.poll(() => has(id)).toEqual(["main"]); // the element that carries the id now is marked
+  expect(await has(other)).toEqual([null]);
+  expect(await cursor(page)).toBe(id);
+});
+
 test("gs opens Settings, for the community on screen; a lone s does nothing", async ({ page, app }) => {
   await open(page, app);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
@@ -663,6 +707,9 @@ test("the cursor mark works on an own bubble too, and a row with no bubble is ou
   const accent = await colour(page, ACCENT);
   const walkTo = async (id) => {
     await press(page, "g", "g");
+    // gg puts the cursor on the oldest message two frames later; a j pressed before that would move on from a cursor
+    // that is placed a moment after it (the test was a coin toss for want of this).
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(done)))));
     for (let step = 0; step < 30 && (await cursor(page)) !== id; step++) await press(page, "j");
     expect(await cursor(page)).toBe(id);
   };
@@ -1132,11 +1179,46 @@ test("disabling the plugin removes the overlay, the cursor rule and every key", 
   await closeSettings(page);
   await expect(page.locator("[data-vim-status]")).toHaveCount(0);
   await expect(page.locator("style[data-vim-cursor-style]")).toHaveCount(0);
+  await expect(page.locator("[data-vim-cursor]")).toHaveCount(0); // the mark on the row goes too
   await expect(page.locator("html")).not.toHaveAttribute("data-vim-on", "");
   await expect(page.locator("html")).not.toHaveAttribute("data-vim-region", /.*/);
+  await expect(page.locator("html")).not.toHaveAttribute("data-vim-box", /.*/);
   await press(page, "Escape");
   await press(page, "k");
   await expect(page.locator("[data-vim-status]")).toHaveCount(0);
+});
+
+test.describe("a long list", () => {
+  test.use({ historyCounts: { alpha: 200, beta: 3 } });
+  // The mark is an attribute on the row element, and the virtual list throws row elements away and builds new ones.
+  test("the cursor mark comes back when the virtual list mounts its row again", async ({ page, app }) => {
+    await open(page, app);
+    await press(page, "k");
+    const id = await cursor(page);
+    expect(id).toBeDefined();
+    const row = (page) =>
+      page.evaluate((id) => {
+        const el = document.querySelector(`[data-message-scroller] [data-message-id="${id}"]`);
+        return el ? el.hasAttribute("data-vim-cursor") : null;
+      }, id);
+    const scrollTo = (page, where) =>
+      page.evaluate((where) => {
+        const scroller = document.querySelector("[data-message-scroller]");
+        scroller.scrollTop = where === "top" ? 0 : scroller.scrollHeight;
+      }, where);
+    expect(await row(page)).toBe(true);
+    // To the top, again and again: each time the list loads an older page, until the newest rows are far enough away to go.
+    await expect
+      .poll(async () => {
+        await scrollTo(page, "top");
+        return row(page);
+      })
+      .toBeNull(); // unmounted
+    expect(await cursor(page)).toBe(id); // the cursor is the message, not the element
+    await scrollTo(page, "bottom");
+    await expect.poll(() => row(page)).toBe(true); // a new element, marked again
+    await expect(page.locator("[data-vim-cursor]")).toHaveCount(1);
+  });
 });
 
 const selected = (page) => page.evaluate(() => document.getSelection().toString());
