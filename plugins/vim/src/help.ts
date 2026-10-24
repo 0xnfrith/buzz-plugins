@@ -6,6 +6,7 @@
 // capture-phase listener scrolls and closes it and swallows the rest, so nothing reaches the page.
 import { focusEl, inComposer, isEditable, timelineOf } from "./dom";
 import { groups } from "./key-list";
+import { lineHeight } from "./scroll";
 import { disposed, set, state } from "./state";
 import { syncFocus } from "./focus";
 
@@ -102,10 +103,12 @@ export function onHelpKey(event: KeyboardEvent) {
   const card = helpCard as HTMLElement;
   const half = () => Math.max(40, card.clientHeight / 2);
   if (event.ctrlKey) {
-    if (event.key !== "d" && event.key !== "u") return; // Ctrl+Shift+E and the like still work
+    if (event.shiftKey || !["d", "u", "e", "y"].includes(event.key)) return; // Ctrl+Shift+E and the like still work
     event.preventDefault();
     event.stopPropagation();
-    card.scrollBy({ top: event.key === "d" ? half() : -half() });
+    // Ctrl-d and Ctrl-u half a page, Ctrl-e and Ctrl-y a line.
+    const step = { d: half(), u: -half(), e: lineHeight(card), y: -lineHeight(card) }[event.key as "d" | "u" | "e" | "y"];
+    card.scrollBy({ top: step });
     return;
   }
   event.preventDefault();

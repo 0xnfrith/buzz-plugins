@@ -103,10 +103,10 @@ export const clearCursors = () => {
   clearCursor("side");
   paintCursor();
 };
-export const selectRow = (row: HTMLElement) => {
+export const selectRow = (row: HTMLElement, reveal = true) => {
   setCursor(paneOf(row), row.dataset.messageId as string, row);
   paintCursor();
-  row.scrollIntoView({ block: "nearest" });
+  if (reveal) row.scrollIntoView({ block: "nearest" });
 };
 export const nearestVisible = (scroller: HTMLElement, fromEnd: boolean) => {
   const rows = rowsOf(scroller).filter((row) => inView(scroller, row));
@@ -154,16 +154,26 @@ export const jumpEdge = (end: boolean) => {
     if (row) selectRow(row);
   });
 };
+// After the view moved: a cursor that is still in it stays; one that left goes to the nearest row that is in it
+// (the first when the content went up, the last when it went down), as vim keeps its cursor in the window.
+// With `still` the view is not moved to show the new row, and a row that shows whole is preferred to one cut by the edge:
+// the caller scrolled by an exact amount and wants nothing else to move.
+export const keepCursorInView = (scroller: HTMLElement, direction: number, still = false) => {
+  if (still && !cursors[cursorPane()]) return; // a scroll does not place a cursor that was never placed
+  const current = rowsOf(scroller).find((row) => row.dataset.messageId === cursors[cursorPane()]);
+  if (current && inView(scroller, current)) return;
+  const fromEnd = direction < 0;
+  const edge = scroller.getBoundingClientRect();
+  const whole = (row: Element) => row.getBoundingClientRect().top >= edge.top && row.getBoundingClientRect().bottom <= edge.bottom;
+  const shown = rowsOf(scroller).filter((row) => inView(scroller, row));
+  const row = still ? ((fromEnd ? shown.filter(whole).at(-1) : shown.find(whole)) ?? (fromEnd ? shown.at(-1) : shown[0])) : nearestVisible(scroller, fromEnd);
+  if (row) selectRow(row, !still);
+};
 export const halfPage = (direction: number) => {
   const scroller = activeTimeline();
   if (!scroller) return;
   scroller.scrollBy({ top: (direction * scroller.clientHeight) / 2 });
-  afterLayout(() => {
-    const current = rowsOf(scroller).find((row) => row.dataset.messageId === cursors[cursorPane()]);
-    if (current && inView(scroller, current)) return;
-    const row = nearestVisible(scroller, direction < 0);
-    if (row) selectRow(row);
-  });
+  afterLayout(() => keepCursorInView(scroller, direction));
 };
 // The row the cursor is on in the pane that has the keys, if it is mounted.
 export const cursorRow = () => {

@@ -5,7 +5,8 @@
 // which the host already does. Plugin API: nothing, there is no keyboard service for a dialog. DOM: the
 // dialog, its `nav[aria-label="Settings sections"]` and the host's own `#settings-content`.
 import { afterLayout, clamp, isEditable, visible } from "./dom";
-import { state } from "./state";
+import { keepFocusInView, scrollLines } from "./scroll";
+import { armPending, set, state, takeCount } from "./state";
 
 const SETTINGS_NAV = 'nav[aria-label="Settings sections"]';
 const SETTINGS_OWN_KEYS = 'select, [role="combobox"], [role="listbox"], [role="menu"], [role="menuitem"], [role="option"]';
@@ -22,6 +23,7 @@ const focusSection = (item: HTMLElement | undefined) => {
   item.focus({ preventScroll: true, focusVisible: true });
   item.scrollIntoView({ block: "nearest" });
 };
+// The scrolling element around `el`, up to (not including) `stop`; `stop` when there is none.
 const scrollParent = (el: Element, stop: HTMLElement): HTMLElement => {
   for (let node: Element | null = el; node && node !== stop; node = node.parentElement)
     if (node.scrollHeight > node.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(node).overflowY)) return node as HTMLElement;
@@ -29,13 +31,23 @@ const scrollParent = (el: Element, stop: HTMLElement): HTMLElement => {
 };
 export const onSettingsKey = (event: KeyboardEvent) => {
   if (!state.enabled || event.isComposing || event.keyCode === 229) return;
-  if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+  if (event.metaKey || event.altKey || event.shiftKey) return;
   const { key } = event;
-  if (key !== "j" && key !== "k" && key !== "h" && key !== "l" && key !== "Enter") return;
+  // Ctrl-e and Ctrl-y scroll the part that has the keys (the list of sections, or the open section) a line.
+  const line = event.ctrlKey && (key === "e" || key === "y");
+  if (event.ctrlKey && !line) return;
+  // The host's shortcut service stands down inside a dialog, so the digits of a count are taken here (a count
+  // only means something to Ctrl-e and Ctrl-y; it lapses after a moment, like the lists').
+  const digit = !event.ctrlKey && /^[0-9]$/.test(key) && (key !== "0" || state.count > 0);
+  if (!line && !digit && key !== "j" && key !== "k" && key !== "h" && key !== "l" && key !== "Enter") return;
   const dialog = settingsDialog();
   const el = event.target as HTMLElement;
   // Typing, a select, a menu or a popup over the dialog (its focus is outside it) keep their own keys.
   if (!dialog || !dialog.contains(el) || isEditable(el) || el.closest?.(SETTINGS_OWN_KEYS)) return;
+  if (digit) {
+    set({ count: Math.min(state.count * 10 + Number(key), 999) });
+    return armPending();
+  }
   const items = settingsItems(dialog);
   const content = dialog.querySelector<HTMLElement>("#settings-content");
   const item = el.closest?.<HTMLElement>(`${SETTINGS_NAV} button`);
@@ -44,6 +56,17 @@ export const onSettingsKey = (event: KeyboardEvent) => {
     event.preventDefault();
     event.stopImmediatePropagation();
   };
+  if (line) {
+    swallow();
+    const direction = key === "e" ? 1 : -1;
+    const lines = takeCount();
+    if (item) {
+      const list = scrollParent(item, dialog as HTMLElement);
+      scrollLines(list, direction, lines);
+      afterLayout(() => keepFocusInView(list, items, direction));
+    } else scrollLines(scrollParent(content?.contains(el) ? el : (content ?? el), dialog as HTMLElement), direction, lines);
+    return;
+  }
   if (item) {
     // In the list of sections.
     if (key === "j" || key === "k") {
@@ -60,6 +83,6 @@ export const onSettingsKey = (event: KeyboardEvent) => {
   if (key === "Enter" || key === "l") return; // a button or link in the detail keeps its Enter
   swallow();
   if (key === "h") focusSection(current); // back to the list, on the open section
-  else if (content?.contains(el)) scrollParent(el, content).scrollBy({ top: key === "j" ? 48 : -48 });
+  else if (content?.contains(el)) scrollParent(el, dialog as HTMLElement).scrollBy({ top: key === "j" ? 48 : -48 });
   else focusSection(current); // from the close button or the dialog itself, into the list
 };

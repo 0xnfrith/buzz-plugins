@@ -15,6 +15,7 @@ export const groups = (): KeyGroup[] => {
         ["5j", "Counts: 0-9, then a motion", "API"],
         ["gg  G", "First / latest message or channel", "API + DOM"],
         ["Ctrl-d  Ctrl-u", "Scroll half a page (Control on a Mac too, not Command)", "DOM"],
+        ["Ctrl-e  Ctrl-y", "Scroll one line down / up and leave the cursor where it is (5 Ctrl-e: five lines). The cursor moves only when it would leave the view, onto the nearest row still in it. Scrolls the pane that has the keys: the message list, the thread pane, the channel list, a page such as Reminders, Agents or Workflows, the Settings dialog. Control on a Mac too", "DOM"],
         ["h  l", "Move focus between the channel list, the message list and the thread pane. l on a channel opens it", "DOM"],
         [`${L}  then  h  l  q  <  >  |  =`, "The leader key, for pane commands that work from anywhere, the message box too: h and l move to the pane on the left or right (from a message box, to the box of the pane beside it, or to the channel list), q closes the thread, < > | = resize it. Change the leader on the Vim mode page", "DOM"],
         ["[  ]", "Previous / next channel without leaving the message list", "DOM"],
@@ -42,6 +43,7 @@ export const groups = (): KeyGroup[] => {
       rows: [
         ["h  j  k  l", "Move the caret (counts work)"],
         ["k  (on the first row)", "Go up out of the box into the newest message of the pane"],
+        ["Ctrl-e  Ctrl-y", "Scroll the pane's messages one line down / up, the draft untouched (counts work). Not in INSERT: there the editor keeps them"],
         ["h  (at the very start)  l  (at the very end)", "Go one pane left or right: the thread's box is right of the channel's, which is right of the channel list (nothing lies right of the thread)"],
         [`${L}  then  h  l  q  <  >  |  =`, "The leader key works here too, from anywhere in the draft: h and l go one pane left or right, q closes the thread, < > | = resize it"],
         ["w  b  e  ge", "Words: letters, digits and underscore are one word, any other run of characters is another"],
