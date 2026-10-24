@@ -1,38 +1,30 @@
 {
   "list Ctrl-y": {
-    "p99": 150,
-    "why": "Scrolling the 3,000-message list up a line costs the app p99 64-76 ms when the page does it itself (control row, three runs; p50 24-28 ms); the plugin's key adds no script time to that."
-  },
-  "thread j": {
-    "p99": 100,
-    "why": "Over 50 ms in one of four runs (53-140 ms across the attempts of that run, 39-50 ms in the others). The thread pane of the harness is slow to scroll and to focus whatever does it: the page's own scroll down a line is p99 40-83 ms (control row), a jump 98-175 ms, a focus move 41-111 ms. The plugin's script is about 5 ms of the key's 23-26."
-  },
-  "thread k": {
-    "p99": 100,
-    "why": "The weakest entry. Over 50 ms in two of three runs (56-110 ms); the page's own scroll up a line is p99 33-64 ms (control row), and the plugin's script is about 5 ms of the key's 20-24. The rest is the page scrolling the row into view."
+    "control": "control: scroll a line up (the page itself)",
+    "why": "Scrolling the message list up a line costs the app more than scrolling it down (the control row measures the page doing it itself); the plugin's key adds its own work to that."
   },
   "thread h": {
-    "p99": 150,
-    "why": "Moving the focus between the thread and the channel costs the app p50 23-25 ms and p99 49-111 ms when the page does it itself (control row, three runs): style recalculation of about 8 ms in a pane with 80 replies. The key costs the same."
+    "control": "control: focus the channel's list (the page itself)",
+    "why": "Moving the focus between the thread and the channel costs the app a style recalculation of a pane with 80 replies (the control row is the page doing the same focus move); the key costs the same."
   },
   "thread l": {
-    "p99": 150,
-    "why": "The same focus move as `h`, in the other direction (control row: p50 22-23 ms, p99 41-53 ms)."
+    "control": "control: focus the thread's list (the page itself)",
+    "why": "The same focus move as `h`, in the other direction."
   },
   "thread gg": {
-    "p99": 250,
-    "why": "Jumping to the top of the 80-reply thread costs the app p50 38-46 ms and p99 98-175 ms when the page does it itself (control row, three runs)."
+    "control": "control: jump to the top (the page itself)",
+    "why": "Jumping to the top of the 80-reply thread costs the app the layout of the rows it lands on (the control row is the page setting scrollTop itself); `gg` also moves the cursor row."
   },
   "thread G": {
-    "p99": 250,
-    "why": "Jumping to the bottom of the 80-reply thread costs the app p50 42-50 ms and p99 105-147 ms when the page does it itself (control row, three runs)."
+    "control": "control: jump to the bottom (the page itself)",
+    "why": "Jumping to the bottom of the 80-reply thread costs the app the layout of the rows it lands on (the control row is the page setting scrollTop itself)."
   },
   "settings l: open the next section": {
-    "p99": 400,
-    "why": "The host renders a whole settings section anew on every click: p50 115-127 ms, p99 139-196 ms when the page clicks the open section itself (control row, three runs). The row presses h, j and l, so it carries two more key presses."
+    "control": "control: open the next section (the page itself)",
+    "why": "The host renders a whole settings section anew when another is opened (the control row is the page clicking the next section itself). The row presses h, j and l, so it carries two more key presses."
   },
   "settings l: open the section before": {
-    "p99": 400,
-    "why": "The same as the next section: the host renders a whole settings section anew on every click (control row: p50 115-127 ms, p99 139-196 ms). The row presses h, k and l."
+    "control": "control: open the section before (the page itself)",
+    "why": "The same as the next section: the host renders a whole settings section anew when another is opened (the control row is the page clicking the section before). The row presses h, k and l."
   }
 }
