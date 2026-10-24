@@ -1237,19 +1237,34 @@ Object.assign(bar.style, {
 	pointerEvents: "none",
 	whiteSpace: "pre"
 });
+var unknown = () => ({
+	display: null,
+	text: null,
+	mode: null,
+	region: null,
+	on: null,
+	panes: null
+});
+var written = unknown();
+var resetBar = () => {
+	written = unknown();
+};
 var renderBar = timed("renderBar", () => {
-	bar.style.display = state.enabled && state.statusLine ? "" : "none";
+	const display = state.enabled && state.statusLine ? "" : "none";
+	if (display !== written.display) bar.style.display = written.display = display;
 	const text = state.composerNormal && isEditable(document.activeElement) && state.textMode === "normal";
-	bar.textContent = `-- ${state.mode === "insert" ? "INSERT" : text ? {
+	const line = `-- ${state.mode === "insert" ? "INSERT" : text ? {
 		"": "NORMAL",
 		char: "VISUAL",
 		line: "VISUAL LINE"
 	}[state.visual] : "NORMAL"} --  ${state.region}${state.count ? `  ${state.count}` : ""}${state.operator || state.prefix ? `  ${state.operator}${state.prefix}` : ""}`;
-	bar.dataset.mode = state.mode;
+	if (line !== written.text) bar.textContent = written.text = line;
+	if (state.mode !== written.mode) bar.dataset.mode = written.mode = state.mode;
 	const root = document.documentElement;
-	root.dataset.vimRegion = state.region;
-	root.toggleAttribute("data-vim-on", state.enabled);
-	root.toggleAttribute("data-vim-panes", state.enabled && workspaces("main").length > 0 && workspaces("side").length > 0);
+	if (state.region !== written.region) root.dataset.vimRegion = written.region = state.region;
+	if (state.enabled !== written.on) root.toggleAttribute("data-vim-on", written.on = state.enabled);
+	const panes = state.enabled && workspaces("main").length > 0 && workspaces("side").length > 0;
+	if (panes !== written.panes) root.toggleAttribute("data-vim-panes", written.panes = panes);
 	paintCursor();
 });
 // src/box.ts
@@ -2216,7 +2231,7 @@ var onSettingsKey = (event) => {
 		} else if (key === "l" || key === "Enter") {
 			swallow();
 			if (!items.includes(item)) return;
-			item.click();
+			if (item.getAttribute("aria-current") !== "page" || !content || !visible(content)) item.click();
 			afterLayout(() => content?.focus({ preventScroll: true }));
 		} else swallow();
 		return;
@@ -2249,6 +2264,7 @@ var onPointerDown = () => {
 };
 // src/lifecycle.ts
 var mount = () => {
+	resetBar();
 	renderBar();
 	const stopRender = subscribe(() => renderBar());
 	document.head.append(cursorStyle);
@@ -2299,6 +2315,7 @@ var mount = () => {
 		unwatchCursors();
 		resetCursors();
 		bar.remove();
+		resetBar();
 		delete bar.dataset.focusVia;
 		delete document.documentElement.dataset.vimRegion;
 		document.documentElement.removeAttribute("data-vim-on");
