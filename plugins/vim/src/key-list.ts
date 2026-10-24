@@ -44,7 +44,7 @@ export const groups = (): KeyGroup[] => {
         ["h  j  k  l", "Move the caret (counts work)"],
         ["k  (on the first row)", "Go up out of the box into the newest message of the pane"],
         ["Ctrl-e  Ctrl-y", "Scroll the pane's messages one line down / up, the draft untouched (counts work). Not in INSERT: there the editor keeps them"],
-        ["h  (at the very start)  l  (at the very end)", "Go one pane left or right: the thread's box is right of the channel's, which is right of the channel list (nothing lies right of the thread)"],
+        ["h  (at the very start)  l  (at the very end)", "Go one pane left or right: the thread's box is right of the channel's, which is right of the channel list (nothing lies right of the thread). A run of mentions at the start counts as the start (h from just right of it, or inside it, leaves), and one at the end as the end for l when a pane lies to the right"],
         [`${L}  then  h  l  q  <  >  |  =`, "The leader key works here too, from anywhere in the draft: h and l go one pane left or right, q closes the thread, < > | = resize it"],
         ["w  b  e  ge", "Words: letters, digits and underscore are one word, any other run of characters is another"],
         ["W  B  E  gE", "WORDs: any run of non-blank characters"],

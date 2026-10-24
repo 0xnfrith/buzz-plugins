@@ -517,7 +517,10 @@ var atDraftEnd = (selection) => {
 	return end;
 };
 var select = (selection, start, end, backward) => backward ? selection.setBaseAndExtent(end.startContainer, end.startOffset, start.startContainer, start.startOffset) : selection.setBaseAndExtent(start.startContainer, start.startOffset, end.startContainer, end.startOffset);
-var lineStart = (selection) => selection.modify("move", "backward", "paragraphboundary");
+var lineStart = (selection) => {
+	selection.modify("move", "backward", "paragraphboundary");
+	for (let i = 0; i < 5e3 && peek(selection, "backward") === "￼"; i++) backward(selection);
+};
 var lineEnd = (selection) => selection.modify("move", "forward", "paragraphboundary");
 var firstNonBlank = (selection) => {
 	lineStart(selection);
@@ -526,6 +529,63 @@ var firstNonBlank = (selection) => {
 		if (kind(c) !== 0 || isBreak(c)) return;
 		forward(selection);
 	}
+};
+var BLANK = /^[\s\u00a0]*$/;
+var BLOCK = /^(P|DIV|LI|UL|OL|BLOCKQUOTE|PRE|H[1-6])$/;
+var itemsIn = (fragment) => {
+	const out = [];
+	const visit = (node) => {
+		if (node.nodeType === 3) {
+			const text = node.textContent ?? "";
+			if (text) out.push(BLANK.test(text) ? "space" : "text");
+			return;
+		}
+		if (node.nodeType !== 1) return;
+		const el = node;
+		if (el.getAttribute("contenteditable") === "false") return void out.push("chip");
+		if (el.tagName === "BR") return void (el.classList.contains("ProseMirror-trailingBreak") || out.push("break"));
+		el.childNodes.forEach(visit);
+	};
+	let blocks = 0;
+	fragment.childNodes.forEach((node) => {
+		if (node.nodeType === 1 && BLOCK.test(node.tagName) && blocks++) out.push("break");
+		visit(node);
+	});
+	return out;
+};
+var aroundCaret = (selection) => {
+	const node = selection.focusNode;
+	if (!selection.isCollapsed || !node) return void 0;
+	const box = (node.nodeType === 1 ? node : node.parentElement)?.closest("[contenteditable=\"true\"]");
+	if (!box) return void 0;
+	const before = document.createRange();
+	before.setStart(box, 0);
+	before.setEnd(node, selection.focusOffset);
+	const after = document.createRange();
+	after.setStart(node, selection.focusOffset);
+	after.setEnd(box, box.childNodes.length);
+	return {
+		before: itemsIn(before.cloneContents()),
+		after: itemsIn(after.cloneContents())
+	};
+};
+var insideLeadingRun = (selection) => {
+	const around = aroundCaret(selection);
+	if (!around) return false;
+	const { before, after } = around;
+	if (!before.includes("chip") || before.some((item) => item !== "chip" && item !== "space")) return false;
+	return before.at(-1) === "chip" || after.find((item) => item !== "space") === "chip";
+};
+var stepsIntoTrailingRun = (selection) => {
+	if (!charUnder(selection)) return false;
+	const origin = gap(selection);
+	forward(selection);
+	const around = aroundCaret(selection);
+	goto(selection, origin);
+	if (!around) return false;
+	const { before, after } = around;
+	if (!after.includes("chip") || after.some((item) => item !== "chip" && item !== "space")) return false;
+	return after[0] === "chip" || before.findLast((item) => item !== "space") === "chip";
 };
 // src/theme.ts
 var FOCUS_CSS = `html[data-vim-region="sidebar"] ${SIDEBAR_ROW}:focus{outline:2px solid ${FOCUS_RING};outline-offset:-2px}html[data-vim-driving] ${COMMUNITY_POPUP}{opacity:0!important;transition:none!important;animation:none!important}`;
@@ -1299,6 +1359,7 @@ var enterBox = (pane, at) => {
 	syncFocus();
 	return true;
 };
+var paneRight = () => state.region === "main" && !!timelineOf("side");
 var boxStep = (direction) => {
 	const beside = state.region === "main" && direction > 0 ? "side" : state.region === "side" && direction < 0 ? "main" : void 0;
 	if (beside && composerOf(beside) && enterBox(beside, direction > 0 ? "start" : "end")) return;
@@ -1650,7 +1711,7 @@ var groups = () => {
 				["h  j  k  l", "Move the caret (counts work)"],
 				["k  (on the first row)", "Go up out of the box into the newest message of the pane"],
 				["Ctrl-e  Ctrl-y", "Scroll the pane's messages one line down / up, the draft untouched (counts work). Not in INSERT: there the editor keeps them"],
-				["h  (at the very start)  l  (at the very end)", "Go one pane left or right: the thread's box is right of the channel's, which is right of the channel list (nothing lies right of the thread)"],
+				["h  (at the very start)  l  (at the very end)", "Go one pane left or right: the thread's box is right of the channel's, which is right of the channel list (nothing lies right of the thread). A run of mentions at the start counts as the start (h from just right of it, or inside it, leaves), and one at the end as the end for l when a pane lies to the right"],
 				[`${L}  then  h  l  q  <  >  |  =`, "The leader key works here too, from anywhere in the draft: h and l go one pane left or right, q closes the thread, < > | = resize it"],
 				["w  b  e  ge", "Words: letters, digits and underscore are one word, any other run of characters is another"],
 				["W  B  E  gE", "WORDs: any run of non-blank characters"],
@@ -2027,7 +2088,8 @@ var textKey = timed("textKey", (key) => {
 	}
 	if (motion) {
 		if (key === "k" && onFirstRow(selection)) return boxUp(state.region === "side" ? "side" : "main");
-		if (key === "h" && atDraftStart(selection) || key === "l" && atDraftEnd(selection)) return boxStep(key === "l" ? 1 : -1);
+		if (key === "h" && (atDraftStart(selection) || insideLeadingRun(selection))) return boxStep(-1);
+		if (key === "l" && (atDraftEnd(selection) || paneRight() && stepsIntoTrailingRun(selection))) return boxStep(1);
 		motion.run(selection, n, typed);
 		clampCursor(selection);
 		return;
