@@ -127,7 +127,11 @@ export const select = (selection: Selection, start: Range, end: Range, backward:
     ? selection.setBaseAndExtent(end.startContainer, end.startOffset, start.startContainer, start.startOffset)
     : selection.setBaseAndExtent(start.startContainer, start.startOffset, end.startContainer, end.startOffset);
 // The line is the text between two line breaks, however it wraps on screen.
-export const lineStart = (selection: Selection) => selection.modify("move", "backward", "paragraphboundary");
+export const lineStart = (selection: Selection) => {
+  selection.modify("move", "backward", "paragraphboundary");
+  // Chromium puts the caret after a chip that starts the line, as the first place it can draw one; the start is before it.
+  for (let i = 0; i < LIMIT && peek(selection, "backward") === CHIP; i++) backward(selection);
+};
 export const lineEnd = (selection: Selection) => selection.modify("move", "forward", "paragraphboundary");
 export const firstNonBlank = (selection: Selection) => {
   lineStart(selection);
@@ -136,4 +140,72 @@ export const firstNonBlank = (selection: Selection) => {
     if (kind(c) !== 0 || isBreak(c)) return;
     forward(selection);
   }
+};
+
+// ---- Runs of mentions at the edges of a draft -------------------------------------------
+// A draft that starts with mentions (a reply to people: "@a @b @c text") has a leading run of chips and the spaces between
+// them. Stepping left through the run one chip at a time to reach the start is a dead stop before the real way out,
+// so h from just right of the run, or from anywhere inside it, leaves the box as h at the start does (see `normal.ts`).
+// The mirror, a run of mentions that ends the draft, is skipped the same way by l.
+type Item = "chip" | "space" | "text" | "break";
+const BLANK = /^[\s\u00a0]*$/;
+const BLOCK = /^(P|DIV|LI|UL|OL|BLOCKQUOTE|PRE|H[1-6])$/;
+// What a piece of the draft holds, in order: chips (one item each), blank or other text, line and paragraph breaks.
+const itemsIn = (fragment: Node): Item[] => {
+  const out: Item[] = [];
+  const visit = (node: Node) => {
+    if (node.nodeType === 3) {
+      const text = node.textContent ?? "";
+      if (text) out.push(BLANK.test(text) ? "space" : "text");
+      return;
+    }
+    if (node.nodeType !== 1) return;
+    const el = node as Element;
+    if (el.getAttribute("contenteditable") === "false") return void out.push("chip");
+    if (el.tagName === "BR") return void (el.classList.contains("ProseMirror-trailingBreak") || out.push("break")); // the editor's own filler is not a break
+    el.childNodes.forEach(visit);
+  };
+  // A fragment cut from a range holds a clone of the paragraph the range ends in, so a paragraph's own end says nothing:
+  // the breaks are the boundaries between the paragraphs it holds.
+  let blocks = 0;
+  fragment.childNodes.forEach((node) => {
+    if (node.nodeType === 1 && BLOCK.test((node as Element).tagName) && blocks++) out.push("break");
+    visit(node);
+  });
+  return out;
+};
+// What lies before and after the caret, from the start and to the end of the box.
+const aroundCaret = (selection: Selection) => {
+  const node = selection.focusNode;
+  if (!selection.isCollapsed || !node) return undefined;
+  const box = (node.nodeType === 1 ? (node as Element) : node.parentElement)?.closest('[contenteditable="true"]');
+  if (!box) return undefined;
+  const before = document.createRange();
+  before.setStart(box, 0);
+  before.setEnd(node, selection.focusOffset);
+  const after = document.createRange();
+  after.setStart(node, selection.focusOffset);
+  after.setEnd(box, box.childNodes.length);
+  return { before: itemsIn(before.cloneContents()), after: itemsIn(after.cloneContents()) };
+};
+// The character before the caret is part of a leading run of mentions: a chip, or a space between two chips. Nothing but
+// chips and spaces comes before the caret, and either the chip is what is just before it or another chip comes after.
+export const insideLeadingRun = (selection: Selection) => {
+  const around = aroundCaret(selection);
+  if (!around) return false;
+  const { before, after } = around;
+  if (!before.includes("chip") || before.some((item) => item !== "chip" && item !== "space")) return false;
+  return before.at(-1) === "chip" || after.find((item) => item !== "space") === "chip";
+};
+// The character after the one under the cursor is part of a trailing run of mentions (the step `l` would take lands in it).
+export const stepsIntoTrailingRun = (selection: Selection) => {
+  if (!charUnder(selection)) return false;
+  const origin = gap(selection);
+  forward(selection);
+  const around = aroundCaret(selection);
+  goto(selection, origin);
+  if (!around) return false;
+  const { before, after } = around;
+  if (!after.includes("chip") || after.some((item) => item !== "chip" && item !== "space")) return false;
+  return after[0] === "chip" || before.findLast((item) => item !== "space") === "chip";
 };

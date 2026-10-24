@@ -134,6 +134,8 @@ export const enterBox = (pane: Region, at: "start" | "end") => {
   syncFocus();
   return true;
 };
+// A message pane lies to the right of the one that has the keys: the thread's, from the channel's.
+export const paneRight = () => state.region === "main" && !!timelineOf("side");
 // One pane left (-1) or right (+1) from a message box, by position and not by where the cursor came from:
 // the thread's pane is right of the channel's, which is right of the channel list. Into the box of the pane
 // beside it when that has one on screen (the thread's from the channel's going right, the channel's from the

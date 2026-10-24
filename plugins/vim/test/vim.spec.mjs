@@ -2868,4 +2868,156 @@ test.describe("a mention chip in the draft", () => {
     await expectBesideChip(page);
     await expect(bar(page)).toHaveText("-- NORMAL --  main");
   });
+
+  // ---- A run of mentions at the start or the end of the draft is skipped as a whole on the way out ----------------
+  // Each mention is a chip and the space the host puts after it. h from just right of a leading run, or from inside it,
+  // leaves the box as h at the start does (no stop on the chips); l does the same for a trailing run when a pane lies to
+  // the right; a chip with text before it (leading) or after it (trailing) keeps the one-character steps.
+  const mentionsIn = async (page, count, { before = "", after = "" } = {}) => {
+    await composer(page).click();
+    if (before) await page.keyboard.type(before);
+    for (let i = 1; i <= count; i++) {
+      await page.keyboard.type("@");
+      const option = page.getByRole("option", { name: /Fixture Reader/ });
+      await expect(option).toBeVisible();
+      await press(page, "Enter");
+      await expect(chip(page)).toHaveCount(i);
+      await expect(option).toHaveCount(0);
+    }
+    if (after) await page.keyboard.type(after);
+  };
+  const stays = async (page, label = "-- NORMAL --  main") => {
+    await page.waitForTimeout(150);
+    await expect(bar(page)).toHaveText(label);
+    expect((await caret(page)).focused).toBe(true);
+  };
+  const leaves = async (page) => {
+    await expect(bar(page)).toHaveText("-- NORMAL --  sidebar");
+    await expect(composer(page)).not.toBeFocused();
+  };
+
+  test("one leading mention: h from just right of it goes straight to the channel list", async ({ page, app }) => {
+    await open(page, app);
+    await mentionsIn(page, 1);
+    await press(page, "Escape"); // the caret steps back onto the space after the chip
+    await page.waitForTimeout(250);
+    await expect(bar(page)).toHaveText("-- NORMAL --  main");
+    await press(page, "h");
+    await leaves(page);
+    await expect.poll(() => draft(page)).toBe("@Fixture Reader "); // nothing was changed
+  });
+
+  for (const [steps, where] of [
+    [7, "just right of the run (on the last space)"],
+    [4, "inside the run, on the third chip"],
+    [3, "inside the run, on a space between two chips"],
+    [1, "on the space after the first chip"],
+  ]) {
+    test(`four leading mentions: h ${where} leaves the box`, async ({ page, app }) => {
+      await open(page, app);
+      await mentionsIn(page, 4);
+      await press(page, "Escape", "0");
+      for (let i = 0; i < steps; i++) await press(page, "l");
+      await page.waitForTimeout(250);
+      await stays(page); // walking right over the chips never leaves
+      await press(page, "h");
+      await leaves(page);
+    });
+  }
+
+  test("0 goes before a leading mention, not after it, and i there types before it", async ({ page, app }) => {
+    await open(page, app);
+    await mentionsIn(page, 1, { after: "hello" });
+    await press(page, "Escape", "0");
+    await page.waitForTimeout(250);
+    await stays(page);
+    await expectBesideChip(page);
+    expect((await caret(page)).before).toBe(""); // before the chip
+    await press(page, "i");
+    await page.keyboard.type("X");
+    await expect.poll(() => draft(page)).toBe("X@Fixture Reader hello");
+  });
+
+  test("mentions then text: h from the first word steps to the space, the next h leaves", async ({ page, app }) => {
+    await open(page, app);
+    await mentionsIn(page, 2, { after: "hello" });
+    await press(page, "Escape", "0", "l", "l", "l", "l"); // c, space, c, space: the cursor is on the h of hello
+    await page.waitForTimeout(250);
+    await stays(page);
+    expect((await caret(page)).before.endsWith("Reader ")).toBe(true);
+    await press(page, "h"); // onto the space after the second chip
+    await stays(page);
+    await press(page, "h"); // just right of the leading run: out
+    await leaves(page);
+  });
+
+  test("text then a mention: the chip keeps its one-character steps, and h at the start still leaves", async ({ page, app }) => {
+    await open(page, app);
+    await mentionsIn(page, 1, { before: "hi " });
+    await press(page, "Escape"); // on the space after the chip
+    await page.waitForTimeout(250);
+    await stays(page);
+    await press(page, "h"); // onto the chip
+    await stays(page);
+    await press(page, "h"); // onto the space before it
+    await stays(page);
+    await press(page, "h", "h"); // i, h
+    await stays(page);
+    expect((await caret(page)).before).toBe("");
+    await press(page, "h"); // the start of the draft: out, as before
+    await leaves(page);
+  });
+
+  test("a trailing mention with a thread beside the channel: l from the space before it goes to the thread's box", async ({ page, app }) => {
+    await open(page, app);
+    await mentionsIn(page, 1, { before: "hi " });
+    await leaveUp(page);
+    await press(page, "o");
+    await expect(threadPane(page)).toBeVisible();
+    await press(page, "i");
+    await expect(replyBox(page)).toBeFocused();
+    await press(page, "Escape", "h"); // the channel's box, at the end of its draft
+    await expect(composer(page)).toBeFocused();
+    await page.waitForTimeout(300);
+    await press(page, "h"); // onto the chip
+    await stays(page);
+    await press(page, "l"); // the space after it is not part of the run: a normal step
+    await stays(page);
+    await press(page, "h", "h"); // the chip, then the space before it
+    await stays(page);
+    await press(page, "l"); // the next step lands on the chip, the start of the trailing run: on to the thread
+    await expect(replyBox(page)).toBeFocused();
+    await expect(bar(page)).toHaveText("-- NORMAL --  side");
+  });
+
+  test("four trailing mentions with a thread: l from inside the run goes to the thread's box", async ({ page, app }) => {
+    await open(page, app);
+    await mentionsIn(page, 4, { before: "go " });
+    await leaveUp(page);
+    await press(page, "o");
+    await expect(threadPane(page)).toBeVisible();
+    await press(page, "i");
+    await expect(replyBox(page)).toBeFocused();
+    await press(page, "Escape", "h");
+    await expect(composer(page)).toBeFocused();
+    await page.waitForTimeout(300);
+    await press(page, "h", "h", "h", "h", "h"); // the last space, c4, a space, c3, a space: five steps back from the end
+    await stays(page);
+    await press(page, "l");
+    await expect(replyBox(page)).toBeFocused();
+  });
+
+  test("a trailing mention with no pane to the right: l walks over it as before", async ({ page, app }) => {
+    await open(page, app);
+    await mentionsIn(page, 1, { before: "hi " });
+    await press(page, "Escape", "0", "l", "l", "l"); // h, i, the space: the cursor is on the space before the chip
+    await page.waitForTimeout(250);
+    await stays(page);
+    await press(page, "l"); // onto the chip
+    await stays(page);
+    await press(page, "l"); // onto the space after it
+    await stays(page);
+    await press(page, "l"); // the end of the draft, and nothing to the right
+    await stays(page);
+  });
 });

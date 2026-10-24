@@ -4,7 +4,7 @@
 // capture-phase listener that swallows plain keys while the composer is in text-normal mode
 // and moves the caret with Selection.modify.
 import { apple } from "./constants";
-import { boxStep, boxUp, enterInsert } from "./box";
+import { boxStep, boxUp, enterInsert, paneRight } from "./box";
 import {
   atDraftEnd,
   atDraftStart,
@@ -14,11 +14,13 @@ import {
   gap,
   goto,
   here,
+  insideLeadingRun,
   isBreak,
   lineEnd,
   onFirstRow,
   select,
   stepRight,
+  stepsIntoTrailingRun,
 } from "./caret";
 import { inComposer, isEditable } from "./dom";
 import { isHelpOpen, markHelpOpenedBy, openHelp } from "./help";
@@ -74,7 +76,10 @@ const textKey = perf.timed("textKey", (key: string) => {
     // k on the first row goes up into the newest message; h at the very start and l at the very end of the
     // draft (a key that could not move anyway) go one pane left or right, as in the lists.
     if (key === "k" && onFirstRow(selection)) return boxUp(state.region === "side" ? "side" : "main");
-    if ((key === "h" && atDraftStart(selection)) || (key === "l" && atDraftEnd(selection))) return boxStep(key === "l" ? 1 : -1);
+    // A run of mentions at the start of the draft is skipped as a whole on the way out (h), and one at the end on the way
+    // out to a pane on the right (l, only when there is one: otherwise l walks over the chips as before).
+    if (key === "h" && (atDraftStart(selection) || insideLeadingRun(selection))) return boxStep(-1);
+    if (key === "l" && (atDraftEnd(selection) || (paneRight() && stepsIntoTrailingRun(selection)))) return boxStep(1);
     motion.run(selection, n, typed);
     clampCursor(selection); // the cursor rests on a character, as in vim
     return;
