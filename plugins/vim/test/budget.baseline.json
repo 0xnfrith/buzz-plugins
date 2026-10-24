@@ -1,16 +1,4 @@
 {
-  "list Ctrl-y": {
-    "control": "control: scroll a line up (the page itself)",
-    "why": "Scrolling the message list up a line costs the app more than scrolling it down (the control row measures the page doing it itself); the plugin's key adds its own work to that."
-  },
-  "thread h": {
-    "control": "control: focus the channel's list (the page itself)",
-    "why": "Moving the focus between the thread and the channel costs the app a style recalculation of a pane with 80 replies (the control row is the page doing the same focus move); the key costs the same."
-  },
-  "thread l": {
-    "control": "control: focus the thread's list (the page itself)",
-    "why": "The same focus move as `h`, in the other direction."
-  },
   "thread gg": {
     "control": "control: jump to the top (the page itself)",
     "why": "Jumping to the top of the 80-reply thread costs the app the layout of the rows it lands on (the control row is the page setting scrollTop itself); `gg` also moves the cursor row."

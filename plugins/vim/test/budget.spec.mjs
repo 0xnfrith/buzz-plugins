@@ -31,11 +31,12 @@
 // INVALID ROWS. A row whose presses did not move anything (under 90%), or did not have the focus on the row's surface (under 90%;
 // rows that `cross` panes are only checked for moving), measures nothing: the test fails it, and the table says INVALID.
 //
-// THE DATA. One channel of 3,000 messages (the fixture's Markdown corpus: code, lists, quotes, mentions), 130 channels
-// in the sidebar, a thread of 80 replies, a draft of 600 words and a draft with 30 mention chips (the host takes 32 at most).
-// The harness serves only the newest page of a channel and holds the older ones until asked (olderPageDelayMs), so the list
-// surface first loads them all ("Load older messages" until it is gone): the list is then hundreds of screens high, and every
-// row of it starts in the middle.
+// THE DATA. One channel with 3,000 messages in the store (the fixture's Markdown corpus: code, lists, quotes, mentions), 130
+// channels in the sidebar, a thread of 80 replies, a draft of 600 words and a draft with 30 mention chips (the host takes 32 at
+// most). The harness serves only the newest page of a channel and holds the older ones until asked (olderPageDelayMs), so the
+// list surface first loads them all ("Load older messages" until it is gone). The app keeps at most 2,400 of a channel's messages
+// in its list: the newest, 600 to 2,999 here. The list is then 2,400 messages, some 630 screens high, and every row of it starts
+// in the middle.
 //
 // THE SURFACES. The channel list, the channel's message list, a thread's list, the message box (text, and mentions),
 // the Reminders, Agents and Workflows pages, and the Settings dialog. Keys: j k h l gg G Ctrl-e Ctrl-y w b 0 $ and counts
@@ -431,10 +432,19 @@ const loadHistory = async (page) => {
   }
   const [scrollHeight, clientHeight] = await scroller.evaluate((el) => [el.scrollHeight, el.clientHeight]);
   expect(scrollHeight, "the history is loaded: the list is hundreds of screens high").toBeGreaterThan(100 * clientHeight);
-  console.log(`history loaded: the list is ${scrollHeight} px high, ${Math.round(scrollHeight / clientHeight)} screens`);
+  // Which messages are in the list: the numbers in the texts of the rows mounted at its two ends (the fixture numbers them from 0).
+  const end = async (top) => {
+    await scroller.evaluate((el, top) => (el.scrollTop = top ? 0 : el.scrollHeight), top);
+    await page.waitForTimeout(1000);
+    return scroller.evaluate((el) => [...el.querySelectorAll("[data-message-id]")].map((row) => Number(row.textContent.match(/primary alpha message (\d+)/)?.[1])).filter((n) => !Number.isNaN(n)));
+  };
+  const oldest = Math.min(...(await end(true)));
+  const newest = Math.max(...(await end(false)));
+  expect(newest - oldest + 1, "most of the channel's history is in the list").toBeGreaterThan(1000);
+  console.log(`history loaded: messages ${oldest} to ${newest} (${newest - oldest + 1}) in a list ${scrollHeight} px high, ${Math.round(scrollHeight / clientHeight)} screens`);
 };
 const IN_MAIN_LIST = `a.id === "main-content" || a.closest("[data-main-workspace] [data-message-scroller], [data-solo-focus-pane] [data-message-scroller]")`;
-surface("list", "message list (3,000 messages)", async ({ page, rows }) => {
+surface("list", "message list (2,400 messages loaded)", async ({ page, rows }) => {
   await expect(bar(page)).toContainText("NORMAL");
   await loadHistory(page);
   await page.keyboard.press("Shift+g");
