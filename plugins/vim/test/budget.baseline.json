@@ -1,4 +1,12 @@
 {
+  "list gg": {
+    "control": "control: jump to the top (the page itself)",
+    "why": "Jumping to the top of a list of 2,400 messages costs the app the layout of the rows it lands on, and the most of what `gg` costs (the control row is the page setting scrollTop itself); `gg` also moves the cursor row after the jump."
+  },
+  "list G": {
+    "control": "control: jump to the bottom (the page itself)",
+    "why": "Jumping to the bottom of a list of 2,400 messages costs the app the layout of the rows it lands on, and the most of what `G` costs (the control row is the page setting scrollTop itself); `G` also moves the cursor row after the jump."
+  },
   "thread gg": {
     "control": "control: jump to the top (the page itself)",
     "why": "Jumping to the top of the 80-reply thread costs the app the layout of the rows it lands on (the control row is the page setting scrollTop itself); `gg` also moves the cursor row."
