@@ -1,0 +1,42 @@
+{
+  "id": "megatech.beeper",
+  "name": "Beeper",
+  "apiVersion": 1,
+  "description": "Your Beeper inbox inside Buzz: read your chats from every network and reply, through Beeper Desktop on this computer.",
+  "discovery": {
+    "category": "communication",
+    "tags": ["Beeper", "Messaging", "Inbox"]
+  },
+  "host": {
+    "commands": [
+      {
+        "id": "request",
+        "program": "curl",
+        "args": [
+          "-q",
+          "--silent",
+          "--proto",
+          "=http",
+          "--noproxy",
+          "*",
+          "--globoff",
+          "--connect-timeout",
+          "2",
+          "--max-time",
+          "4",
+          "--write-out",
+          "\n%{http_code}",
+          "--config",
+          "-"
+        ],
+        "maxInputBytes": 65536,
+        "maxOutputBytes": 1048576
+      },
+      {
+        "id": "curl-version",
+        "program": "curl",
+        "args": ["--version"]
+      }
+    ]
+  }
+}
