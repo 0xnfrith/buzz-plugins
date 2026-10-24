@@ -148,6 +148,7 @@ describe("connection", () => {
     let calls = 0;
     const { inbox, state } = setup({ chats: () => (calls++ === 0 ? late.promise : Promise.resolve([chat("new")])) });
     inbox.start();
+    await settle(); // the first request is out, and waiting
     inbox.reset();
     await settle();
     expect(state().list.map((c) => c.id)).toEqual(["new"]);
@@ -678,5 +679,34 @@ describe("while the page is not on screen", () => {
     inbox.reset();
     await settle();
     expect(calls).toEqual(["chats", "chats"]);
+  });
+});
+
+describe("before the token is found", () => {
+  it("asks nothing of Beeper until it has looked, and then asks with the token", async () => {
+    const found = deferred<void>();
+    let have = false;
+    const fake = scriptedClient({ chats: async () => [chat("a")] });
+    const inbox = createInbox({ client: fake.client, hasToken: () => have, ready: found.promise, timers: manualTimers().timers });
+    inbox.start();
+    await settle();
+    expect(fake.calls).toEqual([]);
+    expect(inbox.getState().connection).toBe("checking");
+    have = true;
+    found.resolve();
+    await settle();
+    expect(fake.calls).toEqual(["chats"]);
+    expect(inbox.getState().connection).toBe("ready");
+  });
+
+  it("says there is no token if the look found none", async () => {
+    const found = deferred<void>();
+    const fake = scriptedClient();
+    const inbox = createInbox({ client: fake.client, hasToken: () => false, ready: found.promise, timers: manualTimers().timers });
+    inbox.start();
+    found.resolve();
+    await settle();
+    expect(fake.calls).toEqual([]);
+    expect(inbox.getState().connection).toBe("no-token");
   });
 });

@@ -68,6 +68,8 @@ export const realTimers: Timers = {
 export type InboxOptions = {
   client: BeeperClient;
   hasToken(): boolean;
+  /** Settles when the token has been looked for (it may be fetched from the Keychain); nothing is asked of Beeper before. */
+  ready?: Promise<unknown>;
   timers?: Timers;
   now?: () => number;
 };
@@ -133,7 +135,7 @@ export function mergeMessages(...groups: Message[][]): Message[] {
     .sort((a, b) => time(a.timestamp) - time(b.timestamp) || bySortKey(a.sortKey, b.sortKey));
 }
 
-export function createInbox({ client, hasToken, timers = realTimers, now = Date.now }: InboxOptions) {
+export function createInbox({ client, hasToken, ready = Promise.resolve(), timers = realTimers, now = Date.now }: InboxOptions) {
   let state: InboxState = { connection: "checking", stale: false, chats: [], list: [], moreChats: false, filter: "", unreadOnly: false, pending: [] };
   const listeners = new Set<() => void>();
   // A reply that arrives after the token changed, or after another chat was opened, belongs to a
@@ -195,6 +197,8 @@ export function createInbox({ client, hasToken, timers = realTimers, now = Date.
 
   const refreshChats = async () => {
     const mine = epoch;
+    await ready;
+    if (mine !== epoch) return;
     if (!hasToken()) return connectionFailed(new BeeperError("no-token"), mine);
     try {
       const { items: fetched, hasMore } = await client.chats();

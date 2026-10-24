@@ -39,7 +39,7 @@ So the plugin declares `curl`. Asking Block to accept loopback HTTP origins in `
 - **`null` is ambiguous**: curl missing, Beeper closed, a reply over 1 MiB, a reply over 4 s and a reply that is not UTF-8 all come back as `null`. `client.diagnose()` runs the second declared command (`curl --version`) and then `GET /v1/info` to say which; the store does that once per change of state, not on every poll.
 - **1 MiB out**: a chat in Beeper's list comes with up to 20 of its participants (the SDK says so), so the list for 200 chats can be over the 1 MiB Buzz lets a program print, and then the answer is `null`, indistinguishable from nothing. `client.chats()` therefore asks for 200, and when two tries in a row fail while `diagnose()` finds Beeper is there, asks for half as many (down to 25) and remembers. The fake can pad each chat (`chatPadding`) to show it. The list says "Older chats are not listed" when Beeper reports more. **This has never met a real Beeper's sizes.**
 - **64 KiB in**: a send is one request on stdin. `fitsInRequest` reserves 3 KiB for the address, headers and the longest token the settings card accepts (500 characters) and the composer says "too long" before the attempt. In the tests a 60,000-character message fits and a 70,000-character one does not; quotes, backslashes and line breaks grow when escaped, so fewer fit.
-- **The install review** shows "Computer access" and two "Run curl" entries, each expandable to the program and every argument (seen in the real app). A reader can see what will run.
+- **The install review** shows "Computer access" and one "Run …" entry for each declared command (two for `curl`, three for `security`), each expandable to the program and every argument (the `curl` ones seen in the real app). A reader can see what will run.
 - The token must also pass `checkToken` (printable ASCII, no spaces, 8 to 500 characters); there is no check for a vendor prefix, since Beeper's format is not documented.
 - **`--globoff`**: curl treats `[`, `]`, `{` and `}` in a URL as ranges and sets. Chat ids and cursors are percent-encoded so none reaches the URL, but the flag is in the manifest in case an address ever does.
 - **A send that gets no answer** is `unconfirmed`, not "not sent": with `--max-time 4`, a POST can be cut off after Beeper took the message, and "Try again" would then send it twice. The text says to look in the chat first.
@@ -61,6 +61,26 @@ Taken from the SDK and **not seen from a real Beeper**:
 
 [`scripts/probe.mjs`](scripts/probe.mjs) checks the ones that can be checked by reading, and prints only status codes, field names, presence counts and type names.
 
+## The token and the Keychain
+
+The token reads every one of the person's chats, so plain `localStorage` is not the default where something better can be reached. On macOS the token goes in the Keychain, through three commands the manifest declares for the `security` program (`keychain-read`, `keychain-save`, `keychain-delete`), all naming one item (service `buzz-beeper`, account `beeper`). Elsewhere the profile's `localStorage` is the only place and the settings card says it is plain text. On a Mac it is an explicit choice ("Keep it in this app's profile instead"), and "Move to Keychain" undoes it.
+
+- **Read once, held in memory.** `config.ready` reads the Keychain when the plugin starts (then the profile, if the Keychain has nothing); the client asks the cache, so a poll never starts `security`. Nothing is asked of Beeper before `ready` settles. "Check again" on the Connect Beeper page and "Check Keychain" in the card read again.
+- **Saving.** `security add-generic-password -U -s buzz-beeper -a beeper -w`, with `-w` last and no value, asks for the password and then for it again. The plugin writes the token twice, one per line, on the program's standard input. Then it reads the item back and compares: the program's exit status is not trusted, because what the real program does with a piped standard input is an assumption (below). A mismatch is reported, nothing is kept, and the card shows the very same command (the test checks that the text on the card is the manifest's own arguments) for the person to run in Terminal, where it prompts, with a Check Keychain button.
+- **Not `security -i`**, which reads commands from standard input and so would put the token off the command line too: a declared command that takes *any* subcommand would let the plugin do anything with `security`, and the install review could not say so. The three commands are narrow and the review lists every argument.
+- **Switching places** removes the other copy: saving to the Keychain removes the profile copy, saving to the profile removes the Keychain item, remove deletes both and checks the Keychain by reading again (a refusal is reported).
+- **What it does not protect against:** the item is made by `security`, which is then allowed to read it, so another plugin that declares `security` could read it as well; the difference from `localStorage` is that the declaration shows in its install review, where reading `localStorage` needs none. It does protect against the profile's files, backups and anything else that can read them but cannot run `security` as this user.
+- **Detecting a Mac** is `navigator.platform` or the user agent. Linux (`secret-tool`, libsecret) and Windows (Credential Manager) have stores a declared command could reach too; not done.
+
+Assumed about macOS's `security`, **none of it seen on a Mac**:
+
+1. `find-generic-password -s S -a A -w` prints the password and a line break, and exits 44 when there is no such item (the plugin only needs: non-zero exit, so no output).
+2. `add-generic-password … -w` with no value asks twice on the terminal; with no terminal it reads standard input (the C library's password prompt falls back to it, as `readpassphrase` does without `RPP_REQUIRE_TTY`). If it does not, the save fails the read-back check and the card shows the Terminal command.
+3. An item made by `security` can be read by `security` without a prompt. If macOS does ask, it asks about this item, and the read has Buzz's 5 s deadline: a read that times out looks like "no token", and "Check again" reads again.
+4. `-U` updates an existing item.
+
+`test/fake-security/security` is a stand-in that behaves this way, and `test/unit/keychain.test.ts` and the browser tests run the plugin against it as real processes. What that proves is how the plugin treats a program that behaves so: the token only on standard input, never in an argument (checked in the process list while the program runs), checked by reading back, a refusal reported and nothing kept, a long token refused, an older Keychain token never taken for a new one that failed to save. It does not prove the real program behaves so.
+
 ## What worked through the plugin API, and what needed the page
 
 API: `pages.register` (a primary page with the workspace layout), `settingsCards.register`, `navigation.open` to the plugin's settings section, `host.runCommand`, `ctx.effect` for cleanup.
@@ -80,7 +100,7 @@ Module evaluation must be pure: a module-level JSX constant broke every page in 
 
 ## The list is windowed
 
-The first version drew every chat row. With 12 chats the key to paint in the browser harness was a median of 11 ms and p99 26 ms over 480 keys; with 200 chats, a median of 18 ms and p99 78 ms (`u`, which redraws the list, had a median of 59 ms). The list now draws only the rows in view and six beyond each edge (`src/ui/window.ts`, rows are one fixed height), and the same 480 keys with 200 chats give a median of 14 ms and p99 29 ms. It costs a custom listbox: `aria-posinset` and `aria-setsize` on the options, `aria-activedescendant` on the list, and the highlighted row is brought into view by arithmetic rather than `scrollIntoView`.
+The first version drew every chat row. With 12 chats the key to paint in the browser harness was a median of 11 ms and p99 26 ms over 480 keys; with 200 chats, a median of 18 ms and p99 78 ms (`u`, which redraws the list, had a median of 59 ms). The list now draws only the rows in view and six beyond each edge (`src/ui/window.ts`, rows are one fixed height), and the same 480 keys with 200 chats give a median of 14 ms and a p99 of 27 to 37 ms over five full runs. It costs a custom listbox: `aria-posinset` and `aria-setsize` on the options, `aria-activedescendant` on the list, and the highlighted row is brought into view by arithmetic rather than `scrollIntoView`.
 
 ## Measuring
 
@@ -90,11 +110,11 @@ Headless Chromium in Buzz's web build (`test/web/beeper.spec.mjs`, last test), 2
 
 | | n | median | p95 | p99 | max |
 | --- | --- | --- | --- | --- | --- |
-| a key nothing listens to (the floor of this VM; 60 samples, so its p99 is its maximum) | 60 | 9 | 15 | 17 | 17 |
-| all the plugin's keys | 480 | 14 | 23 | **29** | 40 |
+| a key nothing listens to (the floor of this VM; 60 samples, so its p99 is its maximum) | 60 | 9 | 18 | 30 | 30 |
+| all the plugin's keys (the last full run; p99 was 27 to 37 over five full runs, this machine is not quiet) | 480 | 14 | 26 | **37** | 78 |
 | `u` (unread only, on and off), the slowest kind | 40 | 23 | 33 | 40 | 40 |
 
-The test fails above a p99 of 50 ms over all the keys, and for each kind that has at least 100 samples.
+The test fails above a p99 of 50 ms over all the keys (`PERF_P99_MS` raises it on a slow machine), and above a p95 of 50 ms for each kind that has at least 100 samples.
 
 ### Real desktop app
 
@@ -118,7 +138,7 @@ What this says, on this machine:
 
 - The keys that only move the highlight (`j`, `k`, the arrows, and in the browser harness `u` and `/`) stay near the floor and inside 50 ms at the 99th percentile. One of 420 `j`/`k` samples was 825 ms; it did not recur in about 700 further keys of the other runs and the page was polling, so it was probably a pause of the app and not of the plugin, but it was not explained.
 - **Anything that moves the keyboard focus costs about 60 ms in this app on this machine, with no plugin involved** (`Tab` on a page that has none: 62 ms). Typing in Buzz's own message box is no faster than typing in this plugin's: median 71 against 78 ms, and 189 against 186 ms at the maximum. So `Enter`, `Esc` and `r`, which move the focus, and typing, are at the host's floor here and over 50 ms; only the part above the floor is the plugin's (about 85 ms of the 148 for `Enter`, which also builds the chat pane; less than 10 ms of the typing). A GPU-composited Mac may well be far below this floor, but it was not measured: no Mac was available.
-- Why the host itself is this slow here (software rendering on two CPUs is the likely reason) was not investigated. The same keys in the browser harness take 14 ms at the median and 29 ms at p99, together with all the others.
+- Why the host itself is this slow here (software rendering on two CPUs is the likely reason) was not investigated. The same keys in the browser harness take 14 ms at the median and 27 to 37 ms at p99, together with all the others.
 
 What was done about the part that is the plugin's: the reply box is its own component (a key drawn the box and also the whole chat before); the box is measured for its height only once typing pauses (and not at all where the browser has `field-sizing: content`), because measuring needs the page laid out; a bubble or a row is not drawn again when a poll brings the same message (an object that is equal is kept); a chat that is still loading does not read the layout. Typing went from a median of 150 ms to 78.
 
@@ -126,8 +146,8 @@ Memory over time (the 15-minute run of `docs/building.md`) was **not** done; the
 
 ## What was verified
 
-- `pnpm test`: 112 unit tests. The curl request builder (quoting, size, the status line), the client against the **real `curl`** and a fake Beeper (exact message delivery, wrong token, missing scope, refused connection, over-large and too-slow replies, proxy and curlrc ignored, only plain http), the store (polling cadence, paging, optimistic sends and their matching, stale replies after a token change or another chat, the one-miss tolerance), the address and token checks, the time formatting and the list window arithmetic.
-- `test/run.sh`: 33 browser tests in Buzz's web build: the list, a chat, earlier messages, mark read, sending (exact text, sending state, refused send with retry and dismiss, too long, empty), read-only chats, drafts, keys, other pages ignoring the keys, a new message arriving, every problem state, the settings card (a wrong token is not kept, the token never in the page, console or any URL), the address check, light and dark, a narrow window, the long list, clean-up, and the key budget.
+- `pnpm test`: 135 unit tests. The curl request builder (quoting, size, the status line), the client against the **real `curl`** and a fake Beeper (exact message delivery, wrong token, missing scope, refused connection, over-large and too-slow replies, proxy and curlrc ignored, only plain http), the Keychain commands as real processes against the stand-in `security` (token on standard input only, read back, refusal reported), the store (polling cadence, paging, optimistic sends and their matching, stale replies after a token change or another chat, the one-miss tolerance), the address and token checks, the time formatting and the list window arithmetic.
+- `test/run.sh`: 40 browser tests in Buzz's web build: the list, a chat, earlier messages, mark read, sending (exact text, sending state, refused send with retry and dismiss, too long, empty), read-only chats, drafts, keys, other pages ignoring the keys, a new message arriving, every problem state, the settings card (a wrong token is not kept, the token never in the page, console or any URL), the Keychain flows on a pretended Mac against the stand-in `security` (save, found again after a reload, read once, refused and done by hand, move, remove, never run off a Mac), the address check, light and dark, a narrow window, the long list, clean-up, and the key budget.
 - The real Buzz desktop app on Linux: the folder installs, the review lists `curl` with its arguments, the settings card connects to the fake through the native command runner, the page lists chats, `j` and `Enter` open one, a reply with quotes and a backslash arrives intact, stopping the fake shows "Beeper is not running", starting it and pressing Check again recovers, and the plugin updates in place from the changed folder. Key timings above. These runs used the app's own profile, which holds other conversations, so no screenshot of the app is in this repository; the screenshots here are from the browser harness.
 - Public-repository check: no internal names, hosts, addresses or real messages in the diff; every name in a fixture is a placeholder.
 

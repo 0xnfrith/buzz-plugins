@@ -183,7 +183,8 @@ var TOKEN = "megatech.beeper.token.v1";
 var BASE_URL = "megatech.beeper.base-url.v1";
 /** Where Beeper Desktop listens by default. */
 var DEFAULT_BASE_URL = "http://127.0.0.1:23373";
-function createConfigStore(storage) {
+var withoutLineBreak = (text) => text?.replace(/\r?\n$/, "");
+function createConfigStore(storage, { run, keychain = false } = {}) {
 	const listeners = /* @__PURE__ */ new Set();
 	let version = 0;
 	const changed = () => {
@@ -197,19 +198,79 @@ function createConfigStore(storage) {
 			return;
 		}
 	};
+	const usable = keychain && run !== void 0;
+	const secret = (command, input) => run ? run(command, input).catch(() => null) : Promise.resolve(null);
+	let token;
+	let place;
+	const signature = () => `${place ?? ""}:${token ?? ""}`;
+	/** Looks for the token again: the Keychain first, then the profile. */
+	async function load() {
+		const before = signature();
+		let found;
+		let where;
+		if (usable) {
+			const kept = withoutLineBreak(await secret("keychain-read"));
+			if (kept) [found, where] = [kept, "keychain"];
+		}
+		if (!found) {
+			const stored = read(TOKEN);
+			if (stored) [found, where] = [stored, "profile"];
+		}
+		[token, place] = [found, where];
+		if (signature() !== before) changed();
+	}
+	/** Puts a token in the Keychain, and reads it back to be sure: the program's own exit status is not trusted to say. */
+	async function toKeychain(value) {
+		if (!usable) return false;
+		await secret("keychain-save", `${value}\n${value}\n`);
+		if (withoutLineBreak(await secret("keychain-read")) !== value) return false;
+		try {
+			storage.removeItem(TOKEN);
+		} catch {}
+		[token, place] = [value, "keychain"];
+		changed();
+		return true;
+	}
 	return {
 		/** Changes whenever the token or the address changes, for effects that must start over. */
 		version: () => version,
+		/** Settles when the first look for the token is over. */
+		ready: load(),
+		/** Looks again (the Keychain may have been given the token from outside, or have asked and been answered). */
+		reload: load,
 		/** The saved token, for the client only. Nothing else should hold on to it. */
-		token: () => read(TOKEN),
-		hasToken: () => read(TOKEN) !== void 0,
-		saveToken(token) {
-			storage.setItem(TOKEN, token);
+		token: () => token,
+		hasToken: () => token !== void 0,
+		place: () => place,
+		keychainAvailable: () => usable,
+		/** False when the Keychain would not keep it (the caller then shows how to put it there by hand). */
+		saveToKeychain: toKeychain,
+		/** The explicit fallback: plain text in the app's profile. */
+		async saveToProfile(value) {
+			storage.setItem(TOKEN, value);
+			if (usable) await secret("keychain-delete");
+			[token, place] = [value, "profile"];
 			changed();
 		},
-		clearToken() {
+		/** Moves a token kept in the profile to the Keychain. */
+		async moveToKeychain() {
+			return token !== void 0 && place === "profile" ? toKeychain(token) : false;
+		},
+		/** False when the Keychain still has it afterwards. */
+		async clearToken() {
 			storage.removeItem(TOKEN);
+			if (usable) {
+				await secret("keychain-delete");
+				const left = withoutLineBreak(await secret("keychain-read"));
+				if (left) {
+					[token, place] = [left, "keychain"];
+					changed();
+					return false;
+				}
+			}
+			[token, place] = [void 0, void 0];
 			changed();
+			return true;
 		},
 		baseUrl() {
 			const stored = read(BASE_URL);
@@ -343,7 +404,7 @@ function mergeMessages(...groups) {
 	}
 	return [...byId.values()].filter((message) => message.type !== "REACTION" && !message.isDeleted && !message.isHidden).sort((a, b) => time(a.timestamp) - time(b.timestamp) || bySortKey(a.sortKey, b.sortKey));
 }
-function createInbox({ client, hasToken, timers = realTimers, now = Date.now }) {
+function createInbox({ client, hasToken, ready = Promise.resolve(), timers = realTimers, now = Date.now }) {
 	let state = {
 		connection: "checking",
 		stale: false,
@@ -415,6 +476,8 @@ function createInbox({ client, hasToken, timers = realTimers, now = Date.now }) 
 	};
 	const refreshChats = async () => {
 		const mine = epoch;
+		await ready;
+		if (mine !== epoch) return;
 		if (!hasToken()) return connectionFailed(new BeeperError("no-token"), mine);
 		try {
 			const { items: fetched, hasMore } = await client.chats();
@@ -904,7 +967,7 @@ function Problem({ connection, problem, onRetry, onSettings }) {
 	let body;
 	switch (connection) {
 		case "no-token":
-			body = /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("h2", null, "Connect Beeper"), /* @__PURE__ */ React.createElement("p", null, "This page shows your Beeper chats and lets you reply. It needs an access token from Beeper Desktop on this computer."), setup(), /* @__PURE__ */ React.createElement("div", { className: "mtb-actions" }, settings(true)));
+			body = /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("h2", null, "Connect Beeper"), /* @__PURE__ */ React.createElement("p", null, "This page shows your Beeper chats and lets you reply. It needs an access token from Beeper Desktop on this computer."), setup(), /* @__PURE__ */ React.createElement("div", { className: "mtb-actions" }, settings(true), retry));
 			break;
 		case "unavailable":
 			body = /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("h2", null, "Beeper is not running, or its API is off"), /* @__PURE__ */ React.createElement("p", null, "Beeper Desktop has to be open on this computer, with its Desktop API turned on: Settings, then Developers, then Beeper Desktop API."), /* @__PURE__ */ React.createElement("p", { className: "mtb-muted" }, "If you changed the API's port, set the address in this plugin's settings."), /* @__PURE__ */ React.createElement("div", { className: "mtb-actions" }, retry, settings(false)));
@@ -956,7 +1019,7 @@ function useNow() {
 	return now;
 }
 var rowId = (chatID) => `mtb-row-${chatID}`;
-function createInboxPage({ inbox, openSettings }) {
+function createInboxPage({ inbox, openSettings, reloadToken }) {
 	const Row = React.memo(function Row({ chat, cursor, open, unsent, now, top, position, total }) {
 		const unread = chat.unreadCount > 0 ? chat.unreadCount : 0;
 		return /* @__PURE__ */ React.createElement("div", {
@@ -1361,7 +1424,7 @@ function createInboxPage({ inbox, openSettings }) {
 		}, "Beeper is not answering. Showing what was read a moment ago."), state.connection !== "ready" ? /* @__PURE__ */ React.createElement(Problem, {
 			connection: state.connection,
 			problem: state.problem,
-			onRetry: () => void inbox.retry(),
+			onRetry: () => void reloadToken().then(() => inbox.retry()),
 			onSettings: openSettings
 		}) : /* @__PURE__ */ React.createElement("div", { className: "mtb-main" }, /* @__PURE__ */ React.createElement("div", { className: "mtb-side" }, /* @__PURE__ */ React.createElement("div", { className: "mtb-tools" }, /* @__PURE__ */ React.createElement("input", {
 			ref: filterRef,
@@ -1411,11 +1474,14 @@ var TEXT = {
 function createSettingsCard({ config, client }) {
 	return function BeeperSettings() {
 		const saved = React.useSyncExternalStore(config.subscribe, () => config.hasToken());
+		const place = React.useSyncExternalStore(config.subscribe, () => config.place());
 		const address = React.useSyncExternalStore(config.subscribe, () => config.baseUrl());
+		const keychain = config.keychainAvailable();
 		const [draft, setDraft] = React.useState("");
 		const [replacing, setReplacing] = React.useState(false);
 		const [addressDraft, setAddressDraft] = React.useState(void 0);
 		const [status, setStatus] = React.useState({ kind: "idle" });
+		const [byHand, setByHand] = React.useState(false);
 		const alive = React.useRef(true);
 		React.useEffect(() => {
 			alive.current = true;
@@ -1447,8 +1513,8 @@ function createSettingsCard({ config, client }) {
 				return kind;
 			}
 		};
-		const save = async (event) => {
-			event.preventDefault();
+		/** What a save does first: the token is checked as a token, then Beeper is asked, so a mistyped replacement never costs the one that works. */
+		const accepted = async () => {
 			const checked = checkToken(draft);
 			if (!checked.ok) {
 				setStatus({
@@ -1458,9 +1524,31 @@ function createSettingsCard({ config, client }) {
 				return;
 			}
 			const verdict = await check(checked.value);
-			if (verdict === "unauthorized" || verdict === "forbidden") return;
+			return verdict === "unauthorized" || verdict === "forbidden" ? void 0 : checked.value;
+		};
+		const saveToKeychain = async (event) => {
+			event?.preventDefault();
+			const value = await accepted();
+			if (value === void 0) return;
+			setByHand(false);
+			if (await config.saveToKeychain(value)) {
+				setDraft("");
+				setReplacing(false);
+			} else if (alive.current) {
+				setByHand(true);
+				setStatus({
+					kind: "error",
+					text: "The Keychain would not take the token from here, and it has not been kept anywhere."
+				});
+			}
+		};
+		const saveToProfile = async (event) => {
+			event?.preventDefault();
+			const value = await accepted();
+			if (value === void 0) return;
+			setByHand(false);
 			try {
-				config.saveToken(checked.value);
+				await config.saveToProfile(value);
 			} catch {
 				setStatus({
 					kind: "error",
@@ -1468,12 +1556,45 @@ function createSettingsCard({ config, client }) {
 				});
 				return;
 			}
-			if (verdict !== "ok" && alive.current) setStatus({
-				kind: "ok",
-				text: "Token saved. Beeper is not answering right now: open it, then press Test connection."
-			});
 			setDraft("");
 			setReplacing(false);
+		};
+		const checkKeychain = async () => {
+			await config.reload();
+			if (!alive.current) return;
+			if (config.place() === "keychain") {
+				setByHand(false);
+				setReplacing(false);
+				setStatus({
+					kind: "ok",
+					text: "Found the token in your Keychain."
+				});
+			} else setStatus({
+				kind: "error",
+				text: "Nothing in the Keychain yet. Run the command in Terminal, type the token at the prompt, then check again."
+			});
+		};
+		const move = async () => {
+			setStatus({ kind: "checking" });
+			const moved = await config.moveToKeychain();
+			if (alive.current) setStatus(moved ? {
+				kind: "ok",
+				text: "Moved to your Keychain. The copy in this app's profile is gone."
+			} : {
+				kind: "error",
+				text: "The Keychain would not take the token from here. It is still in this app's profile."
+			});
+		};
+		const remove = async () => {
+			const gone = await config.clearToken();
+			if (!alive.current) return;
+			setStatus(gone ? { kind: "idle" } : {
+				kind: "error",
+				text: "The Keychain would not give the token up. Remove it in Keychain Access (search for buzz-beeper)."
+			});
+			setReplacing(false);
+			setByHand(false);
+			setDraft("");
 		};
 		const saveAddress = (event) => {
 			event.preventDefault();
@@ -1492,18 +1613,13 @@ function createSettingsCard({ config, client }) {
 				text: `Using ${checked.value}.`
 			});
 		};
-		const remove = () => {
-			config.clearToken();
-			setStatus({ kind: "idle" });
-			setReplacing(false);
-			setDraft("");
-		};
 		const showInput = !saved || replacing;
+		const busy = status.kind === "checking";
 		return /* @__PURE__ */ React.createElement("section", {
 			className: "mtb-root mtb-settings",
 			"aria-label": "Beeper"
-		}, /* @__PURE__ */ React.createElement("p", null, "Shows your Beeper chats as an inbox and lets you reply. It talks only to Beeper Desktop on this computer, using an access token you make there. Your messages are not sent anywhere else."), saved && !replacing && /* @__PURE__ */ React.createElement("p", null, /* @__PURE__ */ React.createElement("strong", null, "Token saved."), " It is not shown again."), showInput && /* @__PURE__ */ React.createElement("form", {
-			onSubmit: save,
+		}, /* @__PURE__ */ React.createElement("p", null, "Shows your Beeper chats as an inbox and lets you reply. It talks only to Beeper Desktop on this computer, using an access token you make there. Your messages are not sent anywhere else."), saved && !replacing && /* @__PURE__ */ React.createElement("p", { "data-place": place }, place === "keychain" ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("strong", null, "Token saved in your Keychain."), " It is not shown again.") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("strong", null, "Token saved in this app's profile, as plain text."), " It is not shown again, but any other plugin you install could read it.")), showInput && /* @__PURE__ */ React.createElement("form", {
+			onSubmit: (event) => void (keychain ? saveToKeychain(event) : saveToProfile(event)),
 			className: "mtb-form"
 		}, /* @__PURE__ */ React.createElement("label", { htmlFor: "mtb-token" }, "Beeper access token"), /* @__PURE__ */ React.createElement("input", {
 			id: "mtb-token",
@@ -1520,28 +1636,47 @@ function createSettingsCard({ config, client }) {
 			type: "submit",
 			className: "mtb-button",
 			"data-primary": "",
-			disabled: status.kind === "checking"
-		}, "Save token"), replacing && /* @__PURE__ */ React.createElement("button", {
+			disabled: busy
+		}, keychain ? "Save to Keychain" : "Save token"), keychain && /* @__PURE__ */ React.createElement("button", {
 			type: "button",
 			className: "mtb-button",
-			onClick: () => (setReplacing(false), setDraft(""))
-		}, "Cancel"))), saved && !replacing && /* @__PURE__ */ React.createElement("div", { className: "mtb-actions" }, /* @__PURE__ */ React.createElement("button", {
+			disabled: busy,
+			onClick: () => void saveToProfile()
+		}, "Keep it in this app's profile instead"), replacing && /* @__PURE__ */ React.createElement("button", {
 			type: "button",
 			className: "mtb-button",
-			disabled: status.kind === "checking",
+			onClick: () => (setReplacing(false), setDraft(""), setByHand(false))
+		}, "Cancel")), /* @__PURE__ */ React.createElement("p", { className: "mtb-muted" }, keychain ? "Your Keychain is the safe place. The profile copy is plain text that any other plugin you install could read." : "On this system the token is kept in this app's profile, as plain text. Any other plugin you install could read it: install only plugins you trust.")), byHand && /* @__PURE__ */ React.createElement("div", {
+			role: "group",
+			"aria-label": "Save the token in the Keychain by hand",
+			className: "mtb-form"
+		}, /* @__PURE__ */ React.createElement("p", null, "To put it in the Keychain yourself, run this in Terminal. It asks for the token (twice, showing nothing as you type), so the token is not in the command:"), /* @__PURE__ */ React.createElement("code", { className: "mtb-code" }, "security add-generic-password -U -s buzz-beeper -a beeper -w"), /* @__PURE__ */ React.createElement("div", { className: "mtb-actions" }, /* @__PURE__ */ React.createElement("button", {
+			type: "button",
+			className: "mtb-button",
+			onClick: () => void checkKeychain()
+		}, "Check Keychain"))), saved && !replacing && /* @__PURE__ */ React.createElement("div", { className: "mtb-actions" }, /* @__PURE__ */ React.createElement("button", {
+			type: "button",
+			className: "mtb-button",
+			disabled: busy,
 			onClick: () => void check()
-		}, "Test connection"), /* @__PURE__ */ React.createElement("button", {
+		}, "Test connection"), keychain && place === "profile" && /* @__PURE__ */ React.createElement("button", {
+			type: "button",
+			className: "mtb-button",
+			"data-primary": "",
+			disabled: busy,
+			onClick: () => void move()
+		}, "Move to Keychain"), /* @__PURE__ */ React.createElement("button", {
 			type: "button",
 			className: "mtb-button",
 			onClick: () => setReplacing(true)
 		}, "Replace token"), /* @__PURE__ */ React.createElement("button", {
 			type: "button",
 			className: "mtb-button",
-			onClick: remove
+			onClick: () => void remove()
 		}, "Remove token")), status.kind !== "idle" && /* @__PURE__ */ React.createElement("p", {
 			role: status.kind === "error" ? "alert" : "status",
 			"data-tone": status.kind === "error" ? "error" : void 0
-		}, status.kind === "checking" ? "Asking Beeper…" : status.text), /* @__PURE__ */ React.createElement("p", { className: "mtb-muted" }, "Make a token in Beeper Desktop: Settings, then Developers. Turn on Beeper Desktop API, then under Approved connections press + and follow the steps."), /* @__PURE__ */ React.createElement("p", { className: "mtb-muted" }, "The token is kept on this computer, in this app's profile, as plain text. Buzz plugins are not sandboxed, so any other plugin you install could read it: install only plugins you trust."), /* @__PURE__ */ React.createElement("details", null, /* @__PURE__ */ React.createElement("summary", null, "Address"), /* @__PURE__ */ React.createElement("form", {
+		}, status.kind === "checking" ? "Asking Beeper…" : status.text), /* @__PURE__ */ React.createElement("p", { className: "mtb-muted" }, "Make a token in Beeper Desktop: Settings, then Developers. Turn on Beeper Desktop API, then under Approved connections press + and follow the steps."), /* @__PURE__ */ React.createElement("details", null, /* @__PURE__ */ React.createElement("summary", null, "Address"), /* @__PURE__ */ React.createElement("form", {
 			onSubmit: saveAddress,
 			className: "mtb-form"
 		}, /* @__PURE__ */ React.createElement("label", { htmlFor: "mtb-address" }, "Where Beeper Desktop listens"), /* @__PURE__ */ React.createElement("input", {
@@ -1587,7 +1722,7 @@ var CSS$1 = `
 .mtb-button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border: 1px solid var(--mtb-line);
   border-radius: 6px; background: transparent; color: var(--mtb-ink); font: inherit; font-weight: 500; cursor: pointer; }
 .mtb-button:hover:not(:disabled) { background: var(--mtb-hover); }
-.mtb-button[data-primary] { border-color: var(--mtb-accent); color: var(--mtb-accent); }
+.mtb-button[data-primary] { border-color: var(--mtb-accent); background: color-mix(in srgb, var(--mtb-accent) 14%, transparent); font-weight: 600; }
 .mtb-button:disabled { opacity: 0.5; cursor: default; }
 .mtb-icon-button { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0;
   border: 0; border-radius: 6px; background: transparent; color: var(--mtb-muted); cursor: pointer; }
@@ -1675,6 +1810,7 @@ var CSS$1 = `
 .mtb-settings [data-tone="error"] { color: var(--red-11, #e5484d); }
 .mtb-form { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .mtb-form .mtb-input { width: 100%; max-width: 420px; height: 32px; }
+.mtb-code { display: block; padding: 8px 10px; border: 1px solid var(--mtb-line); border-radius: 6px; background: var(--mtb-panel); font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
 .mtb-settings details summary { cursor: pointer; color: var(--mtb-muted); }
 @media (max-width: 720px) { .mtb-side { flex-basis: 240px; width: 240px; } }
 @media (prefers-reduced-motion: reduce) { .mtb-root * { transition: none !important; animation: none !important; } }
@@ -1689,7 +1825,11 @@ var inject = [
 ];
 function apply(ctx) {
 	provideReact(ctx.react);
-	const config = createConfigStore(window.localStorage);
+	const mac = /^Mac/i.test(navigator.platform ?? "") || /Macintosh/.test(navigator.userAgent ?? "");
+	const config = createConfigStore(window.localStorage, {
+		keychain: mac,
+		run: (command, input) => ctx.host.runCommand(command, input)
+	});
 	const client = createClient({
 		run: (command, input) => ctx.host.runCommand(command, input),
 		token: () => config.token(),
@@ -1697,7 +1837,8 @@ function apply(ctx) {
 	});
 	const inbox = createInbox({
 		client,
-		hasToken: () => config.hasToken()
+		hasToken: () => config.hasToken(),
+		ready: config.ready
 	});
 	ctx.effect(() => {
 		const style = document.createElement("style");
@@ -1725,7 +1866,8 @@ function apply(ctx) {
 		icon: PAGE_ICON,
 		component: createInboxPage({
 			inbox,
-			openSettings
+			openSettings,
+			reloadToken: config.reload
 		})
 	});
 	ctx.settingsCards.register({

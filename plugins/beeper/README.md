@@ -11,12 +11,13 @@ Every person, chat and message in the screenshots is made up: they come from the
 - **Beeper Desktop** running on this computer, signed in, with its Desktop API turned on: Settings, then Developers, then Beeper Desktop API. (Beeper's own docs: [developers.beeper.com/desktop-api](https://developers.beeper.com/desktop-api/).)
 - An **access token** from Beeper: Settings, Developers, Approved connections, press **+** and follow the steps.
 - **`curl`** on the computer. macOS, Windows 10 and later and most Linux systems have it. Why this plugin needs it is explained below.
+- On a Mac, the `security` program (it comes with macOS): the plugin keeps your token in the Keychain with it.
 - The Buzz desktop app (1.0). The browser build cannot install plugins.
 
 ## Getting started
 
-1. Install the plugin: Settings, Plugins, Manage plugins, Add, **Browse** to this folder (`plugins/beeper`, the one with `manifest.json` and `plugin.js`), or add this repository as a Git repository. The review will say the plugin can run programs on your computer. It lists exactly one: `curl`, twice (one command that makes the request, one that asks `curl` for its version), with the arguments it uses. See [How it reaches Beeper](#how-it-reaches-beeper).
-2. Open Settings, Beeper. Paste the token and press **Save token**. The plugin asks Beeper first, and keeps the token only if Beeper accepts it. The card says "Connected to Beeper Desktop…".
+1. Install the plugin: Settings, Plugins, Manage plugins, Add, **Browse** to this folder (`plugins/beeper`, the one with `manifest.json` and `plugin.js`), or add this repository as a Git repository. The review will say the plugin can run programs on your computer. It lists two programs, with the arguments each command uses: `curl` (twice: one command makes the request, one asks `curl` for its version) and `security` (three times, for the Keychain: read, save and delete one item, `buzz-beeper`; they are never run off a Mac). See [How it reaches Beeper](#how-it-reaches-beeper).
+2. Open Settings, Beeper. Paste the token and press **Save to Keychain** (on a Mac; elsewhere **Save token**). The plugin asks Beeper first, and keeps the token only if Beeper accepts it. The card says "Connected to Beeper Desktop…" and where the token is kept. If macOS asks whether Buzz may use the Keychain item, that is the system asking about the item the plugin made.
 3. Open the **Beeper** page in the sidebar.
 
 ## Using it
@@ -54,14 +55,18 @@ Taken in Buzz's own browser test harness with the plugin's fake Beeper (`test/we
 | A reply that failed stays with its chat; the list says which chat | Before a token is saved |
 | ![Beeper is not running, or its API is off](screenshots/not-running.png) | ![curl was not found](screenshots/no-curl.png) |
 | Beeper closed, or its API off | No `curl` on the computer |
-| ![The settings card: token saved, connected](screenshots/settings.png) | |
-| The settings card: the token is never shown again | |
+| ![The settings card on a Mac: the token saved in the Keychain](screenshots/keychain-saved.png) | ![The Keychain would not take the token: the one command to run in Terminal](screenshots/keychain-by-hand.png) |
+| On a Mac the token goes to the Keychain, and is never shown again | If the Keychain will not take it, nothing is kept and the card shows the command to run in Terminal |
+| ![The settings card off a Mac: the token in the profile, said to be plain text](screenshots/settings.png) | |
+| Elsewhere the token can only be kept in the profile, and the card says it is plain text | |
 
 ## Privacy
 
 - **Nothing leaves your computer except the calls to Beeper Desktop on `127.0.0.1`.** The plugin refuses any other address (the *Address* setting accepts only `127.0.0.1`, `localhost` or `[::1]`, over plain `http`, which is what Beeper Desktop speaks). It has no analytics, no logging, and no other way out.
 - **The token goes to whatever answers on the configured address on this computer**, which is Beeper Desktop unless something else has taken its port. Beeper's `/v1/info` needs no token, so the plugin asks it first, but cannot tell the real Beeper from a program that answers like it.
-- **The token is kept on this computer, in this app's profile, as plain text.** Buzz has no credential store for plugins yet. **Any other plugin you install could read it**, as could anyone with access to your Buzz profile: install only plugins you trust. The token is never shown again after saving, and never written to a log, an error message or the command line of a program (the process list shows those): it is sent to `curl` on its input.
+- **On a Mac the token is kept in the Keychain** (item `buzz-beeper`, account `beeper`), not in the app's profile. It is written by the `security` program with the token on its standard input, never on a command line, and the plugin reads it back to be sure it is there. It is read once when the plugin starts and held in memory while Buzz runs. If the Keychain will not take the token, nothing is kept, and the card shows the one command to run in Terminal (it asks for the token, so the token is not in the command), with a **Check Keychain** button.
+- **The profile copy is an explicit choice, and elsewhere the only one.** On a Mac, **Keep it in this app's profile instead** keeps the token in the app's profile as plain text, and the card says so; **Move to Keychain** moves it. On other systems the token can only be kept there, in plain text, and the card says that too. **Any other plugin you install could read a profile copy**, as could anyone with access to your Buzz profile: install only plugins you trust. The Keychain copy is not out of reach of every plugin either: the item is made by the `security` program, which is then allowed to read it, so another plugin that declares `security` in its manifest could read it too. The difference is that this shows in that plugin's install review ("Run security"), while reading the profile needs no declaration at all.
+- The token is never shown again after saving, and never written to a log, an error message or the command line of a program (the process list shows those): it is sent to `curl`, and to `security`, on their input.
 - **Messages are not stored by the plugin.** They are held in the page's memory while it is open and are gone when it is closed. Drafts you have not sent are kept in memory only.
 - Tests, fixtures and screenshots use made-up people only. No real chat is anywhere in this repository.
 
@@ -101,6 +106,8 @@ The page says what, and what to do:
 - A message of more than about 60,000 characters (fewer if it is full of quotes, backslashes or line breaks) cannot be sent from here: Buzz lets a program take 64 KiB on its input. The box says so before you try.
 
 ## Status
+
+The Keychain route has **not been run on a Mac** (there was none): it is tested against a stand-in `security` program that behaves as the real one is documented to, so what is proved is what the plugin does with such a program, not that the real one behaves so. If saving does not work for you, the card falls back to the Terminal command.
 
 Built and tested against a **fake** Beeper Desktop that follows the shapes in Beeper's own TypeScript SDK. **It has not been run against a real Beeper Desktop**: there was none where it was built. [`scripts/probe.mjs`](scripts/probe.mjs) is for that: with Beeper running and a token in `BEEPER_ACCESS_TOKEN`, `node scripts/probe.mjs` reads through the same `curl` path and prints status codes, field names and counts, never a message, a name or an id. What it checks, and what was verified here, is in `NOTES.md`.
 

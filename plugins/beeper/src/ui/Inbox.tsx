@@ -7,7 +7,7 @@ import { CloseIcon, MuteIcon, NetworkBadge, PinIcon, RefreshIcon } from "./icons
 import { Problem } from "./States";
 import { contentHeight, rowTop, scrollToReveal, visibleRange } from "./window";
 
-type Deps = { inbox: Inbox; openSettings(): void };
+type Deps = { inbox: Inbox; openSettings(): void; reloadToken(): Promise<void> };
 
 /** The time, refreshed each minute, for "Yesterday" and the like to change on their own. */
 function useNow(): number {
@@ -21,7 +21,7 @@ function useNow(): number {
 
 const rowId = (chatID: string) => `mtb-row-${chatID}`;
 
-export function createInboxPage({ inbox, openSettings }: Deps) {
+export function createInboxPage({ inbox, openSettings, reloadToken }: Deps) {
   type RowProps = { chat: Chat; cursor: boolean; open: boolean; unsent: boolean; now: number; top: number; position: number; total: number };
 
   const Row = React.memo(function Row({ chat, cursor, open, unsent, now, top, position, total }: RowProps) {
@@ -501,7 +501,7 @@ export function createInboxPage({ inbox, openSettings }: Deps) {
           </div>
         )}
         {state.connection !== "ready" ? (
-          <Problem connection={state.connection} problem={state.problem} onRetry={() => void inbox.retry()} onSettings={openSettings} />
+          <Problem connection={state.connection} problem={state.problem} onRetry={() => void reloadToken().then(() => inbox.retry())} onSettings={openSettings} />
         ) : (
           <div className="mtb-main">
             <div className="mtb-side">

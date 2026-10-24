@@ -28,7 +28,7 @@ export const CSS = /* css */ `
 .mtb-button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border: 1px solid var(--mtb-line);
   border-radius: 6px; background: transparent; color: var(--mtb-ink); font: inherit; font-weight: 500; cursor: pointer; }
 .mtb-button:hover:not(:disabled) { background: var(--mtb-hover); }
-.mtb-button[data-primary] { border-color: var(--mtb-accent); color: var(--mtb-accent); }
+.mtb-button[data-primary] { border-color: var(--mtb-accent); background: color-mix(in srgb, var(--mtb-accent) 14%, transparent); font-weight: 600; }
 .mtb-button:disabled { opacity: 0.5; cursor: default; }
 .mtb-icon-button { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0;
   border: 0; border-radius: 6px; background: transparent; color: var(--mtb-muted); cursor: pointer; }
@@ -116,6 +116,7 @@ export const CSS = /* css */ `
 .mtb-settings [data-tone="error"] { color: var(--red-11, #e5484d); }
 .mtb-form { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .mtb-form .mtb-input { width: 100%; max-width: 420px; height: 32px; }
+.mtb-code { display: block; padding: 8px 10px; border: 1px solid var(--mtb-line); border-radius: 6px; background: var(--mtb-panel); font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
 .mtb-settings details summary { cursor: pointer; color: var(--mtb-muted); }
 @media (max-width: 720px) { .mtb-side { flex-basis: 240px; width: 240px; } }
 @media (prefers-reduced-motion: reduce) { .mtb-root * { transition: none !important; animation: none !important; } }

@@ -45,7 +45,10 @@ export function Problem({ connection, problem, onRetry, onSettings }: Props) {
           <h2>Connect Beeper</h2>
           <p>This page shows your Beeper chats and lets you reply. It needs an access token from Beeper Desktop on this computer.</p>
           {setup()}
-          <div className="mtb-actions">{settings(true)}</div>
+          <div className="mtb-actions">
+            {settings(true)}
+            {retry}
+          </div>
         </>
       );
       break;

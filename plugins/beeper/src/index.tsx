@@ -13,14 +13,16 @@ export const inject = ["react", "pages", "settingsCards", "navigation", "host"];
 export function apply(ctx: Context) {
   provideReact(ctx.react);
 
-  const config = createConfigStore(window.localStorage);
+  // The Keychain is macOS's. On other systems the token can only be kept in the profile, and the settings card says so.
+  const mac = /^Mac/i.test(navigator.platform ?? "") || /Macintosh/.test(navigator.userAgent ?? "");
+  const config = createConfigStore(window.localStorage, { keychain: mac, run: (command, input) => ctx.host.runCommand(command, input) });
   // `ctx.host.runCommand` is the only way out of the plugin, and it can run only the two curl commands the manifest declares.
   const client = createClient({
     run: (command, input) => ctx.host.runCommand(command, input),
     token: () => config.token(),
     baseUrl: () => config.baseUrl(),
   });
-  const inbox = createInbox({ client, hasToken: () => config.hasToken() });
+  const inbox = createInbox({ client, hasToken: () => config.hasToken(), ready: config.ready });
 
   ctx.effect(() => {
     // [DOM] The page's styles are one <style> element: API v1 has no separate CSS, and the host has no style service.
@@ -46,7 +48,7 @@ export function apply(ctx: Context) {
     primary: true,
     layout: "workspace",
     icon: PAGE_ICON,
-    component: createInboxPage({ inbox, openSettings }),
+    component: createInboxPage({ inbox, openSettings, reloadToken: config.reload }),
   });
   ctx.settingsCards.register({
     id: "settings",

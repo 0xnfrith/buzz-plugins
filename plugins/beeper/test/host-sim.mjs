@@ -4,6 +4,8 @@
 // (read at f4e95770), so the plugin is tested against the real curl, not a stub of it.
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { delimiter } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
 
@@ -11,7 +13,11 @@ export function declaredCommands() {
   return manifest.host.commands;
 }
 
-export function runCommand(id, input, { deadlineMs = 5000 } = {}) {
+// The `security` program of macOS is not on the machines the tests run on, so a stand-in is put first on the PATH.
+const fakeBin = fileURLToPath(new URL("./fake-security/", import.meta.url));
+
+/** `env` is added to the environment of the program (the stand-in `security` reads its settings from it). */
+export function runCommand(id, input, { deadlineMs = 5000, env = {} } = {}) {
   const command = manifest.host.commands.find((candidate) => candidate.id === id);
   if (!command) return Promise.resolve(null);
   const limitIn = command.maxInputBytes;
@@ -27,7 +33,11 @@ export function runCommand(id, input, { deadlineMs = 5000 } = {}) {
     };
     let child;
     try {
-      child = spawn(command.program, command.args ?? [], { stdio: [input === undefined ? "ignore" : "pipe", "pipe", "ignore"], detached: false });
+      child = spawn(command.program, command.args ?? [], {
+        stdio: [input === undefined ? "ignore" : "pipe", "pipe", "ignore"],
+        detached: false,
+        env: { ...process.env, ...env, PATH: `${fakeBin}${delimiter}${process.env.PATH ?? ""}` },
+      });
     } catch {
       return resolve(null);
     }
