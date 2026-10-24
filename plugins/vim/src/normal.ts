@@ -23,6 +23,7 @@ import {
 import { inComposer, isEditable } from "./dom";
 import { isHelpOpen, markHelpOpenedBy, openHelp } from "./help";
 import { PENDING, resolveMotion } from "./motions";
+import { lineScroll } from "./scroll";
 import { goPage, PAGE_KEYS } from "./pages";
 import * as perf from "./perf";
 import { armPending, clearPending, set, state, takeCount } from "./state";
@@ -133,7 +134,14 @@ export const onTextKey = (event: KeyboardEvent) => {
   if (!state.enabled || !state.composerNormal || state.textMode !== "normal") return;
   if (!inComposer(target) || !isEditable(target)) return;
   if (event.isComposing || event.keyCode === 229) return;
-  // Chords, Escape (handled by the shortcut below), Tab and arrows stay native.
+  // Ctrl-e and Ctrl-y scroll the pane's messages a line, the draft untouched (in INSERT they are left alone: on a Mac
+  // Ctrl-e is the editor's end-of-line there, and this listener does not run in INSERT).
+  if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && (event.key === "e" || event.key === "y")) {
+    event.preventDefault();
+    event.stopPropagation();
+    return lineScroll(event.key === "e" ? 1 : -1);
+  }
+  // Other chords, Escape (handled by the shortcut below), Tab and arrows stay native.
   if (event.metaKey || event.ctrlKey || event.altKey) return;
   if (event.key === "Escape" || event.key === "Tab") return;
   if (event.key.length > 1 && !["Enter", "Backspace", "Delete"].includes(event.key)) return;

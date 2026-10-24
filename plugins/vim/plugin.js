@@ -599,10 +599,10 @@ var clearCursors = () => {
 	clearCursor("side");
 	paintCursor();
 };
-var selectRow = (row) => {
+var selectRow = (row, reveal = true) => {
 	setCursor(paneOf(row), row.dataset.messageId, row);
 	paintCursor();
-	row.scrollIntoView({ block: "nearest" });
+	if (reveal) row.scrollIntoView({ block: "nearest" });
 };
 var nearestVisible = (scroller, fromEnd) => {
 	const rows = rowsOf(scroller).filter((row) => inView(scroller, row));
@@ -645,16 +645,22 @@ var jumpEdge = (end) => {
 		if (row) selectRow(row);
 	});
 };
+var keepCursorInView = (scroller, direction, still = false) => {
+	if (still && !cursors[cursorPane()]) return;
+	const current = rowsOf(scroller).find((row) => row.dataset.messageId === cursors[cursorPane()]);
+	if (current && inView(scroller, current)) return;
+	const fromEnd = direction < 0;
+	const edge = scroller.getBoundingClientRect();
+	const whole = (row) => row.getBoundingClientRect().top >= edge.top && row.getBoundingClientRect().bottom <= edge.bottom;
+	const shown = rowsOf(scroller).filter((row) => inView(scroller, row));
+	const row = still ? (fromEnd ? shown.filter(whole).at(-1) : shown.find(whole)) ?? (fromEnd ? shown.at(-1) : shown[0]) : nearestVisible(scroller, fromEnd);
+	if (row) selectRow(row, !still);
+};
 var halfPage = (direction) => {
 	const scroller = activeTimeline();
 	if (!scroller) return;
 	scroller.scrollBy({ top: direction * scroller.clientHeight / 2 });
-	afterLayout(() => {
-		const current = rowsOf(scroller).find((row) => row.dataset.messageId === cursors[cursorPane()]);
-		if (current && inView(scroller, current)) return;
-		const row = nearestVisible(scroller, direction < 0);
-		if (row) selectRow(row);
-	});
+	afterLayout(() => keepCursorInView(scroller, direction));
 };
 var cursorRow = () => {
 	const scroller = activeTimeline();
@@ -1489,6 +1495,11 @@ var groups = () => {
 					"DOM"
 				],
 				[
+					"Ctrl-e  Ctrl-y",
+					"Scroll one line down / up and leave the cursor where it is (5 Ctrl-e: five lines). The cursor moves only when it would leave the view, onto the nearest row still in it. Scrolls the pane that has the keys: the message list, the thread pane, the channel list, a page such as Reminders, Agents or Workflows, the Settings dialog. Control on a Mac too",
+					"DOM"
+				],
+				[
 					"h  l",
 					"Move focus between the channel list, the message list and the thread pane. l on a channel opens it",
 					"DOM"
@@ -1591,6 +1602,7 @@ var groups = () => {
 			rows: [
 				["h  j  k  l", "Move the caret (counts work)"],
 				["k  (on the first row)", "Go up out of the box into the newest message of the pane"],
+				["Ctrl-e  Ctrl-y", "Scroll the pane's messages one line down / up, the draft untouched (counts work). Not in INSERT: there the editor keeps them"],
 				["h  (at the very start)  l  (at the very end)", "Go one pane left or right: the thread's box is right of the channel's, which is right of the channel list (nothing lies right of the thread)"],
 				[`${L}  then  h  l  q  <  >  |  =`, "The leader key works here too, from anywhere in the draft: h and l go one pane left or right, q closes the thread, < > | = resize it"],
 				["w  b  e  ge", "Words: letters, digits and underscore are one word, any other run of characters is another"],
@@ -1629,6 +1641,73 @@ var groups = () => {
 			]
 		}
 	];
+};
+// src/scroll.ts
+var lineHeight = (el) => {
+	const style = getComputedStyle(el);
+	const lh = parseFloat(style.lineHeight);
+	return Math.max(1, Math.round(Number.isFinite(lh) ? lh : (parseFloat(style.fontSize) || 16) * 1.5));
+};
+var scrollsY = (el) => /auto|scroll/.test(getComputedStyle(el).overflowY);
+var canScroll = (el, direction) => scrollsY(el) && (direction > 0 ? el.scrollTop + el.clientHeight < el.scrollHeight - 1 : el.scrollTop > 0);
+var scrollerAbove = (from, direction) => {
+	for (let node = from ?? null; node && node !== document.body; node = node.parentElement) if (canScroll(node, direction)) return node;
+};
+var sidebarScroller = (direction) => {
+	const active = document.activeElement;
+	return scrollerAbove(regionOf(active) === "sidebar" ? active : channelRows()[0], direction);
+};
+var pageScroller = (direction) => {
+	const firstRow = channelRows()[0] ?? null;
+	const outside = (el) => !el.contains(firstRow) && regionOf(el) !== "sidebar" && !el.closest("[role=\"dialog\"]");
+	const active = document.activeElement;
+	const focused = active && active !== document.body && regionOf(active) !== "sidebar" ? scrollerAbove(active, direction) : void 0;
+	if (focused && outside(focused)) return focused;
+	let best;
+	let area = 0;
+	for (const el of document.body.querySelectorAll("*")) {
+		if (el.clientHeight < 40 || el.scrollHeight <= el.clientHeight + 1 || !canScroll(el, direction) || !outside(el)) continue;
+		if (el.clientHeight * el.clientWidth > area) [best, area] = [el, el.clientHeight * el.clientWidth];
+	}
+	return best;
+};
+var lineScroller = (direction) => {
+	if (state.region !== "sidebar") {
+		const list = timelineOf(state.region === "side" ? "side" : "main");
+		if (list) return list;
+	} else if (timelineOf("main")) return sidebarScroller(direction);
+	return pageScroller(direction) ?? sidebarScroller(direction);
+};
+var keepFocusInView = (scroller, items, direction) => {
+	const box = scroller.getBoundingClientRect();
+	const within = (el, whole) => {
+		const rect = el.getBoundingClientRect();
+		return whole ? rect.top >= box.top && rect.bottom <= box.bottom : rect.bottom > box.top && rect.top < box.bottom;
+	};
+	const current = items.find((el) => el === document.activeElement);
+	if (!current || within(current, false)) return;
+	const shown = items.filter((el) => within(el, true));
+	const next = direction > 0 ? shown[0] : shown.at(-1);
+	if (!next) return;
+	document.documentElement.dataset.keyboardNavigation = "";
+	next.focus({
+		preventScroll: true,
+		focusVisible: true
+	});
+};
+var scrollLines = (scroller, direction, lines) => {
+	scroller.scrollTop += direction * lines * lineHeight(scroller);
+};
+var lineScroll = (direction) => {
+	const lines = takeCount();
+	const scroller = lineScroller(direction);
+	if (!scroller) return;
+	scrollLines(scroller, direction, lines);
+	afterLayout(() => {
+		if (scroller.matches("[data-message-scroller]")) {
+			if (!boxHasKeys()) keepCursorInView(scroller, direction, true);
+		} else keepFocusInView(scroller, [...scroller.querySelectorAll("button, a[href]")].filter(visible), direction);
+	});
 };
 // src/help.ts
 var helpEl;
@@ -1739,10 +1818,21 @@ function onHelpKey(event) {
 	const card = helpCard;
 	const half = () => Math.max(40, card.clientHeight / 2);
 	if (event.ctrlKey) {
-		if (event.key !== "d" && event.key !== "u") return;
+		if (event.shiftKey || ![
+			"d",
+			"u",
+			"e",
+			"y"
+		].includes(event.key)) return;
 		event.preventDefault();
 		event.stopPropagation();
-		card.scrollBy({ top: event.key === "d" ? half() : -half() });
+		const step = {
+			d: half(),
+			u: -half(),
+			e: lineHeight(card),
+			y: -lineHeight(card)
+		}[event.key];
+		card.scrollBy({ top: step });
 		return;
 	}
 	event.preventDefault();
@@ -1940,6 +2030,11 @@ var onTextKey = (event) => {
 	if (!state.enabled || !state.composerNormal || state.textMode !== "normal") return;
 	if (!inComposer(target) || !isEditable(target)) return;
 	if (event.isComposing || event.keyCode === 229) return;
+	if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && (event.key === "e" || event.key === "y")) {
+		event.preventDefault();
+		event.stopPropagation();
+		return lineScroll(event.key === "e" ? 1 : -1);
+	}
 	if (event.metaKey || event.ctrlKey || event.altKey) return;
 	if (event.key === "Escape" || event.key === "Tab") return;
 	if (event.key.length > 1 && ![
@@ -1973,12 +2068,19 @@ var scrollParent = (el, stop) => {
 };
 var onSettingsKey = (event) => {
 	if (!state.enabled || event.isComposing || event.keyCode === 229) return;
-	if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+	if (event.metaKey || event.altKey || event.shiftKey) return;
 	const { key } = event;
-	if (key !== "j" && key !== "k" && key !== "h" && key !== "l" && key !== "Enter") return;
+	const line = event.ctrlKey && (key === "e" || key === "y");
+	if (event.ctrlKey && !line) return;
+	const digit = !event.ctrlKey && /^[0-9]$/.test(key) && (key !== "0" || state.count > 0);
+	if (!line && !digit && key !== "j" && key !== "k" && key !== "h" && key !== "l" && key !== "Enter") return;
 	const dialog = settingsDialog();
 	const el = event.target;
 	if (!dialog || !dialog.contains(el) || isEditable(el) || el.closest?.(SETTINGS_OWN_KEYS)) return;
+	if (digit) {
+		set({ count: Math.min(state.count * 10 + Number(key), 999) });
+		return armPending();
+	}
 	const items = settingsItems(dialog);
 	const content = dialog.querySelector("#settings-content");
 	const item = el.closest?.(`${SETTINGS_NAV} button`);
@@ -1987,6 +2089,17 @@ var onSettingsKey = (event) => {
 		event.preventDefault();
 		event.stopImmediatePropagation();
 	};
+	if (line) {
+		swallow();
+		const direction = key === "e" ? 1 : -1;
+		const lines = takeCount();
+		if (item) {
+			const list = scrollParent(item, dialog);
+			scrollLines(list, direction, lines);
+			afterLayout(() => keepFocusInView(list, items, direction));
+		} else scrollLines(scrollParent(content?.contains(el) ? el : content ?? el, dialog), direction, lines);
+		return;
+	}
 	if (item) {
 		if (key === "j" || key === "k") {
 			swallow();
@@ -2002,7 +2115,7 @@ var onSettingsKey = (event) => {
 	if (key === "Enter" || key === "l") return;
 	swallow();
 	if (key === "h") focusSection(current);
-	else if (content?.contains(el)) scrollParent(el, content).scrollBy({ top: key === "j" ? 48 : -48 });
+	else if (content?.contains(el)) scrollParent(el, dialog).scrollBy({ top: key === "j" ? 48 : -48 });
 	else focusSection(current);
 };
 // src/escape.ts
@@ -2199,6 +2312,8 @@ var registerShortcuts = () => {
 	}, () => jumpEdge(true));
 	key("half-down", "Scroll half a page down", ctrl("d"), () => halfPage(1), { repeat: true });
 	key("half-up", "Scroll half a page up", ctrl("u"), () => halfPage(-1), { repeat: true });
+	key("line-down", "Scroll one line down, the cursor stays", ctrl("e"), () => lineScroll(1), { repeat: true });
+	key("line-up", "Scroll one line up, the cursor stays", ctrl("y"), () => lineScroll(-1), { repeat: true });
 	key("left", "Focus the region to the left", { key: "h" }, () => shiftRegion(-1));
 	key("right", "Focus the region to the right (opens a channel)", { key: "l" }, () => shiftRegion(1));
 	key("next-channel", "Next channel", { key: "]" }, () => switchChannel(1));

@@ -9,6 +9,7 @@ import { contextOk, timelineOf } from "./dom";
 import type { Binding, ShortcutDefinition } from "./host-api";
 import { openHelp } from "./help";
 import { shiftRegion, step, switchChannel } from "./panes";
+import { lineScroll } from "./scroll";
 import { openCommunityPicker, switchCommunity } from "./communities";
 import { afterG, goPage } from "./pages";
 import * as perf from "./perf";
@@ -50,6 +51,8 @@ export const registerShortcuts = () => {
   key("bottom", "Go to latest", { key: "G", shift: true }, () => jumpEdge(true));
   key("half-down", "Scroll half a page down", ctrl("d"), () => halfPage(1), { repeat: true });
   key("half-up", "Scroll half a page up", ctrl("u"), () => halfPage(-1), { repeat: true });
+  key("line-down", "Scroll one line down, the cursor stays", ctrl("e"), () => lineScroll(1), { repeat: true });
+  key("line-up", "Scroll one line up, the cursor stays", ctrl("y"), () => lineScroll(-1), { repeat: true });
   key("left", "Focus the region to the left", { key: "h" }, () => shiftRegion(-1));
   key("right", "Focus the region to the right (opens a channel)", { key: "l" }, () => shiftRegion(1));
   key("next-channel", "Next channel", { key: "]" }, () => switchChannel(1));

@@ -977,11 +977,14 @@ test.describe("one NORMAL mode: a pane is its messages and, at the bottom, its m
     await press(page, "$", "l");
     await expect(replyBox(page)).toBeFocused();
     await expect(bar(page)).toHaveText("-- NORMAL --  side");
+    // The editor puts its own selection back a moment after one moves (see the note above): a 0 sent at once can be undone.
+    await page.waitForTimeout(250);
     await press(page, "0", "h"); // left again: the channel's box, at the end of its draft
     await expect(composer(page)).toBeFocused();
     await expect(bar(page)).toHaveText("-- NORMAL --  main");
     await press(page, "x"); // the caret really is on the last character
     await expect.poll(() => draft(page, "Alpha")).toBe("hell");
+    await page.waitForTimeout(250); // as above: the editor restores its selection after an edit
     // Left once more: the channel list, as h does from the message list. It used to go back to the thread's box.
     await press(page, "0", "h");
     await expect(bar(page)).toHaveText("-- NORMAL --  sidebar");
@@ -2366,5 +2369,354 @@ test.describe("found in the real app and by the first test report", () => {
     await press(page, "Escape", "V", "d");
     await expect(composer(page).locator("p")).toHaveCount(2);
     await expect.poll(() => composer(page).locator("p").allInnerTexts()).toEqual(["para one", "para three"]);
+  });
+});
+
+// ---- Ctrl-e and Ctrl-y: scroll the view a line, the cursor stays ---------------------------------------
+test.describe("Ctrl-e and Ctrl-y scroll the view a line at a time", () => {
+  test.use({ viewport: { width: 1200, height: 360 } });
+  const lineOf = (loc) =>
+    loc.evaluate((el) => {
+      const style = getComputedStyle(el);
+      const lh = parseFloat(style.lineHeight);
+      return Math.max(1, Math.round(Number.isFinite(lh) ? lh : (parseFloat(style.fontSize) || 16) * 1.5));
+    });
+  const top = (loc) => loc.evaluate((el) => Math.round(el.scrollTop));
+  const ctrl = (page, key, ...before) => press(page, ...before, `Control+${key}`);
+  // The ids of the message rows that show whole in the list, top to bottom (those that show at all when none does).
+  const shown = (page, scroller = mainScroller(page)) =>
+    scroller.evaluate((el) => {
+      const box = el.getBoundingClientRect();
+      const rows = [...el.querySelectorAll("[data-message-id]")].filter(
+        (row) => !row.hasAttribute("data-membership-row") && !row.parentElement?.closest("[data-message-id]") && row.getBoundingClientRect().height > 0,
+      );
+      const whole = rows.filter((row) => row.getBoundingClientRect().top >= box.top && row.getBoundingClientRect().bottom <= box.bottom);
+      const some = rows.filter((row) => row.getBoundingClientRect().bottom > box.top && row.getBoundingClientRect().top < box.bottom);
+      return (whole.length ? whole : some).map((row) => row.dataset.messageId);
+    });
+  // The one area of the page that scrolls (outside the channel list and any dialog), marked so a test can find it again.
+  const pageScroller = async (page) => {
+    await page.evaluate(() => {
+      document.querySelectorAll("[data-test-scroller]").forEach((el) => el.removeAttribute("data-test-scroller"));
+      const found = [...document.body.querySelectorAll("*")]
+        .filter((el) => /auto|scroll/.test(getComputedStyle(el).overflowY) && el.clientHeight >= 40 && el.scrollHeight > el.clientHeight + 1)
+        .filter((el) => !el.closest('nav[aria-label="Subscribed channels"]') && !el.closest('[role="dialog"]'))
+        .sort((a, b) => b.clientHeight * b.clientWidth - a.clientHeight * a.clientWidth)[0];
+      found?.setAttribute("data-test-scroller", "");
+    });
+    return page.locator("[data-test-scroller]");
+  };
+  const channelNav = (page) => page.getByRole("navigation", { name: "Subscribed channels", exact: true });
+
+  test("in the message list the view moves a line and the cursor stays; a count moves more; the cursor follows only when it would leave the view", async ({
+    page,
+    app,
+  }) => {
+    await page.setViewportSize({ width: 1200, height: 460 });
+    await open(page, app);
+    const list = mainScroller(page);
+    const line = await lineOf(list);
+    // A cursor that was never placed is not placed by scrolling.
+    const first = await top(list);
+    expect(first).toBeGreaterThan(5 * line);
+    await ctrl(page, "y");
+    await expect.poll(() => top(list)).toBe(first - line);
+    expect(await cursor(page)).toBeUndefined();
+    await ctrl(page, "e");
+    await expect.poll(() => top(list)).toBe(first);
+    await press(page, "k", "k");
+    const target = await cursor(page);
+    const bottom = await top(list);
+    await ctrl(page, "y"); // the content goes down a line: the view is a line higher
+    await expect.poll(() => top(list)).toBe(bottom - line);
+    expect(await cursor(page)).toBe(target);
+    await ctrl(page, "e");
+    await expect.poll(() => top(list)).toBe(bottom);
+    await press(page, "3", "Control+y"); // a count
+    await expect.poll(() => top(list)).toBe(bottom - 3 * line);
+    expect(await cursor(page)).toBe(target);
+    await ctrl(page, "e", "2");
+    await expect.poll(() => top(list)).toBe(bottom - line);
+    // Far up: the cursor row left the view, so the cursor goes to the last row that still shows.
+    await press(page, "9", "9", "Control+y");
+    await expect.poll(() => top(list)).toBeLessThan(3 * line); // the top (the host may nudge it when it loads older history)
+    await expect.poll(async () => (await shown(page)).at(-1) === (await cursor(page))).toBe(true);
+    expect(await cursor(page)).not.toBe(target);
+    // A line down keeps it; far down takes it to the first row that shows.
+    const parked = await cursor(page);
+    const atTop = await top(list);
+    await ctrl(page, "e");
+    await expect.poll(() => top(list)).toBe(atTop + line);
+    expect(await cursor(page)).toBe(parked);
+    await press(page, "9", "9", "Control+e");
+    await expect.poll(() => top(list)).toBeGreaterThan(bottom - 2 * line);
+    await expect.poll(async () => (await shown(page))[0] === (await cursor(page))).toBe(true);
+    await expect(bar(page)).toHaveText("-- NORMAL --  main");
+  });
+
+  test("in the thread pane it scrolls the thread's list and leaves the channel's alone", async ({ page, app }) => {
+    await page.setViewportSize({ width: 1200, height: 300 });
+    await open(page, app);
+    await openThreadBeside(page);
+    const list = sideScroller(page);
+    const line = await lineOf(list);
+    expect(await list.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(3 * line);
+    await page.waitForTimeout(600); // the channel's list settles after the pane opened beside it
+    const channelTop = await top(mainScroller(page));
+    const start = await top(list); // the thread opens near its end
+    const target = await cursor(page);
+    await ctrl(page, "y");
+    await expect.poll(() => top(list)).toBe(start - line);
+    await press(page, "2", "Control+y");
+    await expect.poll(() => top(list)).toBe(start - 3 * line);
+    await ctrl(page, "e");
+    await expect.poll(() => top(list)).toBe(start - 2 * line);
+    expect(await cursor(page)).toBe(target);
+    expect(await top(mainScroller(page))).toBe(channelTop);
+    await expect(bar(page)).toHaveText("-- NORMAL --  side");
+  });
+
+  test("in the channel list it scrolls the list, and the focus moves only when its row would leave the view", async ({ page, app }) => {
+    await open(page, app);
+    await press(page, "h");
+    await expect(bar(page)).toHaveText("-- NORMAL --  sidebar");
+    const nav = channelNav(page);
+    const line = await lineOf(nav);
+    expect(await nav.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(2 * line);
+    const focused = () => page.evaluate(() => document.activeElement?.textContent?.trim());
+    const shownFocus = () =>
+      nav.evaluate((el) => {
+        const row = document.activeElement;
+        if (!row || !el.contains(row)) return false;
+        const a = row.getBoundingClientRect();
+        const b = el.getBoundingClientRect();
+        return a.bottom > b.top && a.top < b.bottom;
+      });
+    const start = await top(nav);
+    const first = await focused();
+    expect(first).toContain("Alpha");
+    await ctrl(page, "y");
+    await expect.poll(() => top(nav)).toBe(start - line);
+    expect(await focused()).toBe(first);
+    await ctrl(page, "e");
+    await expect.poll(() => top(nav)).toBe(start);
+    // Far up the row of the open channel is out of the view: the focus goes to a row that shows.
+    await press(page, "9", "9", "Control+y");
+    await expect.poll(() => top(nav)).toBe(0);
+    await expect.poll(shownFocus).toBe(true);
+    expect(await focused()).not.toBe(first);
+    await press(page, "9", "9", "Control+e");
+    await expect.poll(async () => (await top(nav)) > 0).toBe(true);
+    await expect.poll(shownFocus).toBe(true);
+    await expect(bar(page)).toHaveText("-- NORMAL --  sidebar");
+  });
+
+  // Pages with a list of their own. The fixture has no reminders and no workflows, so those two pages are given a
+  // tall element to scroll; Agents and Inbox scroll their own lists.
+  for (const [keys, name] of [
+    ["a", "Agents"],
+    ["i", "Inbox"],
+  ]) {
+    test(`on the ${name} page, with the focus in the channel list, it scrolls the page's list`, async ({ page, app }) => {
+      await page.setViewportSize({ width: 1200, height: 300 });
+      await open(page, app);
+      await press(page, "h", "g", keys);
+      await expect(page.getByRole("tab", { name, exact: true }).first()).toHaveAttribute("aria-selected", "true");
+      await expect.poll(async () => (await pageScroller(page)).count()).toBe(1);
+      const area = await pageScroller(page);
+      const line = await lineOf(area);
+      const navTop = await top(channelNav(page));
+      await ctrl(page, "e");
+      await expect.poll(() => top(area)).toBe(line);
+      await press(page, "2", "Control+e");
+      await expect.poll(() => top(area)).toBe(3 * line);
+      await ctrl(page, "y");
+      await expect.poll(() => top(area)).toBe(2 * line);
+      expect(await top(channelNav(page))).toBe(navTop);
+    });
+  }
+
+  test("on the Workflows page it scrolls the page's body", async ({ page, app }) => {
+    await page.setViewportSize({ width: 1200, height: 300 });
+    await open(page, app);
+    await press(page, "h", "g", "w");
+    await expect(page.getByRole("tab", { name: "Workflows", exact: true })).toHaveAttribute("aria-selected", "true");
+    const body = page.locator(".workflows-body");
+    await expect(body).toBeVisible();
+    await body.evaluate((el) => {
+      const spacer = document.createElement("div");
+      spacer.style.height = "1500px";
+      el.append(spacer);
+    });
+    const line = await lineOf(body);
+    await ctrl(page, "e");
+    await expect.poll(() => top(body)).toBe(line);
+    await press(page, "4", "Control+e");
+    await expect.poll(() => top(body)).toBe(5 * line);
+    await press(page, "9", "9", "Control+y");
+    await expect.poll(() => top(body)).toBe(0);
+  });
+
+  test("on the Reminders page it scrolls the page", async ({ page, app }) => {
+    await page.setViewportSize({ width: 1200, height: 300 });
+    await open(page, app);
+    await press(page, "h", "g", "r");
+    await expect(page.getByRole("tab", { name: "Reminders", exact: true })).toHaveAttribute("aria-selected", "true");
+    // The page's root clips its content; let it scroll, and give it something tall.
+    const root = page.getByText("Connect to a community to see your reminders.").locator("xpath=ancestor::*[@data-buzz-ui][1]");
+    await root.evaluate((el) => {
+      el.style.overflowY = "auto";
+      const spacer = document.createElement("div");
+      spacer.style.cssText = "height: 1500px; flex: none";
+      el.append(spacer);
+    });
+    const line = await lineOf(root);
+    await ctrl(page, "e");
+    await expect.poll(() => top(root)).toBe(line);
+    await press(page, "3", "Control+e");
+    await expect.poll(() => top(root)).toBe(4 * line);
+    await ctrl(page, "y");
+    await expect.poll(() => top(root)).toBe(3 * line);
+  });
+
+  test.describe("in the Settings dialog", () => {
+    const dialog = (page) => page.getByRole("dialog", { name: "Settings", exact: true });
+    const sections = (page) => dialog(page).getByRole("navigation", { name: "Settings sections", exact: true });
+    const section = (page, name) => sections(page).getByRole("button", { name, exact: true });
+
+    test("it scrolls the list of sections when that has the keys, and the open section when that has", async ({ page, app }) => {
+      await open(page, app);
+      await press(page, "g", "s");
+      await expect(dialog(page)).toBeVisible();
+      await press(page, "j"); // from the close button into the list, on Profile
+      await expect(section(page, "Profile")).toBeFocused();
+      const nav = sections(page);
+      const line = await lineOf(nav);
+      expect(await nav.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(3 * line);
+      await ctrl(page, "e");
+      await expect.poll(() => top(nav)).toBe(line);
+      await press(page, "2", "Control+e");
+      await expect.poll(() => top(nav)).toBe(3 * line);
+      await ctrl(page, "y");
+      await expect.poll(() => top(nav)).toBe(2 * line);
+      await expect(section(page, "Profile")).toHaveAttribute("aria-current", "page"); // nothing opened or changed
+      // Far down the focused section is out of the view: the focus goes to a section that shows.
+      await press(page, "9", "9", "Control+e");
+      await expect.poll(() => nav.evaluate((el) => el.scrollTop + el.clientHeight >= el.scrollHeight - 2)).toBe(true);
+      await expect(section(page, "Profile")).not.toBeFocused();
+      await expect
+        .poll(() =>
+          nav.evaluate((el) => {
+            const row = document.activeElement;
+            if (!row || !el.contains(row)) return false;
+            const a = row.getBoundingClientRect();
+            const b = el.getBoundingClientRect();
+            return a.top >= b.top - 1 && a.bottom <= b.bottom + 1;
+          }),
+        )
+        .toBe(true);
+      await expect(section(page, "Profile")).toHaveAttribute("aria-current", "page");
+      await press(page, "9", "9", "Control+y");
+      await expect.poll(() => top(nav)).toBe(0);
+      // Into the open section: the detail scrolls.
+      await section(page, "Profile").focus();
+      await press(page, "l");
+      const content = dialog(page).locator("#settings-content");
+      await expect(content).toBeFocused();
+      await content.evaluate((el) => {
+        document.querySelectorAll("[data-test-scroller]").forEach((x) => x.removeAttribute("data-test-scroller"));
+        const above = [];
+        for (let node = el; node && node.getAttribute("role") !== "dialog"; node = node.parentElement) above.push(node);
+        [...above, ...el.querySelectorAll("*")]
+          .find((x) => /auto|scroll/.test(getComputedStyle(x).overflowY) && x.scrollHeight > x.clientHeight + 1)
+          ?.setAttribute("data-test-scroller", "");
+      });
+      const detail = page.locator("[data-test-scroller]");
+      await expect(detail).toHaveCount(1);
+      const navTop = await top(nav);
+      // j and k scroll the section too (they scrolled an element that never moves until this change).
+      await press(page, "j");
+      await expect.poll(() => top(detail)).toBe(48);
+      await press(page, "k");
+      await expect.poll(() => top(detail)).toBe(0);
+      await ctrl(page, "e");
+      await expect.poll(() => top(detail)).toBe(line);
+      await press(page, "3", "Control+e");
+      await expect.poll(() => top(detail)).toBe(4 * line);
+      await ctrl(page, "y");
+      await expect.poll(() => top(detail)).toBe(3 * line);
+      expect(await top(nav)).toBe(navTop);
+      await closeSettings(page);
+    });
+  });
+
+  test("in the message box it scrolls the pane's messages in NORMAL and is left alone in INSERT; e and y keep their meaning", async ({ page, app }) => {
+    await open(page, app);
+    const list = mainScroller(page);
+    const line = await lineOf(list);
+    await composer(page).click();
+    await page.keyboard.type("ab cd ef");
+    const start = await top(list);
+    await expect(bar(page)).toContainText("INSERT");
+    await ctrl(page, "y"); // INSERT: the editor keeps the key
+    await page.waitForTimeout(400);
+    expect(await top(list)).toBe(start);
+    await expect.poll(() => draft(page)).toBe("ab cd ef");
+    await press(page, "Escape");
+    await expect(bar(page)).toHaveText("-- NORMAL --  main");
+    await ctrl(page, "y");
+    await expect.poll(() => top(list)).toBe(start - line);
+    await press(page, "3", "Control+y");
+    await expect.poll(() => top(list)).toBe(start - 4 * line);
+    await ctrl(page, "e");
+    await expect.poll(() => top(list)).toBe(start - 3 * line);
+    await expect(composer(page)).toBeFocused();
+    await expect(bar(page)).toHaveText("-- NORMAL --  main");
+    await expect.poll(() => draft(page)).toBe("ab cd ef");
+    // Plain e is still the end of a word, and the caret was not moved by the scrolling: x takes the character it is on.
+    await press(page, "0", "e", "Control+e", "x");
+    await expect.poll(() => draft(page)).toBe("a cd ef");
+    // Visual mode: a scroll leaves the highlight, and y still yanks it (and ends visual mode).
+    await press(page, "0", "v", "e", "Control+y");
+    await expect(bar(page)).toContainText("VISUAL");
+    expect(await page.evaluate(() => document.getSelection().toString())).toBe("a cd"); // e from a one-letter word: the next word's end
+    await press(page, "y");
+    await expect(bar(page)).toHaveText("-- NORMAL --  main");
+    await expect.poll(() => draft(page)).toBe("a cd ef");
+  });
+
+  test("with the platform reported as a Mac it is the Control key, not Command", async ({ page, app }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(Navigator.prototype, "platform", { get: () => "MacIntel", configurable: true });
+    });
+    await open(page, app);
+    const list = mainScroller(page);
+    const line = await lineOf(list);
+    await press(page, "k");
+    const bottom = await top(list);
+    await press(page, "Meta+y");
+    await page.waitForTimeout(400);
+    expect(await top(list)).toBe(bottom);
+    await ctrl(page, "y");
+    await expect.poll(() => top(list)).toBe(bottom - line);
+    await ctrl(page, "e");
+    await expect.poll(() => top(list)).toBe(bottom);
+  });
+
+  test("the key list names the two keys, and in the help dialog they scroll a line", async ({ page, app }) => {
+    await open(page, app);
+    await page.keyboard.down("Shift");
+    await page.keyboard.press("?");
+    await page.keyboard.up("Shift");
+    const help = page.getByRole("dialog", { name: "Vim keys", exact: true });
+    await expect(help).toBeVisible();
+    await expect(help).toContainText(/Ctrl-e\s+Ctrl-y/);
+    const line = await lineOf(help);
+    await ctrl(page, "e");
+    await expect.poll(() => top(help)).toBe(line);
+    await ctrl(page, "y");
+    await expect.poll(() => top(help)).toBe(0);
+    await press(page, "q");
+    await expect(help).toHaveCount(0);
   });
 });
