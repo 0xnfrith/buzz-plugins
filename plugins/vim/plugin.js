@@ -429,9 +429,15 @@ var boxHasKeys = () => isEditable(document.activeElement) && inComposer(document
 var peek = (selection, direction) => {
 	const { anchorNode, anchorOffset } = selection;
 	selection.modify("extend", direction, "character");
-	const adjacent = selection.toString();
+	const adjacent = selection.toString() || (chipCrossed(selection) ? "￼" : "");
 	selection.collapse(anchorNode, anchorOffset);
 	return adjacent;
+};
+var chipCrossed = (selection) => {
+	if (selection.isCollapsed || !selection.anchorNode) return false;
+	const node = selection.anchorNode;
+	const box = (node.nodeType === 1 ? node : node.parentElement)?.closest("[contenteditable=\"true\"]");
+	return !!box && [...box.querySelectorAll("[contenteditable=\"false\"]")].some((island) => selection.containsNode(island, true));
 };
 var here = (selection) => peek(selection, "forward");
 var prev = (selection) => peek(selection, "backward");
@@ -463,9 +469,36 @@ var stepRight = (selection) => {
 	if (charUnder(selection)) selection.modify("move", "forward", "character");
 };
 var clampCursor = (selection) => {
-	if (charUnder(selection)) return;
-	const before = peek(selection, "backward");
-	if (before !== "" && !isBreak(before)) selection.modify("move", "backward", "character");
+	if (!charUnder(selection)) {
+		const before = peek(selection, "backward");
+		if (before !== "" && !isBreak(before)) selection.modify("move", "backward", "character");
+	}
+	keepOutOfIslands(selection);
+};
+var islandOf = (node) => {
+	let found;
+	for (let el = node && (node.nodeType === 1 ? node : node.parentElement); el; el = el.parentElement) {
+		if (el.getAttribute("contenteditable") === "true") break;
+		if (el.getAttribute("contenteditable") === "false") found = el;
+	}
+	return found;
+};
+var besideIsland = (island, after) => {
+	const parent = island.parentNode;
+	return [parent, [...parent.childNodes].indexOf(island) + (after ? 1 : 0)];
+};
+var keepOutOfIslands = (selection, after = false) => {
+	if (!selection.isCollapsed || !selection.anchorNode) return;
+	const island = islandOf(selection.anchorNode);
+	if (island) selection.collapse(...besideIsland(island, after));
+};
+var draftEdge = (box, at) => {
+	const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+	let text = walker.nextNode();
+	if (at === "end") for (let next = text; next; next = walker.nextNode()) text = next;
+	if (!text) return void 0;
+	const island = islandOf(text);
+	return island ? besideIsland(island, at === "end") : [text, at === "end" ? text.length : 0];
 };
 var onFirstRow = (selection) => {
 	const origin = gap(selection);
@@ -1208,9 +1241,21 @@ var focusBox = (pane) => {
 	bar.dataset.focusVia = via;
 	return true;
 };
+var caretBesideChips = () => {
+	const selection = document.getSelection();
+	if (selection && isEditable(document.activeElement) && inComposer(document.activeElement)) keepOutOfIslands(selection, true);
+};
+var settleInsertCaret = () => {
+	const epoch = keyEpoch;
+	setTimeout(() => {
+		if (!disposed && keyEpoch <= epoch + 1 && state.textMode === "insert") caretBesideChips();
+	}, 100);
+};
 var enterInsert = () => {
+	caretBesideChips();
 	set({ textMode: "insert" });
 	syncFocus();
+	settleInsertCaret();
 };
 var startInsert = (where) => {
 	if (!focusBox(state.region === "side" ? "side" : "main")) return;
@@ -1222,18 +1267,18 @@ var startInsert = (where) => {
 		const selection = document.getSelection();
 		if (selection.isCollapsed) stepRight(selection);
 	}
+	caretBesideChips();
 	set({ textMode: "insert" });
 	syncFocus();
+	settleInsertCaret();
 };
 var enterBox = (pane, at) => {
 	if (!state.composerNormal || !focusBox(pane)) return false;
 	const box = document.activeElement;
 	const place = () => {
 		const selection = document.getSelection();
-		const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
-		let text = walker.nextNode();
-		if (at === "end") for (let next = text; next; next = walker.nextNode()) text = next;
-		if (text) selection.collapse(text, at === "end" ? text.length : 0);
+		const spot = draftEdge(box, at);
+		if (spot) selection.collapse(...spot);
 		else selection.collapse(box.firstElementChild ?? box, 0);
 		clampCursor(selection);
 	};
@@ -1260,6 +1305,8 @@ var boxStep = (direction) => {
 	shiftRegion(direction);
 };
 var leaveBox = (el, pane) => {
+	const caret = document.getSelection();
+	if (caret) keepOutOfIslands(caret);
 	el.blur();
 	document.getSelection()?.removeAllRanges();
 	set({

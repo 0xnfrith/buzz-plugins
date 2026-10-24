@@ -65,6 +65,8 @@ Taken in Buzz's own browser test harness with its fixture data (`test/screenshot
 
 **Inside the message box** (on by default; the Vim mode page has a switch to turn it off): Esc keeps focus and gives you `h j k l`, the words `w b e ge` and `W B E gE`, the line `0 ^ $`, the draft `gg G` (`3G` is line 3), finding with `f t F T` and `;` `,`, all with counts, plus `x`, `dd`, `d` with any of those, `u`, and `i` `a` `I` `A` to go back. Esc after a half-typed `d` or `f` only cancels it, and Esc in NORMAL stays in NORMAL. Control+e and Control+y scroll the pane's messages a line without touching the draft (not in INSERT, where the editor keeps them: on a Mac Control+e is end-of-line there); plain `e` is still end of word and `y` still yanks in visual mode.
 
+**Mentions** (the chip `@name` that the `@` list inserts) count as one character in the draft: `h`, `l`, `w`, `b`, `x` step over it or take it as a whole, and the caret is put beside it, never inside, whichever way you come back into the box.
+
 **Visual mode** in the message box: type a few lines (Shift+Enter makes a new line), press Esc, then `v` and the label says `VISUAL` with the character under the cursor highlighted. every motion above (`e`, `W`, `fx`, `3l`, `G` ...) stretches the highlight, `y` copies it to the clipboard, `d` or `x` deletes it, `c` deletes it and goes to insert mode, and Esc (or `v` again) leaves. `V` does the same by whole lines (`Vd` removes the lines and their newline). Switch between the two with `v` and `V`. There is no `p`: paste with Cmd+V.
 
 ## What to report

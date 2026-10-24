@@ -2720,3 +2720,152 @@ test.describe("Ctrl-e and Ctrl-y scroll the view a line at a time", () => {
     await expect(help).toHaveCount(0);
   });
 });
+
+// ---- Mention chips in the draft ---------------------------------------------------------------------
+// A mention is a chip: an element with contenteditable="false", one unit to the editor. A caret inside it is not drawn
+// and nothing can be typed there (a Mac's WKWebView does not recover from it, Chromium does), so the plugin must only
+// ever put the caret beside a chip. The tests look at where the caret is, which is what differs between engines.
+test.describe("a mention chip in the draft", () => {
+  const chip = (page, box = composer(page)) => box.locator('[contenteditable="false"]');
+  // Types `before`, picks "Fixture Reader" from the @ list (a chip, then a space), then drops that space unless `keepSpace`.
+  const mentionIn = async (page, before = "", { keepSpace = false } = {}) => {
+    await composer(page).click();
+    if (before) await page.keyboard.type(before);
+    await page.keyboard.type("@");
+    const option = page.getByRole("option", { name: /Fixture Reader/ });
+    await expect(option).toBeVisible();
+    await press(page, "Enter"); // picks the person in the open list (nothing is sent)
+    await expect(chip(page)).toHaveCount(1);
+    await expect(option).toHaveCount(0);
+    if (!keepSpace) await press(page, "Backspace");
+  };
+  // Where the caret is: inside a chip, and the text on both sides of it.
+  const caret = (page) =>
+    page.evaluate(() => {
+      const selection = document.getSelection();
+      const node = selection.anchorNode;
+      const el = node && (node.nodeType === 1 ? node : node.parentElement);
+      const box = document.querySelector('[aria-label="Message #Alpha"]');
+      const range = document.createRange();
+      range.selectNodeContents(box);
+      if (node) range.setEnd(node, selection.anchorOffset);
+      return {
+        inChip: !!el?.closest('[contenteditable="false"]'),
+        focused: document.activeElement === box,
+        before: range.toString(),
+        collapsed: selection.isCollapsed,
+      };
+    });
+  // The editor puts its own selection back about 20 ms after the box gains focus and the plugin places its caret again
+  // at 80 ms (see enterBox), so look once the box has settled, not at the first sample that happens to be fine.
+  const expectBesideChip = async (page) => {
+    await page.waitForTimeout(300);
+    const where = await caret(page);
+    expect(where.focused).toBe(true);
+    expect(where.inChip).toBe(false);
+  };
+  // Out of the box upwards, with the cursor on the newest message (placed a frame later).
+  const leaveUp = async (page) => {
+    await press(page, "Escape", "k");
+    await expect(mainScroller(page)).toBeFocused();
+    await expect.poll(() => cursor(page)).toBeTruthy();
+  };
+
+  test("a chip alone: j into the box puts the caret beside it, and i then types", async ({ page, app }) => {
+    await open(page, app);
+    await mentionIn(page);
+    await leaveUp(page);
+    await press(page, "j"); // back into the box in NORMAL, at the start of the draft
+    await expect(composer(page)).toBeFocused();
+    await expectBesideChip(page);
+    expect((await caret(page)).before).toBe(""); // before the chip
+    await press(page, "i");
+    await expect(bar(page)).toContainText("INSERT");
+    await expectBesideChip(page);
+    await page.keyboard.type("ZZ");
+    await expect.poll(() => draft(page)).toBe("ZZ@Fixture Reader");
+    await expectBesideChip(page);
+  });
+
+  test("a chip at the start of the draft, text after it", async ({ page, app }) => {
+    await open(page, app);
+    await mentionIn(page, "", { keepSpace: true });
+    await page.keyboard.type("tail");
+    await leaveUp(page);
+    await press(page, "j");
+    await expect(composer(page)).toBeFocused();
+    await expectBesideChip(page);
+    expect((await caret(page)).before).toBe("");
+    await press(page, "i");
+    await page.keyboard.type("ZZ");
+    await expect.poll(() => draft(page)).toBe("ZZ@Fixture Reader tail");
+    // Esc, two characters right onto the chip, then a: typing goes after the chip, not into it.
+    await press(page, "Escape", "0", "l", "l", "a");
+    await expectBesideChip(page);
+    await page.keyboard.type("Q");
+    await expect.poll(() => draft(page)).toBe("ZZ@Fixture ReaderQ tail");
+  });
+
+  test("a chip at the end of the draft: entered from the thread's box, the caret is beside it and i types", async ({ page, app }) => {
+    await open(page, app);
+    await mentionIn(page, "hi ");
+    await leaveUp(page);
+    await press(page, "o"); // a thread beside the channel
+    await expect(threadPane(page)).toBeVisible();
+    await press(page, "i");
+    await expect(replyBox(page)).toBeFocused();
+    await press(page, "Escape", "h"); // left from the thread's box: the channel's box, at the end of its draft
+    await expect(composer(page)).toBeFocused();
+    await expect(bar(page)).toHaveText("-- NORMAL --  main");
+    await expectBesideChip(page);
+    await press(page, "i");
+    await expectBesideChip(page);
+    await page.keyboard.type("ZZ");
+    await expect.poll(() => draft(page)).toBe("hi @Fixture ReaderZZ");
+  });
+
+  test("a chip in the middle: motions walk over it, the caret is never inside it, and i types beside it", async ({ page, app }) => {
+    await open(page, app);
+    await composer(page).click();
+    await page.keyboard.type("ab ");
+    await mentionIn(page, "", { keepSpace: true }); // clicking the box again keeps the caret where it is
+    await page.keyboard.type("cd");
+    await press(page, "Escape", "0");
+    await expect(bar(page)).toContainText("NORMAL");
+    // l walks a, b, the space, the chip (one step), the space, c; the chip is neither the end nor the start of the draft,
+    // so neither h nor l leaves the box on account of it.
+    const seen = [];
+    for (const key of ["l", "l", "l", "l", "l", "l", "h", "h", "h", "h", "l", "l", "l", "l", "w", "w", "b", "b", "e", "e", "$", "h", "h", "h", "h", "0"]) {
+      await press(page, key);
+      await page.waitForTimeout(60);
+      const where = await caret(page);
+      seen.push(where.before);
+      expect(where.inChip, `after ${key}`).toBe(false);
+      expect(where.focused, `after ${key}`).toBe(true);
+      await expect(bar(page)).toHaveText("-- NORMAL --  main");
+    }
+    // Six steps right put the cursor on c, past the chip; four back put it on the first space again.
+    expect(seen.slice(0, 6)).toEqual(["a", "ab", "ab ", "ab @Fixture Reader", "ab @Fixture Reader ", "ab @Fixture Reader c"]);
+    await press(page, "f", "c");
+    await expect.poll(async () => (await caret(page)).before).toBe("ab @Fixture Reader ");
+    await press(page, "i");
+    await expectBesideChip(page);
+    await page.keyboard.type("Z");
+    await expect.poll(() => draft(page)).toBe("ab @Fixture Reader Zcd");
+  });
+
+  test("x on a chip takes it whole, and the caret stays beside what is left", async ({ page, app }) => {
+    await open(page, app);
+    await composer(page).click();
+    await page.keyboard.type("ab ");
+    await mentionIn(page, "", { keepSpace: true });
+    await page.keyboard.type("cd");
+    await press(page, "Escape", "0", "l", "l", "l"); // a, b, the space: the cursor is on the chip
+    await page.waitForTimeout(250);
+    await press(page, "x");
+    await expect.poll(() => draft(page)).toBe("ab  cd");
+    await expect(chip(page)).toHaveCount(0);
+    await expectBesideChip(page);
+    await expect(bar(page)).toHaveText("-- NORMAL --  main");
+  });
+});

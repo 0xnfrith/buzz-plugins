@@ -8,9 +8,19 @@
 export const peek = (selection: Selection, direction: "forward" | "backward") => {
   const { anchorNode, anchorOffset } = selection;
   selection.modify("extend", direction, "character");
-  const adjacent = selection.toString();
+  const adjacent = selection.toString() || (chipCrossed(selection) ? CHIP : "");
   selection.collapse(anchorNode, anchorOffset);
   return adjacent;
+};
+// A mention chip is one unit of the draft that has no text for a selection to report: stepping over it selects it and
+// toString() is "". It reads as one character, the object replacement character, so a motion crosses it and the draft
+// does not seem to end (or start) at it.
+export const CHIP = "\uFFFC";
+const chipCrossed = (selection: Selection) => {
+  if (selection.isCollapsed || !selection.anchorNode) return false;
+  const node = selection.anchorNode;
+  const box = (node.nodeType === 1 ? (node as Element) : node.parentElement)?.closest('[contenteditable="true"]');
+  return !!box && [...box.querySelectorAll('[contenteditable="false"]')].some((island) => selection.containsNode(island, true));
 };
 export const here = (selection: Selection) => peek(selection, "forward"); // the character under the cursor
 export const prev = (selection: Selection) => peek(selection, "backward"); // the character before it
@@ -50,9 +60,46 @@ export const stepRight = (selection: Selection) => {
 };
 // Like vim, the cursor rests on a character, never past the last one of a line.
 export const clampCursor = (selection: Selection) => {
-  if (charUnder(selection)) return;
-  const before = peek(selection, "backward");
-  if (before !== "" && !isBreak(before)) selection.modify("move", "backward", "character");
+  if (!charUnder(selection)) {
+    const before = peek(selection, "backward");
+    if (before !== "" && !isBreak(before)) selection.modify("move", "backward", "character");
+  }
+  keepOutOfIslands(selection);
+};
+
+// ---- Mention chips and other non-editable islands ---------------------------------------
+// A mention chip is an element with contenteditable="false": the editor treats it as one unit and a caret may only sit
+// beside it. A caret inside one (the text of its label, which a walk over the draft's text nodes reaches) is not drawn
+// and nothing can be typed there, and a Mac's WKWebView does not recover from it the way Chromium does.
+// The outermost non-editable element around `node`, below the editable box.
+export const islandOf = (node: Node | null): Element | undefined => {
+  let found: Element | undefined;
+  for (let el = node && (node.nodeType === 1 ? (node as Element) : node.parentElement); el; el = el.parentElement) {
+    if (el.getAttribute("contenteditable") === "true") break;
+    if (el.getAttribute("contenteditable") === "false") found = el;
+  }
+  return found;
+};
+// The gap just before an island, or just after it.
+export const besideIsland = (island: Element, after: boolean): [Node, number] => {
+  const parent = island.parentNode as Node;
+  return [parent, [...parent.childNodes].indexOf(island as ChildNode) + (after ? 1 : 0)];
+};
+// A caret that sits inside an island goes to the gap beside it (before it, unless `after`).
+export const keepOutOfIslands = (selection: Selection, after = false) => {
+  if (!selection.isCollapsed || !selection.anchorNode) return;
+  const island = islandOf(selection.anchorNode);
+  if (island) selection.collapse(...besideIsland(island, after));
+};
+// The first or the last position of a draft that a caret may take: in its first or last text, or beside the chip
+// when that is what the draft starts or ends with.
+export const draftEdge = (box: HTMLElement, at: "start" | "end"): [Node, number] | undefined => {
+  const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+  let text = walker.nextNode() as Text | null;
+  if (at === "end") for (let next = text; next; next = walker.nextNode() as Text | null) text = next;
+  if (!text) return undefined;
+  const island = islandOf(text);
+  return island ? besideIsland(island, at === "end") : [text, at === "end" ? text.length : 0];
 };
 // Where the caret is in the draft, for the keys that cross into the next stop of the column.
 // On the first row: the start of the row it is on is the start of the draft (a wrapped line has
