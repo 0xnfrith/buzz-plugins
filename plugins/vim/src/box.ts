@@ -3,7 +3,7 @@ import { apple } from "./constants";
 import { ctx } from "./ctx";
 import { composerOf, focusEl, inComposer, isEditable, afterLayout, regionOf, rowsOf, timelineOf } from "./dom";
 import type { ConversationToolProps } from "./host-api";
-import { clampCursor, isBreak, peek, stepRight } from "./caret";
+import { clampCursor, draftEdge, isBreak, keepOutOfIslands, peek, stepRight } from "./caret";
 import { selectRow } from "./cursor";
 import { shiftRegion } from "./panes";
 import { syncFocus } from "./focus";
@@ -66,9 +66,24 @@ const focusBox = (pane: Region) => {
   bar.dataset.focusVia = via; // read by the test, to tell the two paths apart
   return true;
 };
+// A caret inside a mention chip cannot type: INSERT starts beside the chip instead (after it).
+const caretBesideChips = () => {
+  const selection = document.getSelection();
+  if (selection && isEditable(document.activeElement) && inComposer(document.activeElement)) keepOutOfIslands(selection, true);
+};
+// The editor puts its own saved selection back a moment after the box gains focus (see enterBox): if that lands inside a
+// chip, move it beside the chip once it is done, unless a key has come in between.
+const settleInsertCaret = () => {
+  const epoch = keyEpoch;
+  setTimeout(() => {
+    if (!disposed && keyEpoch <= epoch + 1 && state.textMode === "insert") caretBesideChips();
+  }, 100);
+};
 export const enterInsert = () => {
+  caretBesideChips();
   set({ textMode: "insert" });
   syncFocus();
+  settleInsertCaret();
 };
 export const startInsert = (where?: "end" | "after") => {
   if (!focusBox(state.region === "side" ? "side" : "main")) return;
@@ -81,8 +96,10 @@ export const startInsert = (where?: "end" | "after") => {
     const selection = document.getSelection() as Selection;
     if (selection.isCollapsed) stepRight(selection);
   }
+  caretBesideChips();
   set({ textMode: "insert" });
   syncFocus();
+  settleInsertCaret();
 };
 // A pane is one column: its messages, then its message box. NORMAL mode runs in both, so the box is
 // entered in NORMAL (not INSERT) at the start or the end of the draft, and left upwards into the
@@ -95,10 +112,8 @@ export const enterBox = (pane: Region, at: "start" | "end") => {
   // answers by putting back the selection it had saved (seen in the browser test).
   const place = () => {
     const selection = document.getSelection() as Selection;
-    const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
-    let text = walker.nextNode() as Text | null;
-    if (at === "end") for (let next = text; next; next = walker.nextNode() as Text | null) text = next;
-    if (text) selection.collapse(text, at === "end" ? text.length : 0);
+    const spot = draftEdge(box, at);
+    if (spot) selection.collapse(...spot);
     else selection.collapse(box.firstElementChild ?? box, 0); // an empty draft
     clampCursor(selection);
   };
@@ -135,6 +150,9 @@ export const boxStep = (direction: number) => {
 // no longer has focus, so any plain key the plugin does not bind (x, y, 0 ...) typed into the draft
 // after Esc Esc. Chromium never did that, which is why the browser tests could not see it.
 export const leaveBox = (el: HTMLElement, pane: "main" | "side") => {
+  // The editor adopts the native caret as the box loses focus, and resumes from it on the way back: never from inside a chip.
+  const caret = document.getSelection();
+  if (caret) keepOutOfIslands(caret);
   el.blur();
   document.getSelection()?.removeAllRanges();
   set({ textMode: "insert", visual: "" });
