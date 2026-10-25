@@ -502,7 +502,7 @@ surface("thread", "thread pane (80 replies)", async ({ page, app, rows }) => {
     { pair: [{ key: "h" }, { key: "l" }], crosses: true }, // to the channel's list and back
     control("focus the channel's list (the page itself)", "focus the thread's list (the page itself)", `${MAIN_LIST}.focus({ preventScroll: true })`, `${SIDE_LIST}.focus({ preventScroll: true })`),
   ]);
-}, `a.closest("[data-panel-workspace] [data-message-scroller]")`); // the thread's message list, not its reply box
+}, `document.documentElement.dataset.vimRegion === "side" && !a.isContentEditable`); // the keys are in the thread's pane (the plugin's region), not in its reply box
 
 // A draft is typed into the box in one insertion (no key events), mentions are picked from the @ list.
 const pickMention = async (page, count) => {
