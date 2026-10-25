@@ -24,9 +24,12 @@
 //
 // KNOWN EXCEEDANCES. A row whose control is over 50 ms too is the app's. budget.baseline.json lists such rows, each with its
 // control row and the reason. A listed row that is over 50 ms in an attempt is measured against its control in that same
-// attempt: p99 <= max(50, control p99 * 1.25 + 10). On a machine where the control is fast the limit stays 50, so the file never
-// lets a fast machine hide a regression; on a slow machine it moves with the machine. No fixed limits. The table says "known".
-// BUDGET_BASELINE=0 ignores the file (the strict gate). Fix a row, or a new app version, and delete its line.
+// attempt, the control pressed as often as the key (100 presses, so its p99 is not one stall): p99 <= max(50, control p99 + 30)
+// and p50 <= control p50 + 25. The median is what a stall in the control cannot hide, and the rooms are added, not multiplied. On
+// a machine where the control is under 20 ms the p99 limit stays 50, so the file does not let a fast machine hide a regression;
+// on a slow machine it moves with the machine. No fixed limits. The table says "known". BUDGET_BASELINE=0 ignores the file (the
+// strict gate). Every entry is checked against the rows of its surface before anything is measured. Fix a row, or a new app
+// version, and delete its line.
 //
 // INVALID ROWS. A row whose presses did not move anything (under 90%), or did not have the focus on the row's surface (under 90%;
 // rows that `cross` panes are only checked for moving), measures nothing: the test fails it, and the table says INVALID.
@@ -262,40 +265,60 @@ const attemptRow = async (page, cdp, surface, id, row, checked) => {
     layout: (spent[index][2] * 1000) / reps,
   }));
 };
-// A row of the baseline may go over 50 ms by what its control costs: p99 <= max(50, control p99 * 1.25 + 10), the control
-// measured in the same attempt, on the same machine, so that a slow machine relaxes the limit and a fast one does not.
-const limitOver = (control) => Math.max(P99_LIMIT, control * 1.25 + 10);
+// A row of the baseline may go over 50 ms by what its control costs. The control is pressed in the same attempt, on the same
+// machine, and as often as the key (a p99 of 100 presses is the second largest, not one stall that becomes room for the key):
+//   p99 <= max(50, control p99 + P99_ROOM), and
+//   p50 <= control p50 + P50_ROOM.
+// The median is what a stall in the control cannot hide: a plugin regression moves every press, a stall moves one. The rooms are
+// added, not multiplied: a stall of 60 ms in a control gives the key 30 ms, not 85.
+const P99_ROOM = 30;
+const P50_ROOM = 25;
+// Every row of the baseline is checked before anything is measured: a wrong name would be noticed only when that row went over 50 ms.
+const checkBaseline = (id, list) => {
+  const parts = list.flatMap((row) => row.pair ?? [row]);
+  for (const [name, entry] of Object.entries(BASELINE)) {
+    if (!name.startsWith(`${id} `)) continue;
+    if (!parts.some((part) => !part.control && `${id} ${part.key}` === name)) throw new Error(`budget.baseline.json: "${name}" is not a row of the "${id}" surface`);
+    if (!parts.some((part) => part.control && part.key === entry.control)) throw new Error(`budget.baseline.json: "${name}" names the control "${entry.control}", which the "${id}" surface does not have`);
+  }
+};
 const measureRow = async (page, cdp, surface, row, rowsOfSurface, id, defined, checked) => {
   await row.before?.(page);
   const parts = row.pair ?? [row];
   const known = (part) => (part.control ? undefined : BASELINE[`${id} ${part.key}`]);
   const attempts = [];
   const limits = [];
-  const controlsP99 = [];
+  const controls = [];
+  const overs = [];
   let last;
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
     last = await attemptRow(page, cdp, surface, id, row, checked);
     attempts.push(last.map((entry) => entry.p99));
     const limit = [];
-    const measured = [];
+    const control = [];
+    const over = [];
     for (const [index, part] of parts.entries()) {
       let max = part.control ? Infinity : P99_LIMIT;
-      let control = null;
-      if (known(part) && last[index].p99 > P99_LIMIT) {
+      let reference = null;
+      let past = !part.control && last[index].p99 > P99_LIMIT;
+      if (known(part) && past) {
         const name = known(part).control;
         const def = defined.find((candidate) => (candidate.pair ?? [candidate]).some((one) => one.key === name));
-        if (!def) throw new Error(`budget.baseline.json: "${id} ${part.key}" names the control "${name}", which this surface does not have`);
         await def.before?.(page);
-        const entries = await attemptRow(page, cdp, surface, id, def, false);
-        control = entries[(def.pair ?? [def]).findIndex((one) => one.key === name)].p99;
-        max = limitOver(control);
+        const entries = await attemptRow(page, cdp, surface, id, { ...def, reps: row.reps }, false);
+        const one = entries[(def.pair ?? [def]).findIndex((candidate) => candidate.key === name)];
+        reference = { p50: one.p50, p99: one.p99 };
+        max = Math.max(P99_LIMIT, reference.p99 + P99_ROOM);
+        past = last[index].p99 > max || last[index].p50 > reference.p50 + P50_ROOM;
       }
       limit.push(max);
-      measured.push(control);
+      control.push(reference);
+      over.push(past);
     }
     limits.push(limit);
-    controlsP99.push(measured);
-    if (parts.every((part, index) => last[index].p99 <= limit[index])) break;
+    controls.push(control);
+    overs.push(over);
+    if (!over.some(Boolean)) break;
   }
   for (const [index, entry] of last.entries()) {
     entry.control = !!parts[index].control;
@@ -304,11 +327,12 @@ const measureRow = async (page, cdp, surface, row, rowsOfSurface, id, defined, c
     entry.controlRow = known(parts[index])?.control;
     entry.attempts = attempts.map((p99s) => p99s[index]);
     entry.limits = limits.map((one) => (one[index] === Infinity ? null : one[index]));
-    entry.controlP99 = controlsP99.map((one) => one[index]);
+    entry.controlP99 = controls.map((one) => one[index]?.p99 ?? null);
+    entry.controlP50 = controls.map((one) => one[index]?.p50 ?? null);
     entry.limit = entry.limits.at(-1);
     entry.overTarget = entry.p95 > P95_TARGET;
     entry.over50 = entry.attempts.every((p99) => p99 > P99_LIMIT);
-    entry.failed = entry.attempts.length === ATTEMPTS && entry.attempts.every((p99, n) => p99 > limits[n][index]);
+    entry.failed = entry.attempts.length === ATTEMPTS && overs.every((one) => one[index]);
     // A row that does not move anything, or whose keys are not on its surface, measures nothing: that is not a pass.
     entry.invalid = !entry.control && (entry.moved < VALID || (entry.on !== null && entry.on < VALID));
     results.push(entry);
@@ -316,11 +340,15 @@ const measureRow = async (page, cdp, surface, row, rowsOfSurface, id, defined, c
   }
 };
 
+const SURFACE_IDS = ["sidebar", "list", "thread", "box-text", "box-mentions", "reminders", "agents", "workflows", "settings"];
+for (const name of Object.keys(BASELINE))
+  if (!SURFACE_IDS.some((id) => name.startsWith(`${id} `))) throw new Error(`budget.baseline.json: "${name}" does not start with the id of a surface (${SURFACE_IDS.join(", ")})`);
 const wanted = (id) => ONLY.length === 0 || ONLY.includes(id);
 // `on` is an expression of the focused element `a`: true where the focus belongs while the keys of this surface are pressed. A
 // row whose keys leave it (h and l between panes) says `crosses`. Without `on` nothing is checked (the pages, whose keys are controls).
 const surface = (id, title, body, on) =>
   test(`budget: ${title}`, async ({ page, app }) => {
+    expect(SURFACE_IDS, "a surface id the baseline knows").toContain(id);
     test.skip(!wanted(id), "not in BUDGET_ONLY");
     test.setTimeout(30 * 60_000);
     await probe(page);
@@ -335,6 +363,7 @@ const surface = (id, title, body, on) =>
     await cdp.send("Performance.enable");
     const measured = [];
     const rows = async (list) => {
+      checkBaseline(id, list);
       for (const row of list) await measureRow(page, cdp, title, row, measured, id, list, !!on);
     };
     await body({ page, app, rows });
@@ -375,8 +404,8 @@ const moves = (reps, list, walk = reps, middle = false) => {
     { pair: [{ key: "5k", seq: ["5", "k"] }, { key: "5j", seq: ["5", "j"] }], ...at },
     { pair: [{ key: "Ctrl-y", seq: ["Control+y"] }, { key: "Ctrl-e", seq: ["Control+e"] }], ...at },
     { ...control("scroll a line up (the page itself)", "scroll a line down (the page itself)", `${list}.scrollTop -= 24`, `${list}.scrollTop += 24`), ...at },
-    { pair: [{ key: "gg", seq: ["g", "g"] }, { key: "G", seq: ["Shift+g"] }], reps: Math.floor(reps / 2) },
-    control("jump to the top (the page itself)", "jump to the bottom (the page itself)", `${list}.scrollTop = 0`, `${list}.scrollTop = ${list}.scrollHeight`, Math.floor(reps / 2)),
+    { pair: [{ key: "gg", seq: ["g", "g"] }, { key: "G", seq: ["Shift+g"] }] },
+    control("jump to the top (the page itself)", "jump to the bottom (the page itself)", `${list}.scrollTop = 0`, `${list}.scrollTop = ${list}.scrollHeight`),
   ];
 };
 const toMiddle = (list) => async (page) => {
@@ -473,7 +502,7 @@ surface("thread", "thread pane (80 replies)", async ({ page, app, rows }) => {
     { pair: [{ key: "h" }, { key: "l" }], crosses: true }, // to the channel's list and back
     control("focus the channel's list (the page itself)", "focus the thread's list (the page itself)", `${MAIN_LIST}.focus({ preventScroll: true })`, `${SIDE_LIST}.focus({ preventScroll: true })`),
   ]);
-}, `a.closest("[data-panel-workspace]")`);
+}, `a.closest("[data-panel-workspace] [data-message-scroller]")`); // the thread's message list, not its reply box
 
 // A draft is typed into the box in one insertion (no key events), mentions are picked from the @ list.
 const pickMention = async (page, count) => {
@@ -547,14 +576,13 @@ surface("settings", "Settings dialog", async ({ page, rows }) => {
     { pair: [{ key: "5j", seq: ["5", "j"] }, { key: "5k", seq: ["5", "k"] }] },
     { pair: [{ key: "l" }, { key: "h" }] }, // go into the open section, and back to the list
     // Open another section: the host renders it anew (a section is a whole page of settings). The sample is the `l`.
-    { pair: [{ key: "l: open the next section", seq: ["h", "j", "l"] }, { key: "l: open the section before", seq: ["h", "k", "l"] }], reps: 30 },
+    { pair: [{ key: "l: open the next section", seq: ["h", "j", "l"] }, { key: "l: open the section before", seq: ["h", "k", "l"] }] },
     // The page opening the next section and the one before itself: what the two rows above cost the app (a section is rendered anew).
     control(
       "open the next section (the page itself)",
       "open the section before (the page itself)",
       `const b = [...document.querySelectorAll('nav[aria-label="Settings sections"] button')]; b[Math.min(b.length - 1, b.findIndex((x) => x.hasAttribute("aria-current")) + 1)].click()`,
       `const b = [...document.querySelectorAll('nav[aria-label="Settings sections"] button')]; b[Math.max(0, b.findIndex((x) => x.hasAttribute("aria-current")) - 1)].click()`,
-      30,
     ),
     control("click the open section (the page itself)", "focus the open section (the page itself)", `document.querySelector('nav[aria-label="Settings sections"] button[aria-current]').click()`, `document.querySelector('nav[aria-label="Settings sections"] button[aria-current]').focus()`, 30),
     { pair: [{ key: "Ctrl-e", seq: ["Control+e"] }, { key: "Ctrl-y", seq: ["Control+y"] }] },
@@ -574,7 +602,8 @@ test("budget: the table", async () => {
     ...rows.map((r) => {
       const pct = (x) => `${Math.round(x * 100)}%`;
       const control = r.controlP99?.filter((x) => x !== null).at(-1);
-      const why = r.known && control !== undefined ? ` (control \`${r.controlRow.replace(/^control: /, "")}\` p99 ${f(control)} -> limit ${f(r.limit)})` : "";
+      const median = r.controlP50?.filter((x) => x !== null).at(-1);
+      const why = r.known && control !== undefined ? ` (control \`${r.controlRow.replace(/^control: /, "")}\` p99 ${f(control)}, p50 ${f(median)}: limit p99 ${f(r.limit)}, p50 ${f(median + P50_ROOM)})` : "";
       const gate = r.control
         ? "control"
         : r.invalid
@@ -587,7 +616,7 @@ test("budget: the table", async () => {
       return `| ${r.surface} | \`${r.key}\` | ${r.n} | ${f(r.p50)} | ${f(r.p95)} | ${f(r.p99)} | ${f(r.max)} | ${f(r.script)} | ${f(r.style)} | ${f(r.layout)} | ${pct(r.moved)} | ${r.overTarget ? "**over**" : "ok"} | ${gate}${r.attempts.length > 1 ? ` (p99 ${r.attempts.map(f).join(" -> ")})` : ""} |`;
     }),
     "",
-    "script, style, layout: mean milliseconds of the page's main thread per repetition (a count and its key are one), from the engine's counters, in the last attempt. moved: the share of the repetitions after which anything on the page had changed (focus, cursor, scroll position, caret, label). A row is INVALID, and fails the test, when under 90% of its presses moved something or had the focus on its surface: it measures nothing. The control rows show what an event and a frame cost with no plugin work, or what the page costs when it does the plugin's work itself; a known row (budget.baseline.json) may go over 50 ms by its control, p99 <= max(50, control p99 x 1.25 + 10), the control measured in the same attempt.",
+    "script, style, layout: mean milliseconds of the page's main thread per repetition (a count and its key are one), from the engine's counters, in the last attempt. moved: the share of the repetitions after which anything on the page had changed (focus, cursor, scroll position, caret, label). A row is INVALID, and fails the test, when under 90% of its presses moved something or had the focus on its surface: it measures nothing. The control rows show what an event and a frame cost with no plugin work, or what the page costs when it does the plugin's work itself; a known row (budget.baseline.json) may go over 50 ms by what its control costs, the control pressed as often as the key in the same attempt: p99 <= max(50, control p99 + 30) and p50 <= control p50 + 25.",
     "",
     ...(rows.some((r) => r.control && / \(nothing to move on this page\)$/.test(r.key))
       ? ["On the Reminders, Agents and Workflows pages `j k 5j 5k G gg` find nothing to move (a page has no message list): they are control rows.", ""]
