@@ -1,0 +1,14 @@
+{
+  "id": "megatech.artifacts",
+  "name": "Artifacts",
+  "apiVersion": 1,
+  "description": "A sidebar list of your saved web pages, such as Claude artifact links, opened in Buzz's built-in browser with the sign-in kept between restarts.",
+  "discovery": {
+    "category": "productivity",
+    "tags": [
+      "Artifacts",
+      "Links",
+      "Browser"
+    ]
+  }
+}

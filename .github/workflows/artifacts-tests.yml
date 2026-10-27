@@ -1,0 +1,31 @@
+# Unit tests of the Artifacts plugin (plugins/artifacts/test). No dependencies and no build: plugin.js is the plugin.
+name: Artifacts tests
+
+on:
+  pull_request:
+    paths:
+      - "plugins/artifacts/**"
+      - ".github/workflows/artifacts-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "plugins/artifacts/**"
+      - ".github/workflows/artifacts-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Artifacts unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - run: node --test plugins/artifacts/test/*.test.mjs

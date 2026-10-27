@@ -12,6 +12,7 @@ Plugins for [Buzz](https://github.com/block/buzz-app), Block's open-source chat 
 plugins/              plugins you can install, one folder each
   vim/                vim mode for Buzz
   beeper/             your Beeper inbox inside Buzz
+  artifacts/          your saved web pages in a sidebar page, opened in Buzz's browser
   key-probe/          a measuring tool used by the vim tests
 docs/
   building.md         how we build plugins
@@ -26,6 +27,7 @@ CONTRIBUTING.md       how to send a change (and the key-latency rule for vim mod
 | --- | --- | --- | --- |
 | Vim mode | Move through Buzz with vim keys: normal, insert and visual modes, `j` `k` through messages and channels, `h` `l` between panes, threads, pages and communities by key, and vim editing inside the message box | [`plugins/vim`](plugins/vim) | Working concept |
 | Beeper | Your Beeper chats inside Buzz: a list of chats with network, unread count and time, a chat with its recent messages, and a reply box, read and sent through Beeper Desktop's local API on the same computer. Each person pastes their own access token | [`plugins/beeper`](plugins/beeper) | Built and tested against a fake Beeper; not yet run against a real one |
+| Artifacts | A sidebar page with your saved web pages (for example Claude artifact links), opened in Buzz's built-in browser with the sign-in kept between restarts. You add, rename and remove the links in Settings; no address is built in. Needs the macOS desktop app, macOS 14 or later | [`plugins/artifacts`](plugins/artifacts) | Prototype; unit-tested, not yet run in a live Buzz |
 | Key probe | Times every key from press to paint, for measuring other plugins. Not needed to use anything | [`plugins/key-probe`](plugins/key-probe) | Tool for the vim tests |
 
 ## Install a plugin
