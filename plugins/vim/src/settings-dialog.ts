@@ -75,7 +75,9 @@ export const onSettingsKey = (event: KeyboardEvent) => {
     } else if (key === "l" || key === "Enter") {
       swallow();
       if (!items.includes(item)) return; // the community address button: Enter copies, l does nothing
-      item.click(); // opens the section ...
+      // Opens the section ... unless it is the open one already: the host renders a section anew on every click (some 130 ms in
+      // the browser harness) and would show what is there.
+      if (item.getAttribute("aria-current") !== "page" || !content || !visible(content)) item.click();
       afterLayout(() => content?.focus({ preventScroll: true })); // ... and goes into it
     } else swallow(); // h: already in the list
     return;

@@ -8,11 +8,12 @@ import { onMenuKey } from "./menus";
 import { onTextKey } from "./normal";
 import * as perf from "./perf";
 import { onSettingsKey } from "./settings-dialog";
-import { bar, renderBar } from "./status";
+import { bar, renderBar, resetBar } from "./status";
 import { bumpKeyEpoch, dispose, state, subscribe } from "./state";
 import { onEscapeCapture, onPointerDown } from "./escape";
 
 export const mount = () => {
+  resetBar();
   renderBar();
   const stopRender = subscribe(() => renderBar());
   document.head.append(cursorStyle);
@@ -64,6 +65,7 @@ export const mount = () => {
     unwatchCursors();
     resetCursors();
     bar.remove();
+    resetBar();
     delete bar.dataset.focusVia;
     delete document.documentElement.dataset.vimRegion;
     document.documentElement.removeAttribute("data-vim-on");

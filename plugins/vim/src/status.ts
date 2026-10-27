@@ -33,8 +33,18 @@ Object.assign(bar.style, {
   pointerEvents: "none",
   whiteSpace: "pre",
 });
+// What the last render wrote, so that a render that changes nothing writes nothing: setting an attribute or replacing a text node
+// to the value it has already makes the engine invalidate style (the stylesheet has rules on these attributes) and the label's
+// layout. renderBar runs several times for one key, and in a long list that was most of the key's cost.
+// (null: not known, so the next render writes it; mount and dispose reset it, since dispose takes the page's attributes off.)
+const unknown = () => ({ display: null as string | null, text: null as string | null, mode: null as string | null, region: null as string | null, on: null as boolean | null, panes: null as boolean | null });
+let written = unknown();
+export const resetBar = () => {
+  written = unknown();
+};
 export const renderBar = perf.timed("renderBar", () => {
-  bar.style.display = state.enabled && state.statusLine ? "" : "none";
+  const display = state.enabled && state.statusLine ? "" : "none";
+  if (display !== written.display) bar.style.display = written.display = display;
   const text = state.composerNormal && isEditable(document.activeElement) && state.textMode === "normal";
   const label =
     state.mode === "insert"
@@ -42,11 +52,13 @@ export const renderBar = perf.timed("renderBar", () => {
       : text
         ? { "": "NORMAL", char: "VISUAL", line: "VISUAL LINE" }[state.visual]
         : "NORMAL";
-  bar.textContent = `-- ${label} --  ${state.region}${state.count ? `  ${state.count}` : ""}${state.operator || state.prefix ? `  ${state.operator}${state.prefix}` : ""}`;
-  bar.dataset.mode = state.mode;
+  const line = `-- ${label} --  ${state.region}${state.count ? `  ${state.count}` : ""}${state.operator || state.prefix ? `  ${state.operator}${state.prefix}` : ""}`;
+  if (line !== written.text) bar.textContent = written.text = line;
+  if (state.mode !== written.mode) bar.dataset.mode = written.mode = state.mode;
   const root = document.documentElement;
-  root.dataset.vimRegion = state.region;
-  root.toggleAttribute("data-vim-on", state.enabled);
-  root.toggleAttribute("data-vim-panes", state.enabled && workspaces("main").length > 0 && workspaces("side").length > 0);
+  if (state.region !== written.region) root.dataset.vimRegion = written.region = state.region;
+  if (state.enabled !== written.on) root.toggleAttribute("data-vim-on", (written.on = state.enabled));
+  const panes = state.enabled && workspaces("main").length > 0 && workspaces("side").length > 0;
+  if (panes !== written.panes) root.toggleAttribute("data-vim-panes", (written.panes = panes));
   paintCursor(); // which pane is active, and whether a box has the keys, decides how strongly each pane's cursor row shows
 });

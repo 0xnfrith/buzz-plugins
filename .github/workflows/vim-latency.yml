@@ -1,0 +1,69 @@
+# The key-latency budget of the Vim mode plugin (plugins/vim/test/budget.spec.mjs): the time from a key press to the next
+# painted frame, on every surface, in headless Chromium against block/buzz-app's own production web build. A row fails the job
+# when its p99 is over 50 ms in all three attempts; the p95 target (16 ms) is reported in the job summary (the spec writes the
+# table to $GITHUB_STEP_SUMMARY), not enforced.
+name: Vim key latency
+
+on:
+  pull_request:
+    paths:
+      - "plugins/vim/**"
+      - ".github/workflows/vim-latency.yml"
+  push:
+    branches: [main]
+    paths:
+      - "plugins/vim/**"
+      - ".github/workflows/vim-latency.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vim-latency-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The block/buzz-app commit the plugin is tested against (plugins/vim/NOTES.md, "What was and was not verified").
+  BUZZ_APP_REF: d92bfb2c4dd89fc5ae6e7a1445f38ad1e8ab7060
+
+jobs:
+  budget:
+    name: Key latency budget
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: block/buzz-app
+          ref: ${{ env.BUZZ_APP_REF }}
+          path: buzz-app
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: pnpm, as the app pins it
+        run: |
+          corepack enable
+          corepack prepare "$(node -p "require('./buzz-app/package.json').packageManager")" --activate
+      - name: Install the app's dependencies (frozen lockfile)
+        working-directory: buzz-app
+        run: pnpm install --frozen-lockfile
+      - name: Install Chromium
+        working-directory: buzz-app
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Key latency budget
+        env:
+          BUDGET_OUT: ${{ runner.temp }}/vim-budget
+        run: plugins/vim/test/budget.sh buzz-app
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: vim-key-latency
+          path: |
+            ${{ runner.temp }}/vim-budget.md
+            ${{ runner.temp }}/vim-budget.json
+          retention-days: 14

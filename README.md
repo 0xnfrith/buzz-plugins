@@ -15,6 +15,8 @@ plugins/              plugins you can install, one folder each
 docs/
   building.md         how we build plugins
   install.md          how to install one
+.github/workflows/    the checks every pull request runs
+CONTRIBUTING.md       how to send a change (and the key-latency rule for vim mode)
 ```
 
 ## Plugins
@@ -39,6 +41,10 @@ Plugins run as trusted code inside the app, not in a sandbox. Read the code befo
 ## Build a plugin
 
 Start from Block's own starter (`buzzodz plugin init`, see [Block's plugin docs](https://github.com/block/buzz-app/blob/main/docs/plugin-architecture.md)), and follow [`docs/building.md`](docs/building.md): the plugin API first, the page DOM only where the API stops; colours from the host's theme; everything cleaned up when the plugin is updated; no network, no keys, no eval; measure before and after big changes; test against Buzz's own web build.
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). One rule worth knowing first: a change to a key of vim mode must add the key to the latency suite, which fails a pull request whose p99 key-to-paint time is over 50 ms.
 
 ## Credits
 
