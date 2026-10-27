@@ -51,13 +51,20 @@ Update in Settings disposes the old revision and applies the new one in the same
 - Registrations made through the services (`ctx.pages.register`, `ctx.shortcuts.register`, `ctx.agents.register`, ...) are removed by Buzz when the plugin's scope ends.
 - Test it: disable and enable the plugin several times, then count listeners, nodes, timers and observers after a forced GC. The counts must not grow (`plugins/vim/test/leak.spec.mjs` does this).
 
-## 4. No network, no keys, no eval
+## 4. No network, no keys, no eval (one reviewed exception)
 
-- No `fetch`, WebSocket or remote media from a plugin.
-- No keys, tokens or secrets in a plugin, its settings or its logs.
-- No `eval`, `new Function` or code loaded from strings.
+The rule: no `fetch`, WebSocket or remote media from a plugin; no keys, tokens or secrets in a plugin, its settings or its logs; no `eval`, `new Function` or code loaded from strings.
 
-Plugins run unsandboxed in the app's own page, so these are our rules, not something Buzz enforces. A plugin that needs more is a different design and gets reviewed as one.
+Plugins run unsandboxed in the app's own page, so these are our rules, not something Buzz enforces. The exception is a **connector**: a plugin whose whole job is to show or change something in one outside service. It may reach that service and hold a credential only if all of this holds:
+
+- **One declared route.** The way out is named in the manifest, so the install review lists it, and the plugin uses nothing else. For a service on the internet that is one exact origin in `host.networkOrigins`, reached only through `ctx.host.request` (Buzz's own HTTPS client: it refuses any other origin and follows no redirects). For a service on the same computer that speaks plain HTTP, which `host.request` refuses, it is a program declared under `host.commands` with its arguments fixed in the manifest, run with `ctx.host.runCommand`. Never `fetch`, WebSocket or a remote image from the page.
+- **Only the address it is for.** A local connector refuses any address that is not loopback, and says so; a remote one has the one origin and nothing else.
+- **The user's own credential, and nothing else.** The user pastes their own key or token in the plugin's settings card. The plugin carries none of its own, and none is in the repository, the manifest, a build, a fixture, a screenshot or a test log. Tests use a made-up one against a fake service.
+- **Kept where the system keeps secrets if a declared command can reach it; otherwise plainly, and said plainly.** Buzz has no credential store for plugins, but the system may have one: on macOS the Keychain, through the `security` program, declared in the manifest with fixed arguments. Where the plugin can use it, the credential goes there (handed over on the program's standard input, never as an argument, and checked by reading it back) and the profile's `localStorage` is only an explicit, labelled choice. Where it cannot, the credential sits in the profile's `localStorage` under the plugin's id, in plain text, and any other installed plugin could read it. The plugin's README and its settings card say which, in so many words.
+- **Never shown, never logged, off the command line.** After saving, the credential is not rendered anywhere. It goes into one request header and nowhere else: not a URL, a console message, an error message or a stack, and not an argument of a program (the process list shows those): a command takes it on stdin. Errors shown to the user are fixed text, since a host or service error can name the request.
+- **A test says so.** The browser spec shows the credential is not in the page after saving, not in the console, and in no address, and that the page itself makes no request to the service: everything goes through the declared route. The unit tests make the real failures happen (a wrong credential, a missing permission, nothing listening, a garbled reply) and check that no error carries the credential, and read the command line of the running program to check it is not there (where the system lets a test read it).
+
+A plugin that needs more (several routes, a credential that is not the user's own, a secret held for others, a server of its own) is a different design and gets reviewed as one. [`plugins/beeper`](../plugins/beeper) is the worked example of a local connector.
 
 ## 5. Measure before and after big changes
 
