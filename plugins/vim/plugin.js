@@ -357,6 +357,9 @@ var dispose = () => {
 };
 var keyEpoch = 0;
 var bumpKeyEpoch = () => void keyEpoch++;
+var onAnyKey = (event) => {
+	if (!event.repeat) bumpKeyEpoch();
+};
 var pendingTimer;
 var armPending = () => {
 	clearTimeout(pendingTimer);
@@ -643,6 +646,7 @@ var setCursor = (pane, id, row) => {
 var clearCursor = (pane) => {
 	cursors[pane] = void 0;
 	mark(pane, void 0);
+	stopFollow(pane);
 };
 var isCursorRow = (el, pane, id) => el.dataset.messageId === id && paneOf(el) === pane && !el.hasAttribute("data-membership-row") && !el.parentElement?.closest("[data-message-id]");
 var onMutations = (records) => {
@@ -742,6 +746,7 @@ var markEdge = (scroller, end) => {
 var LANDED_MS = 600;
 var LANDING_MS = 3e3;
 var landAtEnd = async (pane) => {
+	stopFollow();
 	const epoch = keyEpoch;
 	let mine;
 	let height = -1;
@@ -764,7 +769,55 @@ var landAtEnd = async (pane) => {
 		}
 		return now - changed > LANDED_MS;
 	}, LANDING_MS);
+	if (!moved) followEnd(pane, mine, epoch);
 	return !moved;
+};
+var FOLLOW_MS = 3e4;
+var following;
+var stopFollow = (pane) => {
+	if (!pane || following?.pane === pane) following?.stop();
+};
+var followEnd = (pane, placed, epoch) => {
+	const scroller = timelineOf(pane);
+	if (!scroller) return;
+	let mine = placed;
+	let queued = true;
+	const stop = () => {
+		watch.disconnect();
+		clearTimeout(timer);
+		if (following?.stop === stop) following = void 0;
+	};
+	const check = () => {
+		queued = false;
+		if (disposed || keyEpoch !== epoch || cursors[pane] !== mine || !scroller.isConnected) return stop();
+		if (scroller.getAttribute("aria-busy") === "true") return;
+		if (!atBottom(scroller)) {
+			if (mine) return;
+			scroller.scrollTop = scroller.scrollHeight;
+		}
+		const row = nearestVisible(scroller, true);
+		if (!row || row.dataset.messageId === mine) return;
+		selectRow(row);
+		mine = row.dataset.messageId;
+	};
+	const watch = new MutationObserver(() => {
+		if (queued) return;
+		queued = true;
+		requestAnimationFrame(check);
+	});
+	const timer = setTimeout(stop, FOLLOW_MS);
+	stopFollow();
+	following = {
+		pane,
+		stop
+	};
+	watch.observe(scroller, {
+		childList: true,
+		subtree: true,
+		attributes: true,
+		attributeFilter: ["aria-busy"]
+	});
+	requestAnimationFrame(check);
 };
 var keepCursorInView = (scroller, direction, still = false) => {
 	if (still && !cursors[cursorPane()]) return;
@@ -1481,20 +1534,51 @@ var threadRootOf = (messageId) => {
 	}
 };
 var beneath;
+var leaving;
 var cursorBack = () => {
 	if (!beneath || visible(beneath.tab)) return;
+	const scroller = timelineOf("main");
+	if (!scroller) return;
 	const { id } = beneath;
 	beneath = void 0;
-	const scroller = timelineOf("main");
-	const rows = scroller ? rowsOf(scroller) : [];
+	leaving?.disconnect();
+	const rows = rowsOf(scroller);
 	if (rows.some((row) => row.dataset.messageId === cursors.main)) return;
 	clearCursor("main");
 	const row = rows.find((row) => row.dataset.messageId === id);
 	if (row) selectRow(row, false);
 	paintCursor();
 };
+var watchBeneath = (tab) => {
+	leaving?.disconnect();
+	const workspace = tab.closest(MAIN);
+	if (!workspace) return;
+	let queued = false;
+	const watch = new MutationObserver(() => {
+		if (queued) return;
+		queued = true;
+		requestAnimationFrame(() => {
+			queued = false;
+			if (disposed || !beneath) return watch.disconnect();
+			cursorBack();
+		});
+	});
+	watch.observe(workspace, {
+		childList: true,
+		subtree: true,
+		attributes: true,
+		attributeFilter: [
+			"inert",
+			"aria-hidden",
+			"data-covered",
+			"hidden"
+		]
+	});
+	leaving = watch;
+};
 var openThread = async () => {
 	clearPending();
+	stopFollow();
 	const messageId = state.region === "main" ? cursorRow()?.dataset.messageId : void 0;
 	const channelId = currentChannelId();
 	const { status, viewer, origin } = ctx.relay.snapshot();
@@ -1526,6 +1610,7 @@ var openThread = async () => {
 			id: messageId,
 			tab
 		} : void 0;
+		if (tab) watchBeneath(tab);
 		clearCursor("main");
 		paintCursor();
 	}
@@ -1541,6 +1626,7 @@ var refocusAfter = (region) => afterLayout(() => {
 });
 var closeThread = () => {
 	clearPending();
+	stopFollow();
 	if (document.querySelector("dialog[open], [aria-modal=\"true\"]")) return;
 	const request = new Event("buzz:close-active-tab", { cancelable: true });
 	window.dispatchEvent(request);
@@ -2345,7 +2431,7 @@ var mount = () => {
 	listen("keydown", "onEscapeCapture", onEscapeCapture);
 	listen("keydown", "onTextKey", onTextKey);
 	listen("keydown", "onMenuKey", onMenuKey);
-	listen("keydown", "onAnyKey", bumpKeyEpoch);
+	listen("keydown", "onAnyKey", onAnyKey);
 	listen("keydown", "onHelpKey", onHelpKey);
 	listen("pointerdown", "onPointerDown", onPointerDown);
 	let traced = state.perf;

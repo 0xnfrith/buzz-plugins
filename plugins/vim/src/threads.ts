@@ -3,9 +3,9 @@
 // it, or Tab is pressed. A Tab keydown on window is the host's own "a keyboard user is here"
 // signal for every row at once. It moves no focus, so the plugin sends one, then clicks the
 // control the way a pointer would.
-import { PANE_HANDLE, PANE_TOGGLE, SCROLLER } from "./constants";
+import { MAIN, PANE_HANDLE, PANE_TOGGLE, SCROLLER } from "./constants";
 import { ctx } from "./ctx";
-import { clearCursor, cursorRow, cursors, paintCursor, selectRow } from "./cursor";
+import { clearCursor, cursorRow, cursors, paintCursor, selectRow, stopFollow } from "./cursor";
 import { afterLayout, nextFrame, rowsOf, settle, timelineOf, visible } from "./dom";
 import { currentChannelId } from "./box";
 import { available, goRegion } from "./panes";
@@ -45,22 +45,44 @@ const threadRootOf = (messageId: string) => {
 };
 // A thread placed in the main pane is a tab over the channel's list, and the two share one cursor. Opening lands that cursor on the
 // thread's newest message, so the message the thread was opened from is kept here, with the tab, and gets the cursor back when the
-// tab is closed.
+// tab stops showing: closed (q, the tab's x, Cmd+W) or left for the channel's tab. The host marks the channel's panel inert and
+// aria-hidden while a tab covers it, so the page is watched for those and for tabs coming and going, one check a frame later.
 let beneath: { id: string; tab: HTMLElement } | undefined;
+let leaving: MutationObserver | undefined;
 const cursorBack = () => {
   if (!beneath || visible(beneath.tab)) return;
+  const scroller = timelineOf("main");
+  if (!scroller) return; // no list is back yet (another page is showing): the next change of the page asks again
   const { id } = beneath;
   beneath = undefined;
-  const scroller = timelineOf("main");
-  const rows = scroller ? rowsOf(scroller) : [];
+  leaving?.disconnect();
+  const rows = rowsOf(scroller);
   if (rows.some((row) => row.dataset.messageId === cursors.main)) return; // the cursor has been put somewhere in the list since
   clearCursor("main");
   const row = rows.find((row) => row.dataset.messageId === id);
   if (row) selectRow(row, false);
   paintCursor();
 };
+const watchBeneath = (tab: HTMLElement) => {
+  leaving?.disconnect();
+  const workspace = tab.closest(MAIN);
+  if (!workspace) return;
+  let queued = false;
+  const watch = new MutationObserver(() => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => {
+      queued = false;
+      if (disposed || !beneath) return watch.disconnect();
+      cursorBack();
+    });
+  });
+  watch.observe(workspace, { childList: true, subtree: true, attributes: true, attributeFilter: ["inert", "aria-hidden", "data-covered", "hidden"] });
+  leaving = watch;
+};
 export const openThread = async () => {
   clearPending();
+  stopFollow();
   // Pin the message now, as rowControl does. Only the message list has a cursor to open.
   const messageId = state.region === "main" ? cursorRow()?.dataset.messageId : undefined;
   const channelId = currentChannelId();
@@ -97,6 +119,7 @@ export const openThread = async () => {
   if (region === "main") {
     const tab = timelineOf("main");
     beneath = tab ? { id: messageId, tab } : undefined;
+    if (tab) watchBeneath(tab);
     clearCursor("main");
     paintCursor();
   }
@@ -120,6 +143,7 @@ const refocusAfter = (region: Region) =>
 // list, and marks the event handled when it did.
 export const closeThread = () => {
   clearPending();
+  stopFollow();
   if (document.querySelector('dialog[open], [aria-modal="true"]')) return;
   const request = new Event("buzz:close-active-tab", { cancelable: true });
   window.dispatchEvent(request);
