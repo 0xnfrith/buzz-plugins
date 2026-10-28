@@ -57,7 +57,8 @@ const cursorBack = () => {
   beneath = undefined;
   leaving?.disconnect();
   const rows = rowsOf(scroller);
-  if (rows.some((row) => row.dataset.messageId === cursors.main)) return; // the cursor has been put somewhere in the list since
+  const kept = rows.find((row) => row.dataset.messageId === cursors.main);
+  if (kept) return selectRow(kept, false); // the cursor is in the list already (put there since, or the thread's own copy of the same message): it needs its mark back
   clearCursor("main");
   const row = rows.find((row) => row.dataset.messageId === id);
   if (row) selectRow(row, false);

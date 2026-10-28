@@ -920,13 +920,15 @@ var REGIONS = [
 var available = (region) => region === "sidebar" ? channelRows().length > 0 : !!timelineOf(region);
 var ensureCursor = async (pane, atEnd) => {
 	if (cursors[pane]) return;
+	const list = timelineOf(pane);
 	if (atEnd && await landAtEnd(pane)) return;
+	if (atEnd && list && timelineOf(pane) !== list) return;
 	const epoch = keyEpoch;
 	const row = await settle(() => {
 		const scroller = timelineOf(pane);
 		return scroller && nearestVisible(scroller, pane === "main");
 	}, 1e3);
-	if (row && !cursors[pane] && !disposed && (!atEnd || keyEpoch === epoch)) selectRow(row);
+	if (row && !cursors[pane] && !disposed && (!atEnd || keyEpoch === epoch && (!list || timelineOf(pane) === list))) selectRow(row);
 };
 var goRegion = (region, atEnd = false) => {
 	const was = document.activeElement;
@@ -1543,7 +1545,8 @@ var cursorBack = () => {
 	beneath = void 0;
 	leaving?.disconnect();
 	const rows = rowsOf(scroller);
-	if (rows.some((row) => row.dataset.messageId === cursors.main)) return;
+	const kept = rows.find((row) => row.dataset.messageId === cursors.main);
+	if (kept) return selectRow(kept, false);
 	clearCursor("main");
 	const row = rows.find((row) => row.dataset.messageId === id);
 	if (row) selectRow(row, false);

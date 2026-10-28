@@ -1151,6 +1151,44 @@ test.describe("o opens a thread at its end", () => {
     });
   }
 
+  // The cursor goes back to the message the thread was opened from, also when the tab is left while the landing still runs (q straight
+  // after o) and when the message has no replies, so that the tab's newest message is a copy of the message itself.
+  test("with threads placed in the main pane: o, then q while it still lands, leaves the mark on the message the thread was opened from", async ({ page, app }) => {
+    await page.addInitScript(() => localStorage.setItem("buzz-thread-placement.v1", "main"));
+    await open(page, app);
+    await toRoot(page, app);
+    await slowThread(page, { first: 1500 }); // the landing has nothing to mark yet when q comes
+    const tab = page.locator('[data-main-workspace] [role="tab"][data-tab-value^="thread:"]');
+    const channelList = page.locator('[data-main-workspace] [data-message-scroller][data-channel-timeline="alpha"]');
+    for (const wait of [0, 250]) {
+      await press(page, "o");
+      await expect(tab).toHaveCount(1);
+      await page.waitForTimeout(wait);
+      await press(page, "q"); // while it lands
+      await expect(tab).toHaveCount(0);
+      await page.waitForTimeout(1300); // longer than the landing's fallback waits for a row
+      expect(await cursor(page)).toBe(app.exact.root.id);
+      await expect(channelList.locator('[data-vim-cursor="main"]')).toHaveAttribute("data-message-id", app.exact.root.id);
+    }
+  });
+
+  test("with threads placed in the main pane: o on a message with no replies, then q, leaves that message marked", async ({ page, app }) => {
+    await page.addInitScript(() => localStorage.setItem("buzz-thread-placement.v1", "main"));
+    await open(page, app);
+    const first = (await rowIds(page))[0];
+    await press(page, "g", "g");
+    await expect.poll(() => cursor(page)).toBe(first);
+    await press(page, "o");
+    const tab = page.locator('[data-main-workspace] [role="tab"][data-tab-value^="thread:"]');
+    await expect(tab).toHaveCount(1);
+    await page.waitForTimeout(2500); // the thread is its message alone: the landing marks the tab's copy of it
+    await press(page, "q");
+    await expect(tab).toHaveCount(0);
+    await page.waitForTimeout(500);
+    expect(await cursor(page)).toBe(first);
+    await expect(page.locator('[data-main-workspace] [data-message-scroller][data-channel-timeline="alpha"] [data-vim-cursor="main"]')).toHaveAttribute("data-message-id", first);
+  });
+
   test("with threads placed in the main pane: the tab is at its end with the newest reply under the cursor, and q gives the cursor back to the message", async ({ page, app }) => {
     await page.addInitScript(() => localStorage.setItem("buzz-thread-placement.v1", "main"));
     await open(page, app);

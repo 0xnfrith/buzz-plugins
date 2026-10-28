@@ -47,16 +47,20 @@ export const available = (region: Region) => (region === "sidebar" ? channelRows
 // end instead: scrolled to the bottom, the newest message marked. A key pressed while it lands
 // ends the landing, and the pane then gets the mark it would have had, unless another key comes
 // before the pane has a row to mark: a thread closed (q) and opened again at once has a new
-// list, which that landing's mark would take, and the new landing would find its pane taken.
+// list, which that landing's mark would take, and the new landing would find its pane taken. Nor does it mark once the pane
+// shows another list than the one the landing ran on: a thread tab closed (q) puts the channel's list in the pane, and its newest
+// row is not where the cursor goes (the message the thread was opened from gets it back, threads.ts).
 const ensureCursor = async (pane: "main" | "side", atEnd: boolean) => {
   if (cursors[pane]) return;
+  const list = timelineOf(pane);
   if (atEnd && (await landAtEnd(pane))) return;
+  if (atEnd && list && timelineOf(pane) !== list) return;
   const epoch = keyEpoch;
   const row = await settle(() => {
     const scroller = timelineOf(pane);
     return scroller && nearestVisible(scroller, pane === "main");
   }, 1000);
-  if (row && !cursors[pane] && !disposed && (!atEnd || keyEpoch === epoch)) selectRow(row);
+  if (row && !cursors[pane] && !disposed && (!atEnd || (keyEpoch === epoch && (!list || timelineOf(pane) === list)))) selectRow(row);
 };
 export const goRegion = (region: Region, atEnd = false) => {
   const was = document.activeElement;
