@@ -19,6 +19,10 @@
     "control": "control: jump to the bottom (the page itself)",
     "why": "Jumping to the bottom of the 80-reply thread costs the app the layout of the rows it lands on (the control row is the page setting scrollTop itself)."
   },
+  "thread o: open them again": {
+    "control": "control: open the replies (the page itself)",
+    "why": "Opening the replies again costs the app a paint of the rows that come back, and that is the most of what `o` costs there (the control row is the page taking the fold's mark off the branch itself). Folding costs less: the rows are left out of the page."
+  },
   "settings l: open the next section": {
     "control": "control: open the next section (the page itself)",
     "why": "The host renders a whole settings section anew when another is opened (the control row is the page clicking the next section itself). The row presses h, j and l, so it carries two more key presses."

@@ -75,6 +75,9 @@ var COMMUNITY_TRIGGER = "nav[aria-label=\"Communities\"] button[aria-label^=\"Co
 var COMMUNITY_POPUP = "[role=\"dialog\"][aria-label=\"Switch community\"]";
 var PANE_HANDLE = "hr[aria-label=\"Resize main and secondary panels\"]";
 var PANE_TOGGLE = "[data-tab-pane-toggle]";
+var BRANCH = "[data-depth]";
+var BRANCH_PILL = "button[data-thread-summary][aria-controls]";
+var FOLD_ATTR = "data-vim-fold";
 // src/perf.ts
 var RING = 5e3;
 var MODIFIERS = /* @__PURE__ */ new Set([
@@ -617,7 +620,9 @@ var BARE = ":not(:has([data-bubble])) > [data-layout]";
 var ACTIVE_MAIN = "html:not([data-vim-region=\"side\"]):not([data-vim-box]) ";
 var ACTIVE_SIDE = "html[data-vim-region=\"side\"]:not([data-vim-box]) ";
 var CURSOR_CSS = `${around(`${MAIN}, ${SIDE}`, "", ` ${ROW} ${BUBBLE}`)}{${MARK_RESTING.bubble}}${around(`${MAIN}, ${SIDE}`, "", ` ${ROW}${BARE}`)}{${MARK_RESTING.bare}}${ACTIVE_MAIN}${ROW}[${CURSOR_ATTR}="main"] ${BUBBLE}{${MARK_ACTIVE.bubble}}${ACTIVE_MAIN}${ROW}[${CURSOR_ATTR}="main"]${BARE}{${MARK_ACTIVE.bare}}${ACTIVE_SIDE}${ROW}[${CURSOR_ATTR}="side"] ${BUBBLE}{${MARK_ACTIVE.bubble}}${ACTIVE_SIDE}${ROW}[${CURSOR_ATTR}="side"]${BARE}{${MARK_ACTIVE.bare}}`;
-var STATIC_CSS = FOCUS_CSS + LINE_CSS + BOX_FOCUS_CSS + CURSOR_CSS;
+var FOLD = `[${FOLD_ATTR}]`;
+var FOLD_CSS = `${FOLD}>:last-child{display:none}${FOLD}>:first-child::after{display:none}${FOLD}::after{content:attr(${FOLD_ATTR});display:flex;align-items:center;min-height:var(--size-control-sm,2rem);margin-inline-start:calc(var(--size-control-sm,2rem) + var(--space-2,.5rem));padding-inline:var(--space-4,1rem);color:var(--text-standard,inherit);font-size:var(--text-body-sm,.875rem);line-height:var(--text-body-sm--line-height,1.43)}`;
+var STATIC_CSS = FOCUS_CSS + LINE_CSS + BOX_FOCUS_CSS + CURSOR_CSS + FOLD_CSS;
 // src/cursor.ts
 var PANE_LIST = ["main", "side"];
 var cursors = {
@@ -1619,6 +1624,40 @@ var openThread = async () => {
 	}
 	goRegion(region, true);
 };
+var pillCount = (pill) => Number(/\d+/.exec(pill.getAttribute("aria-label") ?? "")?.[0] ?? 0);
+var foldBranch = (branch, row) => {
+	const panel = branch.lastElementChild;
+	if (!panel || branch.getAttribute("data-open") !== "true") return;
+	const count = rowsOf(panel).length + [...panel.querySelectorAll(BRANCH_PILL)].reduce((sum, pill) => sum + pillCount(pill), 0);
+	if (!count) return;
+	branch.setAttribute(FOLD_ATTR, `${count} ${count === 1 ? "reply" : "replies"}`);
+	if (visible(panel)) branch.removeAttribute(FOLD_ATTR);
+	else row.scrollIntoView({ block: "nearest" });
+};
+var toggleBranch = async () => {
+	clearPending();
+	try {
+		const scroller = activeTimeline();
+		const row = cursorRow();
+		const branch = row?.closest(BRANCH);
+		if (!scroller || !row || !branch) return;
+		if (branch.hasAttribute("data-vim-fold")) return branch.removeAttribute(FOLD_ATTR);
+		const pill = branch.querySelector(`:scope > * > ${BRANCH_PILL}`);
+		if (!pill) return foldBranch(branch, row);
+		const epoch = keyEpoch;
+		pill.click();
+		await nextFrame();
+		if (keyEpoch === epoch && row.isConnected) {
+			focusEl(scroller);
+			row.scrollIntoView({ block: "nearest" });
+		}
+	} catch {}
+};
+var openOrFold = () => {
+	const scroller = activeTimeline();
+	if (scroller && !scroller.hasAttribute("data-channel-timeline") && state.region !== "sidebar") toggleBranch();
+	else openThread();
+};
 var enterOpens = () => {
 	const el = document.activeElement;
 	return state.region === "main" && !!cursors.main && (!el || el === document.body || el.matches("[data-message-scroller]"));
@@ -1789,7 +1828,7 @@ var groups = () => {
 				],
 				[
 					"o  Enter",
-					"Open the thread of the message under the cursor and move into it, at its end: scrolled to the bottom, the newest message marked. Enter only while the message list has focus",
+					"Open the thread of the message under the cursor and move into it, at its end: scrolled to the bottom, the newest message marked. In a thread, o opens the replies to the reply under the cursor, and again folds them (Enter does not). Enter only while the message list has focus",
 					"API + DOM"
 				],
 				[
@@ -2617,7 +2656,7 @@ var registerShortcuts = () => {
 		key: "C",
 		shift: true
 	}, () => void openCommunityPicker());
-	key("open-thread", "Open the thread of the message under the cursor, at its end (after z: show the thread pane)", { key: "o" }, afterG("o", () => state.operator === "z" ? showPane() : void openThread()));
+	key("open-thread", "Open the thread of the message under the cursor, at its end; in a thread, open or fold the replies to it (after z: show the thread pane)", { key: "o" }, afterG("o", () => state.operator === "z" ? showPane() : openOrFold()));
 	key("open-thread-enter", "Open the thread of the message under the cursor", { key: "Enter" }, () => void openThread(), { when: () => eligible() && enterOpens() });
 	key("close-thread", "Close the active thread", { key: "q" }, afterG("q", closeThread));
 	key("fold", "Fold prefix: zc hides the thread pane, zo shows it", { key: "z" }, afterG("z", () => {

@@ -51,3 +51,8 @@ export const COMMUNITY_POPUP = '[role="dialog"][aria-label="Switch community"]';
 // The thread pane's split handle (a focusable ARIA separator) and the button that hides or shows the pane.
 export const PANE_HANDLE = 'hr[aria-label="Resize main and secondary panels"]';
 export const PANE_TOGGLE = "[data-tab-pane-toggle]";
+// A thread's reply branch (the replies under a message): the host's wrapper, carrying its depth, and the pill that opens it. The branch
+// that `o` folds carries FOLD_ATTR, whose value is the count the stylesheet draws where the pill was (theme.ts).
+export const BRANCH = "[data-depth]";
+export const BRANCH_PILL = "button[data-thread-summary][aria-controls]";
+export const FOLD_ATTR = "data-vim-fold";

@@ -52,6 +52,7 @@ Taken in Buzz's own browser test harness with its fixture data (`test/screenshot
 | Help | Shift+/ (`?`) | The key list opens over the page, centred on a dimmed backdrop, grouped NORMAL (messages and panes), NORMAL (the message box), INSERT, VISUAL. `j` `k` scroll it, Control+d and Control+u scroll half a page, `gg` and `G` go to the top and bottom, `q`, Esc or `?` close it and you are where you were |
 | The switches | `g` then `v` | The Vim mode page opens (it holds the three switches and the same key list) |
 | Open a thread | Move the cursor with `k`, then `o` (or Enter) | The thread opens beside the channel and focus is in its message list, in NORMAL, scrolled to the very bottom with the newest message marked (with threads placed over the channel, the same in the tab; the cursor goes back to the message when the tab stops showing: `q`, the tab's close button, Cmd+W or the channel's tab). `j` and `k` walk the replies, `i` writes a reply, `h` goes back to the channel. `l` and `zo` into a thread that is already open keep the message the pane had marked |
+| Open and fold the replies to a reply | In a thread, `j` or `k` to a reply that has replies of its own (under it, a pill: "3 replies"), then `o` | The replies open under it, the pill is gone and the cursor stays on the reply. `o` again folds them: they are hidden and the count stands where the pill was, and `o` opens them again. Buzz opens a branch once and gives it no way to close, so the fold is the plugin's own: it hides the replies and draws the count, and Buzz still has the branch open. On a reply with no replies of its own, and on the first message of the thread, `o` does nothing. It works in a thread beside the channel and in one placed over it (told apart from the channel by its list, not by the pane). `Enter` and `zo` are unchanged |
 | Close a thread | `q` | The thread closes and focus is back on the message list. It works from the thread and from the message list |
 | Hide the thread pane | `zc`, then `zo` | `zc` hides the pane but keeps the thread open, `zo` shows it again |
 | Resize the thread pane | Shift+`.` (`>`) and Shift+`,` (`<`), then `3>`, Shift+`\` (`\|`), `=` | Wider and narrower by 48 px a press, three presses at once with a count, as wide as it goes, and back to the default width |
@@ -97,7 +98,7 @@ Every key the plugin handles has to answer within a frame or two, in a channel w
 
 | Surface | Keys |
 | --- | --- |
-| Channel list, message list, thread's list | `j k 5j 5k Ctrl-e Ctrl-y gg G` (message list and thread also `h l`, between panes; message list also `o` on the newest message with its thread already open beside the channel, and `h` back from it) |
+| Channel list, message list, thread's list | `j k 5j 5k Ctrl-e Ctrl-y gg G` (message list and thread also `h l`, between panes; message list also `o` on the newest message with its thread already open beside the channel, and `h` back from it; thread also `o` on a reply that has a reply of its own, which folds the replies and opens them again) |
 | Message box (600 words, and 30 mentions) | `w b 5w 5b 0 $ h l` |
 | Reminders, Agents, Workflows pages | `Ctrl-e Ctrl-y`; `j k 5j 5k G gg` are control rows (a page has no message list: they find nothing to move) |
 | Settings dialog | `j k 5j 5k l h`, `l` opening another section, `Ctrl-e Ctrl-y` |
