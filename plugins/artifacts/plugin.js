@@ -5,6 +5,8 @@ export const inject = ["react", "pages", "settingsCards", "browser"];
 
 export const PLUGIN_ID = "megatech.artifacts";
 export const STORAGE_KEY = PLUGIN_ID;
+/** The id of the default page, kept beside the list so the list's own format is unchanged. */
+export const DEFAULT_KEY = `${PLUGIN_ID}.default`;
 /** The named website storage the browser keeps between opens and restarts (macOS 14+), so a sign-in survives. */
 export const BROWSER_STORAGE = "claude";
 const MAX_URL_BYTES = 2048; // Buzz's browser limit, after normalization
@@ -52,15 +54,32 @@ function readSaved(storage) {
   }
 }
 
-/** The saved list. `storage` is a localStorage-shaped object; every call that changes the list saves it and tells subscribers. */
+function readDefault(storage) {
+  try {
+    const saved = storage.getItem(DEFAULT_KEY);
+    return typeof saved === "string" ? saved : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * The saved list and which page is the default. `storage` is a localStorage-shaped object; every call that changes
+ * either saves it and tells subscribers. The default is the saved id when that page exists, otherwise the first
+ * page, so a list saved before defaults existed, or a stale id, still has one.
+ */
 export function createLinkStore(storage) {
   let links = readSaved(storage);
+  let savedDefault = readDefault(storage);
   let counter = 0;
   const listeners = new Set();
+  const defaultId = () => (links.some((link) => link.id === savedDefault) ? savedDefault : links[0]?.id);
   const save = () => {
     links = [...links]; // a new array each time, so a React snapshot sees the change
+    savedDefault = defaultId() ?? ""; // write the default that applies now, so a stale id is repaired and the first page added sticks
     try {
       storage.setItem(STORAGE_KEY, JSON.stringify(links));
+      storage.setItem(DEFAULT_KEY, savedDefault);
     } catch {
       // Storage full or blocked: the list still works until the page is closed.
     }
@@ -69,6 +88,8 @@ export function createLinkStore(storage) {
   const newId = () => `${Date.now().toString(36)}-${(counter++).toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   return {
     list: () => links,
+    /** The id of the default page, or `undefined` while the list is empty. A string, so a React snapshot compares it by value. */
+    defaultId,
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -92,8 +113,17 @@ export function createLinkStore(storage) {
     remove(id) {
       if (!links.some((entry) => entry.id === id)) return { ok: false, message: "That link is gone." };
       links = links.filter((entry) => entry.id !== id);
-      save();
+      save(); // if the default was removed, the first page left becomes it
       return { ok: true };
+    },
+    setDefault(id) {
+      const link = links.find((entry) => entry.id === id);
+      if (!link) return { ok: false, message: "That link is gone." };
+      if (id !== defaultId()) {
+        savedDefault = id;
+        save();
+      }
+      return { ok: true, value: link };
     },
   };
 }
@@ -111,6 +141,9 @@ const CSS = `
 .megatech-artifacts__chip{cursor:pointer;border:1px solid color-mix(in srgb,currentColor 20%,transparent);border-radius:999px;padding:4px 12px;background:transparent;color:inherit;font:inherit}
 .megatech-artifacts__chip:hover{background:var(--affordance-backdrop-pressed,color-mix(in srgb,currentColor 10%,transparent))}
 .megatech-artifacts__chip[aria-current="true"]{outline:2px solid var(--accent-9,currentColor)}
+.megatech-artifacts__chip[data-default="true"]::before{content:"\\2605\\00a0";color:var(--accent-9,currentColor)}
+.megatech-artifacts__default{margin-left:auto;font-size:.9em}
+.megatech-artifacts__mark{opacity:.85;white-space:nowrap}
 .megatech-artifacts__view{flex:1;min-height:0;display:flex;flex-direction:column}
 .megatech-artifacts__empty{padding:24px 16px;opacity:.8;line-height:1.5}
 .megatech-artifacts__card{display:flex;flex-direction:column;gap:12px}
@@ -126,6 +159,7 @@ export function apply(ctx) {
   const h = React.createElement;
   const store = createLinkStore(window.localStorage);
   const useLinks = () => React.useSyncExternalStore(store.subscribe, store.list);
+  const useDefaultId = () => React.useSyncExternalStore(store.subscribe, store.defaultId);
 
   ctx.effect(() => {
     // [DOM] No style service in API v1: one <style> element, removed when the plugin's scope ends.
@@ -138,8 +172,10 @@ export function apply(ctx) {
 
   function ArtifactsPage() {
     const links = useLinks();
+    const defaultId = useDefaultId();
     const [openId, setOpenId] = React.useState(undefined);
-    const current = links.find((link) => link.id === openId);
+    // Open on the default until a chip is clicked; if the chosen page is removed, fall back to the default.
+    const current = links.find((link) => link.id === openId) ?? links.find((link) => link.id === defaultId);
     const body = !ctx.browser.available
       ? h("div", { className: "megatech-artifacts__empty" }, "Buzz's built-in browser is only available in the macOS desktop app, so these pages cannot be opened here.")
       : links.length === 0
@@ -147,7 +183,7 @@ export function apply(ctx) {
         : current
           ? // `key` gives each page its own browser session; the named storage keeps the sign-in.
             h(ctx.browser.View, { key: current.id, url: current.url, storage: BROWSER_STORAGE, label: current.name })
-          : h("div", { className: "megatech-artifacts__empty" }, "Choose a page above.");
+          : null;
     return h(
       "div",
       { className: "megatech-artifacts" },
@@ -155,14 +191,30 @@ export function apply(ctx) {
         "div",
         { className: "megatech-artifacts__bar", role: "toolbar", "aria-label": "Saved pages" },
         links.map((link) =>
-          h("button", { key: link.id, type: "button", className: "megatech-artifacts__chip", "aria-current": link.id === openId ? "true" : "false", title: link.url, onClick: () => setOpenId(link.id) }, link.name),
+          h(
+            "button",
+            {
+              key: link.id,
+              type: "button",
+              className: "megatech-artifacts__chip",
+              "aria-current": link.id === current?.id ? "true" : "false",
+              "aria-label": link.id === defaultId ? `${link.name} (default)` : undefined,
+              "data-default": link.id === defaultId ? "true" : "false",
+              title: link.url,
+              onClick: () => setOpenId(link.id),
+            },
+            link.name,
+          ),
         ),
+        current && current.id !== defaultId
+          ? h("button", { type: "button", className: "megatech-artifacts__chip megatech-artifacts__default", title: `Open ${current.name} first each time`, onClick: () => store.setDefault(current.id) }, "Make default")
+          : null,
       ),
       h("div", { className: "megatech-artifacts__view" }, body),
     );
   }
 
-  function LinkRow({ link }) {
+  function LinkRow({ link, isDefault }) {
     const [name, setName] = React.useState(link.name);
     return h(
       "div",
@@ -170,12 +222,16 @@ export function apply(ctx) {
       h("input", { value: name, "aria-label": `Name for ${link.url}`, onChange: (event) => setName(event.target.value) }),
       h("button", { type: "button", className: "ui-button", onClick: () => store.rename(link.id, name) }, "Rename"),
       h("button", { type: "button", className: "ui-button", onClick: () => store.remove(link.id) }, "Remove"),
+      isDefault
+        ? h("span", { className: "megatech-artifacts__mark" }, h("span", { "aria-hidden": "true" }, "\u2605 "), "Default")
+        : h("button", { type: "button", className: "ui-button", "aria-label": `Make default: ${link.name}`, onClick: () => store.setDefault(link.id) }, "Make default"),
       h("div", { className: "megatech-artifacts__url", style: { flexBasis: "100%" } }, link.url),
     );
   }
 
   function ArtifactsSettings() {
     const links = useLinks();
+    const defaultId = useDefaultId();
     const [name, setName] = React.useState("");
     const [address, setAddress] = React.useState("");
     const [error, setError] = React.useState("");
@@ -191,7 +247,7 @@ export function apply(ctx) {
     return h(
       "div",
       { className: "megatech-artifacts megatech-artifacts__card", style: { height: "auto" } },
-      h("p", null, "Saved pages show in the Artifacts page in the sidebar. They are kept on this computer, in this app's storage. Pages open in Buzz's built-in browser (macOS 14 or later keeps the sign-in between restarts)."),
+      h("p", null, "Saved pages show in the Artifacts page in the sidebar, which opens on the default page (the first one you add, until you pick another). They are kept on this computer, in this app's storage. Pages open in Buzz's built-in browser (macOS 14 or later keeps the sign-in between restarts)."),
       h(
         "form",
         { className: "megatech-artifacts__row", onSubmit: add },
@@ -200,7 +256,7 @@ export function apply(ctx) {
         h("button", { type: "submit", className: "ui-button" }, "Add"),
       ),
       error ? h("div", { className: "megatech-artifacts__error", role: "alert" }, error) : null,
-      links.map((link) => h(LinkRow, { key: link.id, link })),
+      links.map((link) => h(LinkRow, { key: link.id, link, isDefault: link.id === defaultId })),
     );
   }
 

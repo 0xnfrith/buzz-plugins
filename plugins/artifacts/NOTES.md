@@ -24,7 +24,9 @@ First release tag containing the commit: `desktop-v0.7.0-beta.1`.
 - **No build step.** The plugin is small enough to be one hand-written `plugin.js`, like `key-probe`. The list logic is exported (`createLinkStore`, `checkUrl`) so the tests import it; the host reads only `inject` and `apply`.
 - **Storage name `claude`** is fixed, as asked. See the README on what that shares.
 - **Plugin storage**: "Plugin-specific persistent data has no host API yet" (docs/building.md §1), so `localStorage` under the plugin id.
+- **The default page** is a second key, `megatech.artifacts.default`, holding only the page's id. The list's own JSON is untouched, so old data reads as it did, and the first page is the default until one is saved. The store writes the default that applies at every change (so a stale id is repaired on the next save), and reads it as "the saved id if that page exists, else the first page".
+- **A hand-picked page stays while the page is open.** The page opens on the default; a clicked chip is remembered only in the page's own state. Changing the default from the Settings card while the page is open behind it does not move the page the user chose; opening the page again loads the new default (checked in the Linux app). If that proves surprising, make the page follow the default whenever it changes.
 
 ## Not verified
 
-No run in a live Buzz app, and none in Buzz's web test harness (no native browser there). The page layout (chip bar over a flex-filled view), the `ui-button` class on settings buttons, the icon rendering and the sign-in persistence are unconfirmed.
+Run since in the Buzz 1.0 Linux app (`0.0.0-preview.156.1`), where `ctx.browser.available` is false: the chip bar, the page's macOS-only message, the Settings card, the sidebar entry and icon, the default's marking and the ways of changing it were seen working. Still unconfirmed, because they need the macOS app: the page layout with a real `browser.View` under the chip bar, whether the Settings `ui-button` class styles a button there (on Linux the buttons render as plain text), the default page loading on open, and the sign-in persistence.
