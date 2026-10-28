@@ -51,7 +51,7 @@ Taken in Buzz's own browser test harness with its fixture data (`test/screenshot
 | Search | `/` | Buzz's search opens (it presses Cmd+F for you) |
 | Help | Shift+/ (`?`) | The key list opens over the page, centred on a dimmed backdrop, grouped NORMAL (messages and panes), NORMAL (the message box), INSERT, VISUAL. `j` `k` scroll it, Control+d and Control+u scroll half a page, `gg` and `G` go to the top and bottom, `q`, Esc or `?` close it and you are where you were |
 | The switches | `g` then `v` | The Vim mode page opens (it holds the three switches and the same key list) |
-| Open a thread | Move the cursor with `k`, then `o` (or Enter) | The thread opens beside the channel and focus is in its message list, in NORMAL. `j` and `k` walk the replies, `i` writes a reply, `h` goes back to the channel |
+| Open a thread | Move the cursor with `k`, then `o` (or Enter) | The thread opens beside the channel and focus is in its message list, in NORMAL, scrolled to the very bottom with the newest message marked (with threads placed over the channel, the same in the tab, and `q` gives the cursor back to the message). `j` and `k` walk the replies, `i` writes a reply, `h` goes back to the channel. `l` and `zo` into a thread that is already open keep the message the pane had marked |
 | Close a thread | `q` | The thread closes and focus is back on the message list. It works from the thread and from the message list |
 | Hide the thread pane | `zc`, then `zo` | `zc` hides the pane but keeps the thread open, `zo` shows it again |
 | Resize the thread pane | Shift+`.` (`>`) and Shift+`,` (`<`), then `3>`, Shift+`\` (`\|`), `=` | Wider and narrower by 48 px a press, three presses at once with a count, as wide as it goes, and back to the default width |
@@ -97,12 +97,12 @@ Every key the plugin handles has to answer within a frame or two, in a channel w
 
 | Surface | Keys |
 | --- | --- |
-| Channel list, message list, thread's list | `j k 5j 5k Ctrl-e Ctrl-y gg G` (message list and thread also `h l`, between panes) |
+| Channel list, message list, thread's list | `j k 5j 5k Ctrl-e Ctrl-y gg G` (message list and thread also `h l`, between panes; message list also `o` on the newest message with its thread already open beside the channel, and `h` back from it) |
 | Message box (600 words, and 30 mentions) | `w b 5w 5b 0 $ h l` |
 | Reminders, Agents, Workflows pages | `Ctrl-e Ctrl-y`; `j k 5j 5k G gg` are control rows (a page has no message list: they find nothing to move) |
 | Settings dialog | `j k 5j 5k l h`, `l` opening another section, `Ctrl-e Ctrl-y` |
 
-**Not pressed yet.** The suite does not cover every key of the plugin. In the lists and panes: `Ctrl-d` `Ctrl-u`, `]` `[`, `}` `{`, `o` `Enter`, `q`, `zc` `zo`, `>` `<` `|` `=`, `/`, `?` and the keys of its overlay, `i` `a` `A` `I`, `r`, `m`, `gt` `gT`, the page keys (`gi` `gm` `ga` `gr` `gw` `gs` `gv`), the leader. In the message box: `e E W B ge gE ^`, `j` `k`, `gg` `G`, `f t F T ; ,`, `x`, `d`, `dd`, `u`, `v` `V` and what they do in VISUAL. A key with no row has no budget; CONTRIBUTING.md asks that a change to a key adds it.
+**Not pressed yet.** The suite does not cover every key of the plugin. In the lists and panes: `Ctrl-d` `Ctrl-u`, `]` `[`, `}` `{`, `Enter`, `q`, `zc` `zo`, `>` `<` `|` `=`, `/`, `?` and the keys of its overlay, `i` `a` `A` `I`, `r`, `m`, `gt` `gT`, the page keys (`gi` `gm` `ga` `gr` `gw` `gs` `gv`), the leader. In the message box: `e E W B ge gE ^`, `j` `k`, `gg` `G`, `f t F T ; ,`, `x`, `d`, `dd`, `u`, `v` `V` and what they do in VISUAL. A key with no row has no budget; CONTRIBUTING.md asks that a change to a key adds it.
 
 A key that does something only in one place is pressed there. Each key is warmed up (15 presses), then pressed 100 times, or fewer where the key walks one way along a short list (`j` `k` in the thread: 40; `w` `b` in the draft with mentions: 60). A row of two keys (`gg` and `G`, `Ctrl-e` and `Ctrl-y`) alternates them, so the cursor comes back to where it started; `j`, `k`, `w` and `b` walk one way from the same end in every attempt.
 

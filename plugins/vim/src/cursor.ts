@@ -16,10 +16,12 @@ import {
   focusEl,
   inView,
   rowsOf,
+  settle,
+  timelineOf,
 } from "./dom";
 import { enterBox } from "./box";
 import * as perf from "./perf";
-import { state } from "./state";
+import { keyEpoch, state } from "./state";
 import { CURSOR_ATTR, STATIC_CSS } from "./theme";
 
 type Pane = "main" | "side";
@@ -149,10 +151,44 @@ export const jumpEdge = (end: boolean) => {
   const scroller = activeTimeline();
   if (!scroller) return;
   scroller.scrollTop = end ? scroller.scrollHeight : 0;
-  afterLayout(() => {
-    const row = nearestVisible(scroller, end);
-    if (row) selectRow(row);
-  });
+  afterLayout(() => markEdge(scroller, end));
+};
+const markEdge = (scroller: HTMLElement, end: boolean) => {
+  const row = nearestVisible(scroller, end);
+  if (row) selectRow(row);
+};
+// A pane opened on purpose (a thread, with `o`) lands at its end: scrolled to the bottom, the newest message marked. G does the same
+// in one step. A thread is not all there at once: the host shows it behind a loader (aria-busy) until its first page, and goes on
+// bringing rows in after that (the host follows the bottom while it does, a virtual list moves it as it measures rows). So the
+// landing follows the end for as long as the pane keeps changing: each frame it checks the pane is at the bottom and the newest
+// row that shows is the one marked, until nothing has changed for LANDED_MS (at most LANDING_MS in all). A key pressed meanwhile
+// has moved the user on: stop at once, and mark nothing over what that key did. Resolves false then, true when it ran its course.
+const LANDED_MS = 600;
+const LANDING_MS = 3000;
+export const landAtEnd = async (pane: Pane) => {
+  const epoch = keyEpoch;
+  let mine: string | undefined; // the row this landing marked last
+  let height = -1;
+  let changed = performance.now();
+  let moved = false;
+  await settle(() => {
+    if (keyEpoch !== epoch || (cursors[pane] && cursors[pane] !== mine)) return (moved = true);
+    const scroller = timelineOf(pane);
+    if (!scroller || scroller.getAttribute("aria-busy") === "true") return false;
+    const now = performance.now();
+    if (!atBottom(scroller)) {
+      scroller.scrollTop = scroller.scrollHeight;
+      changed = now;
+    } else if (scroller.scrollHeight !== height || !mine) {
+      height = scroller.scrollHeight;
+      const row = nearestVisible(scroller, true);
+      if (row && row.dataset.messageId !== cursors[pane]) selectRow(row);
+      mine = cursors[pane];
+      changed = now;
+    }
+    return now - changed > LANDED_MS;
+  }, LANDING_MS);
+  return !moved;
 };
 // After the view moved: a cursor that is still in it stays; one that left goes to the nearest row that is in it
 // (the first when the content went up, the last when it went down), as vim keeps its cursor in the window.

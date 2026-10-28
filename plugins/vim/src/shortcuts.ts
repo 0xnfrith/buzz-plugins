@@ -72,7 +72,7 @@ export const registerShortcuts = () => {
   key("communities", "Open the community switcher", { key: "C", shift: true }, () => void openCommunityPicker());
   key(
     "open-thread",
-    "Open the thread of the message under the cursor (after z: show the thread pane)",
+    "Open the thread of the message under the cursor, at its end (after z: show the thread pane)",
     { key: "o" },
     afterG("o", () => (state.operator === "z" ? showPane() : void openThread())),
   );

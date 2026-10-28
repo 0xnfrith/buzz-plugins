@@ -5,8 +5,8 @@
 // control the way a pointer would.
 import { PANE_HANDLE, PANE_TOGGLE, SCROLLER } from "./constants";
 import { ctx } from "./ctx";
-import { clearCursor, cursorRow, cursors, paintCursor } from "./cursor";
-import { afterLayout, nextFrame, settle, timelineOf, visible } from "./dom";
+import { clearCursor, cursorRow, cursors, paintCursor, selectRow } from "./cursor";
+import { afterLayout, nextFrame, rowsOf, settle, timelineOf, visible } from "./dom";
 import { currentChannelId } from "./box";
 import { available, goRegion } from "./panes";
 import { clearPending, disposed, keyEpoch, state, takeCount } from "./state";
@@ -43,6 +43,22 @@ const threadRootOf = (messageId: string) => {
     return messageId;
   }
 };
+// A thread placed in the main pane is a tab over the channel's list, and the two share one cursor. Opening lands that cursor on the
+// thread's newest message, so the message the thread was opened from is kept here, with the tab, and gets the cursor back when the
+// tab is closed.
+let beneath: { id: string; tab: HTMLElement } | undefined;
+const cursorBack = () => {
+  if (!beneath || visible(beneath.tab)) return;
+  const { id } = beneath;
+  beneath = undefined;
+  const scroller = timelineOf("main");
+  const rows = scroller ? rowsOf(scroller) : [];
+  if (rows.some((row) => row.dataset.messageId === cursors.main)) return; // the cursor has been put somewhere in the list since
+  clearCursor("main");
+  const row = rows.find((row) => row.dataset.messageId === id);
+  if (row) selectRow(row, false);
+  paintCursor();
+};
 export const openThread = async () => {
   clearPending();
   // Pin the message now, as rowControl does. Only the message list has a cursor to open.
@@ -77,7 +93,14 @@ export const openThread = async () => {
     () => (timelineOf("side") ? "side" : timelineOf("main") !== before ? "main" : undefined),
     3000,
   );
-  if (region && keyEpoch === epoch) goRegion(region);
+  if (!region || keyEpoch !== epoch) return;
+  if (region === "main") {
+    const tab = timelineOf("main");
+    beneath = tab ? { id: messageId, tab } : undefined;
+    clearCursor("main");
+    paintCursor();
+  }
+  goRegion(region, true); // the thread lands at its end
 };
 // Enter is only ours while the message list itself has focus: on a button, a link or a tab it
 // keeps its native meaning.
@@ -87,7 +110,11 @@ export const enterOpens = () => {
 };
 // After a close or a hide, put focus back where j and k work. The host leaves it on a header
 // button (or nowhere) once the pane it was in is gone.
-const refocusAfter = (region: Region) => afterLayout(() => goRegion(available(region) ? region : "main"));
+const refocusAfter = (region: Region) =>
+  afterLayout(() => {
+    cursorBack();
+    goRegion(available(region) ? region : "main");
+  });
 // [DOM] The same window event the native Close Tab menu sends (Cmd+W). The host closes the
 // active tab of the pane that has focus, or of the thread pane when focus is in the message
 // list, and marks the event handled when it did.

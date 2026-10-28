@@ -42,7 +42,7 @@
 // in the middle.
 //
 // THE SURFACES. The channel list, the channel's message list, a thread's list, the message box (text, and mentions),
-// the Reminders, Agents and Workflows pages, and the Settings dialog. Keys: j k h l gg G Ctrl-e Ctrl-y w b 0 $ and counts
+// the Reminders, Agents and Workflows pages, and the Settings dialog. Keys: j k h l o gg G Ctrl-e Ctrl-y w b 0 $ and counts
 // (5j, 5k, 5w, 5b), where each does something: not every key of the plugin is pressed (README.md lists what is not). On the
 // three pages j k 5j 5k G gg find nothing to move and are control rows; h and l are not pressed there, where `l` opens the
 // focused channel (it leaves the page) and `h` opens the community switcher. A new key goes into the rows of each surface
@@ -113,6 +113,7 @@ const probe = async (page) => {
       for (const el of document.querySelectorAll("[data-message-scroller], #settings-content, nav[aria-label='Settings sections'], [data-budget-scroller]")) text += `|${Math.round(el.scrollTop)}`;
       return text;
     };
+    window.__fingerprint = fingerprint;
     addEventListener(
       "keydown",
       (event) => {
@@ -228,6 +229,12 @@ const attemptRow = async (page, cdp, surface, id, row, checked) => {
       if (TRACE && i === WARM && index === 0) await page.evaluate(() => window.__vimPerf.reset());
       const before = i >= WARM ? await counters(cdp) : null;
       const sample = await repeat(page, part.seq ?? [part.key]);
+      // A key whose work ends after the frames measured (a thread opening, then landing) says when it has, outside the measured time:
+      // the page is read again then, so that `moved` sees what the key did, and the next press finds the page at rest.
+      if (part.after) {
+        await part.after(page);
+        sample.post = await page.evaluate(() => window.__fingerprint());
+      }
       if (i >= WARM) {
         if (sample.pre !== sample.post) moved[index]++;
         if (sample.on) onSurface[index]++;
@@ -473,7 +480,13 @@ const loadHistory = async (page) => {
   console.log(`history loaded: messages ${oldest} to ${newest} (${newest - oldest + 1}) in a list ${scrollHeight} px high, ${Math.round(scrollHeight / clientHeight)} screens`);
 };
 const IN_MAIN_LIST = `a.id === "main-content" || a.closest("[data-main-workspace] [data-message-scroller], [data-solo-focus-pane] [data-message-scroller]")`;
-surface("list", "message list (2,400 messages loaded)", async ({ page, rows }) => {
+// A thread beside the channel, for the row that opens one (o): the frames the key is measured in come first, then this waits for the rest of
+// the work, outside the measured time. The plugin has the keys in the pane and has marked a message there once the thread has opened and landed.
+const threadLanded = (page) =>
+  page.waitForFunction(() => document.documentElement.dataset.vimRegion === "side" && !!document.querySelector('[data-panel-workspace] [data-message-scroller] [data-vim-cursor="side"]'), null, { timeout: 10_000 });
+surface("list", "message list (2,400 messages loaded)", async ({ page, app, rows }) => {
+  // The thread of the message the cursor is on, opened by the page itself the way the plugin's `o` opens it (focus stays where it is).
+  const OPEN_THREAD = `const id = document.querySelector('[data-vim-cursor="main"]').dataset.messageId; window.fixtureNavigation.open({ version: 1, kind: "conversation", channelId: "alpha", messageId: id, threadRootId: id, scope: { viewer: ${JSON.stringify(app.viewer)}, communityOrigin: "https://primary.example" } }, { focus: "preserve" })`;
   await expect(bar(page)).toContainText("NORMAL");
   await loadHistory(page);
   await page.keyboard.press("Shift+g");
@@ -481,6 +494,29 @@ surface("list", "message list (2,400 messages loaded)", async ({ page, rows }) =
   await rows([
     ...moves(100, MAIN_LIST, 100, true),
     { pair: [{ key: "h" }, { key: "l" }], crosses: true }, // to the channel list and back
+    // o opens the thread of the message under the cursor beside the channel and lands in it, and h goes back. The thread is already open
+    // (`before` opens it once): the host then only brings its tab forward, and what is measured is the key, not the app drawing a new pane.
+    // The cursor is on the newest message (G first); this data gives it no replies, so the thread is that one message.
+    {
+      pair: [{ key: "o", after: threadLanded }, { key: "h: back from the thread", seq: ["h"] }],
+      crosses: true,
+      before: async (page) => {
+        await press(page, "Shift+g");
+        await page.waitForTimeout(400);
+        await press(page, "o");
+        await threadLanded(page);
+        await press(page, "h");
+        await page.waitForTimeout(400);
+      },
+    },
+    // The control for `o`: the page asks the host to open the same thread (both keys do; it is open already, so the host brings its tab forward).
+    {
+      pair: [
+        { key: "control: open the thread (the page itself)", seq: ["F9"], control: true, after: (page) => page.waitForTimeout(300) },
+        { key: "control: open the thread again (the page itself)", seq: ["F10"], control: true, after: (page) => page.waitForTimeout(300) },
+      ],
+      before: controls(OPEN_THREAD, OPEN_THREAD),
+    },
     control("focus a channel row (the page itself)", "focus the message list (the page itself)", `${CHANNEL_ROWS}[0].focus({ preventScroll: true })`, `${MAIN_LIST}.focus({ preventScroll: true })`),
     // Controls, not plugin keys: a key nothing is bound to (the cost of an event and a frame with no handler work to speak of),
     // and the host's own scrolling by the arrow keys. They are the floor the rows above are read against.
