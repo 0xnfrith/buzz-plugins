@@ -868,11 +868,12 @@ var available = (region) => region === "sidebar" ? channelRows().length > 0 : !!
 var ensureCursor = async (pane, atEnd) => {
 	if (cursors[pane]) return;
 	if (atEnd && await landAtEnd(pane)) return;
+	const epoch = keyEpoch;
 	const row = await settle(() => {
 		const scroller = timelineOf(pane);
 		return scroller && nearestVisible(scroller, pane === "main");
 	}, 1e3);
-	if (row && !cursors[pane] && !disposed) selectRow(row);
+	if (row && !cursors[pane] && !disposed && (!atEnd || keyEpoch === epoch)) selectRow(row);
 };
 var goRegion = (region, atEnd = false) => {
 	const was = document.activeElement;

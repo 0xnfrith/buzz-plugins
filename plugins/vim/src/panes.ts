@@ -14,7 +14,7 @@ import {
   timelineOf,
 } from "./dom";
 import { openCommunityPicker } from "./communities";
-import { disposed, set, state, takeCount } from "./state";
+import { disposed, keyEpoch, set, state, takeCount } from "./state";
 import type { Region } from "./types";
 
 // [API] Open a channel through ctx.navigation, asking the host not to move focus into the
@@ -45,15 +45,18 @@ export const available = (region: Region) => (region === "sidebar" ? channelRows
 // screen in a thread and the newest in the channel. Without this the pane you arrive in would
 // show nothing at all until the first j or k. A pane that is opened on purpose (`o`) lands at its
 // end instead: scrolled to the bottom, the newest message marked. A key pressed while it lands
-// ends the landing, and the pane then gets the mark it would have had.
+// ends the landing, and the pane then gets the mark it would have had, unless another key comes
+// before the pane has a row to mark: a thread closed (q) and opened again at once has a new
+// list, which that landing's mark would take, and the new landing would find its pane taken.
 const ensureCursor = async (pane: "main" | "side", atEnd: boolean) => {
   if (cursors[pane]) return;
   if (atEnd && (await landAtEnd(pane))) return;
+  const epoch = keyEpoch;
   const row = await settle(() => {
     const scroller = timelineOf(pane);
     return scroller && nearestVisible(scroller, pane === "main");
   }, 1000);
-  if (row && !cursors[pane] && !disposed) selectRow(row);
+  if (row && !cursors[pane] && !disposed && (!atEnd || keyEpoch === epoch)) selectRow(row);
 };
 export const goRegion = (region: Region, atEnd = false) => {
   const was = document.activeElement;

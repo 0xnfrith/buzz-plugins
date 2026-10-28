@@ -1016,6 +1016,24 @@ test.describe("o opens a thread at its end", () => {
     expect(await top(list)).toBe(at);
   });
 
+  test("q and o again at once: the second landing is not taken by the first's mark", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await press(page, "o");
+    await expect(threadPane(page)).toBeVisible();
+    await press(page, "q"); // while the thread still lands
+    await expect(threadPane(page)).toHaveCount(0);
+    await expect(bar(page)).toContainText("main");
+    await press(page, "o");
+    await expect(bar(page)).toContainText("side");
+    const list = sideScroller(page);
+    await expect.poll(() => cursor(page)).toBe(app.exact.target.id);
+    await expect.poll(() => atEnd(list)).toBe(true);
+    await page.waitForTimeout(1500);
+    expect(await cursor(page)).toBe(app.exact.target.id);
+    expect(await atEnd(list)).toBe(true);
+  });
+
   test("with threads placed in the main pane: the tab is at its end with the newest reply under the cursor, and q gives the cursor back to the message", async ({ page, app }) => {
     await page.addInitScript(() => localStorage.setItem("buzz-thread-placement.v1", "main"));
     await open(page, app);
