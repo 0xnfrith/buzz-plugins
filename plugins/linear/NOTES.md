@@ -44,7 +44,7 @@ All tagged `[DOM]` or noted in the code.
 
 ## What was verified, and how
 
-Run against the code in this folder:
+Run against the code in this folder. CI (`.github/workflows/linear-tests.yml`) runs only the type check and the unit tests; everything else below is run by hand.
 
 - `pnpm test` (vitest, 62 tests): the client (headers, error kinds, no key in any error text), the store (load, paging, filters, optimistic move and rollback, refresh rules, stale answers dropped, blocked states, no request for a move into Duplicate), the column order and the progress count with the Duplicate type and an unknown one, the page icon and its mask rule, and every GraphQL document against Linear's schema.
 - `test/run.sh <block/buzz-app checkout>`: 29 browser tests in Buzz's own production web build (headless Chromium, fixture relay), with the plugin registered the way an installed one is. They cover the columns and their order (Duplicate last), drag (including Escape, a refused move and a drop on Duplicate), the details panel and its keyboard route (Duplicate greyed out in the Status menu), the connect-and-save flow, a refused and a revoked key, the key being absent from the page, the console and the network after saving, filters and remembered choices, paging, refresh by timer, rate limit, lost connection, light and dark (and the page icon's colour in the page list in both), a narrow window, and the dispose and re-apply count of listeners and styles across leaving the page and turning the plugin off and on three times.

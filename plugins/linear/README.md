@@ -45,4 +45,4 @@ Taken in the Buzz desktop app on Linux (WebKitGTK), with the plugin's test doubl
 
 ---
 
-Contributor notes: [`NOTES.md`](NOTES.md) (what works through the plugin API, how it was tested, what was not). Build with `pnpm install && pnpm build` (writes `plugin.js` next to `manifest.json`; the built file is committed because Buzz never runs a build). Unit tests: `pnpm test`. Tests in Buzz's web build: `test/run.sh <block/buzz-app checkout>`.
+Contributor notes: [`NOTES.md`](NOTES.md) (what works through the plugin API, how it was tested, what was not). Build with `pnpm install && pnpm build` (writes `plugin.js` next to `manifest.json`; the built file is committed because Buzz never runs a build). Unit tests: `pnpm test` (with the type check, this is all CI runs: `.github/workflows/linear-tests.yml`). Tests in Buzz's web build: `test/run.sh <block/buzz-app checkout>`; CI does not run them, so run them by hand before a change is merged.
