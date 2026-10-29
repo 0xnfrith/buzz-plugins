@@ -107,7 +107,7 @@ test("apply registers a sidebar page and a settings card, and opens the browser 
   apply({ react: React, browser: { available: true, View }, pages: { register: (p) => pages.push(p) }, settingsCards: { register: (c) => cards.push(c) }, effect: (f) => cleanups.push(f()) });
   assert.equal(pages[0].title, "Artifacts");
   assert.equal(pages[0].primary, true);
-  assert.match(pages[0].icon, /^data:image\/svg\+xml/);
+  assert.equal(pages[0].icon, undefined, "no icon, so the host draws its own in the theme colour");
   assert.equal(cards[0].title, "Artifacts");
   cleanups.forEach((c) => c());
   // Open the saved page: render with a stubbed useState holding the chosen id.
@@ -536,7 +536,7 @@ test("each pinned page registers as its own primary top-bar page, named for the 
     assert.equal(page.primary, true);
     assert.equal(page.placement, "topbar");
     assert.equal(page.layout, "workspace");
-    assert.match(page.icon, /^data:image\/svg\+xml/);
+    assert.equal(page.icon, undefined, "no icon, so the host draws its own in the theme colour");
     assert.equal(typeof page.component, "function");
   }
   await settle();

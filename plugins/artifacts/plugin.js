@@ -176,12 +176,6 @@ export function createLinkStore(storage) {
   };
 }
 
-const ICON =
-  "data:image/svg+xml;utf8," +
-  encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/><path d="M7 6.5h.01M10 6.5h.01"/></svg>',
-  );
-
 // Colours come from the host's theme tokens, each with a fallback.
 const CSS = `
 .megatech-artifacts{display:flex;flex-direction:column;height:100%;min-height:0;color:var(--text-standard,inherit)}
@@ -339,7 +333,9 @@ export function apply(ctx) {
     );
   }
 
-  ctx.pages.register({ id: "artifacts", title: "Artifacts", primary: true, layout: "workspace", icon: ICON, component: ArtifactsPage });
+  // No `icon` on any page: the host draws an `icon` as an <img>, which cannot take the theme's colour, and with none it draws its own
+  // icon in the theme colour, like its other entries.
+  ctx.pages.register({ id: "artifacts", title: "Artifacts", primary: true, layout: "workspace", component: ArtifactsPage });
   ctx.settingsCards.register({ id: "settings", title: "Artifacts", group: "Plugins", component: ArtifactsSettings });
 
   // One top-bar page per pinned saved page. `pages.register` returns no disposer and a registration lasts as long as its
@@ -361,7 +357,7 @@ export function apply(ctx) {
       const fiber = ctx.plugin({
         name: id,
         inject: ["pages"],
-        apply: (scope) => scope.pages.register({ id, title, primary: true, placement: "topbar", layout: "workspace", icon: ICON, component: pinnedPage(linkId) }),
+        apply: (scope) => scope.pages.register({ id, title, primary: true, placement: "topbar", layout: "workspace", component: pinnedPage(linkId) }),
       });
       live.set(linkId, { title, fiber });
     } catch (error) {

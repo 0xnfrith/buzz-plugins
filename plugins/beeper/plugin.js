@@ -879,8 +879,13 @@ function mediaLabel(message) {
 	return name ? `${base}: ${name}` : base;
 }
 // src/ui/icons.tsx
-/** The page's entry in navigation and search: a speech bubble. */
-var PAGE_ICON = "data:image/svg+xml," + encodeURIComponent("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path d=\"M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H11l-5 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z\" fill=\"#6366f1\"/><rect x=\"6\" y=\"8\" width=\"12\" height=\"2\" rx=\"1\" fill=\"#fff\"/><rect x=\"6\" y=\"12\" width=\"8\" height=\"2\" rx=\"1\" fill=\"#fff\"/></svg>");
+/**
+* The page's entry in navigation and search: a speech bubble with two lines cut out of it. It is one
+* shape in one colour on purpose: Buzz draws a page's icon as an `<img>`, which cannot take the
+* theme's colour, so `CSS` (ui/styles) paints this shape in the entry's own text colour instead
+* and uses this image only as the mask.
+*/
+var PAGE_ICON = "data:image/svg+xml," + encodeURIComponent("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill-rule=\"evenodd\" d=\"M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H11l-5 4v-4H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM7 8h10a1 1 0 0 1 0 2H7a1 1 0 0 1 0-2zM7 12h6a1 1 0 0 1 0 2H7a1 1 0 0 1 0-2z\"/></svg>");
 /**
 * A network's badge: its initials on a colour taken from its name. Beeper's API gives a network as
 * a display name only, and the networks' own logos are theirs, so none is bundled.
@@ -1696,6 +1701,16 @@ function createSettingsCard({ config, client }) {
 }
 // src/ui/styles.ts
 var CSS$1 = `
+/* The page's entry in navigation and search. The host draws its icon as an <img> of PAGE_ICON, which
+   cannot follow the theme, so paint the same shape in the entry's text colour (a mask) and move the
+   image's own pixels out of its box. If a later host draws the icon some other way this stops
+   matching and the icon is simply the plain black one. */
+img[src="${PAGE_ICON}"] {
+  background-color: currentColor;
+  -webkit-mask: url("${PAGE_ICON}") center / contain no-repeat;
+  mask: url("${PAGE_ICON}") center / contain no-repeat;
+  object-position: 999px 0;
+}
 .mtb-root {
   --mtb-accent: var(--accent-9, #3e63dd);
   --mtb-ink: var(--text-standard, #e9eef4);
