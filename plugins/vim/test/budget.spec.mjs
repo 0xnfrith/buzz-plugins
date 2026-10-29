@@ -348,7 +348,7 @@ const measureRow = async (page, cdp, surface, row, rowsOfSurface, id, defined, c
   }
 };
 
-const SURFACE_IDS = ["sidebar", "list", "thread", "box-text", "box-mentions", "reminders", "agents", "workflows", "settings"];
+const SURFACE_IDS = ["sidebar", "list", "thread", "longthread", "box-text", "box-mentions", "reminders", "agents", "workflows", "settings"];
 for (const name of Object.keys(BASELINE))
   if (!SURFACE_IDS.some((id) => name.startsWith(`${id} `))) throw new Error(`budget.baseline.json: "${name}" does not start with the id of a surface (${SURFACE_IDS.join(", ")})`);
 const wanted = (id) => ONLY.length === 0 || ONLY.includes(id);
@@ -488,6 +488,17 @@ const threadLanded = (page) =>
 surface("list", "message list (2,400 messages loaded)", async ({ page, app, rows }) => {
   // The thread of the message the cursor is on, opened by the page itself the way the plugin's `o` opens it (focus stays where it is).
   const OPEN_THREAD = `const id = document.querySelector('[data-vim-cursor="main"]').dataset.messageId; window.fixtureNavigation.open({ version: 1, kind: "conversation", channelId: "alpha", messageId: id, threadRootId: id, scope: { viewer: ${JSON.stringify(app.viewer)}, communityOrigin: "https://primary.example" } }, { focus: "preserve" })`;
+  // What q does: the window event of the native Close Tab menu, which closes the thread beside the channel when the list has the focus.
+  const CLOSE_THREAD = `window.dispatchEvent(new Event("buzz:close-active-tab", { cancelable: true }))`;
+  // The thread of the newest message (G first), opened once so that the host only brings its tab forward afterwards; focus ends in the list.
+  const openNewestOnce = async (page) => {
+    await press(page, "Shift+g");
+    await page.waitForTimeout(400);
+    await press(page, "o");
+    await threadLanded(page);
+    await press(page, "h");
+    await page.waitForTimeout(400);
+  };
   await expect(bar(page)).toContainText("NORMAL");
   await loadHistory(page);
   await page.keyboard.press("Shift+g");
@@ -501,14 +512,7 @@ surface("list", "message list (2,400 messages loaded)", async ({ page, app, rows
     {
       pair: [{ key: "o", after: threadLanded }, { key: "h: back from the thread", seq: ["h"] }],
       crosses: true,
-      before: async (page) => {
-        await press(page, "Shift+g");
-        await page.waitForTimeout(400);
-        await press(page, "o");
-        await threadLanded(page);
-        await press(page, "h");
-        await page.waitForTimeout(400);
-      },
+      before: openNewestOnce,
     },
     // The control for `o`: the page asks the host to open the same thread (both keys do; it is open already, so the host brings its tab forward).
     {
@@ -517,6 +521,32 @@ surface("list", "message list (2,400 messages loaded)", async ({ page, app, rows
         { key: "control: open the thread again (the page itself)", seq: ["F10"], control: true, after: (page) => page.waitForTimeout(300) },
       ],
       before: controls(OPEN_THREAD, OPEN_THREAD),
+    },
+    // Enter is the same handler as o, in the same place.
+    {
+      pair: [{ key: "Enter", after: threadLanded }, { key: "h: back from the thread (after Enter)", seq: ["h"] }],
+      crosses: true,
+      before: openNewestOnce,
+    },
+    // q closes the thread beside the channel (and runs the hand-back for a thread over it). The page opens the thread again after each q, which
+    // is not the key's work (a control row), so that the next q has a thread to close.
+    {
+      pair: [
+        { key: "q: close the thread", seq: ["q"] },
+        { key: "control: open the thread (the page itself, after q)", seq: ["F10"], control: true, after: (page) => page.waitForTimeout(300) },
+      ],
+      before: async (page) => {
+        await controls(CLOSE_THREAD, OPEN_THREAD)(page);
+        await openNewestOnce(page);
+      },
+    },
+    // The control for q: the page sends the window event that q sends (the native Close Tab menu's), and opens the thread again.
+    {
+      pair: [
+        { key: "control: close the thread (the page itself)", seq: ["F9"], control: true, after: (page) => page.waitForTimeout(300) },
+        { key: "control: open the thread again (the page itself, after the close)", seq: ["F10"], control: true, after: (page) => page.waitForTimeout(300) },
+      ],
+      before: controls(CLOSE_THREAD, OPEN_THREAD),
     },
     control("focus a channel row (the page itself)", "focus the message list (the page itself)", `${CHANNEL_ROWS}[0].focus({ preventScroll: true })`, `${MAIN_LIST}.focus({ preventScroll: true })`),
     // Controls, not plugin keys: a key nothing is bound to (the cost of an event and a frame with no handler work to speak of),
@@ -569,6 +599,45 @@ surface("thread", "thread pane (80 replies)", async ({ page, app, rows }) => {
     control("focus the channel's list (the page itself)", "focus the thread's list (the page itself)", `${MAIN_LIST}.focus({ preventScroll: true })`, `${SIDE_LIST}.focus({ preventScroll: true })`),
   ]);
 }, `document.documentElement.dataset.vimRegion === "side" && !a.isContentEditable`); // the keys are in the thread's pane (the plugin's region), not in its reply box
+
+// o on the message that has the long thread: the thread's pane is open already, and the key brings its tab forward and lands it at its end,
+// scrolling a list many screens high, which the `o` row of the message list (a thread of one message) does not. It needs a channel whose list
+// has that message in it: the harness puts it third from the top of a short one (the list of 2,400 messages holds only the newest).
+test.describe("a channel with a long thread", () => {
+  test.use({ historyCounts: { alpha: 12, beta: 3 } });
+  surface("longthread", "message list of a channel with a long thread (12 messages, one with 80 replies)", async ({ page, app, rows }) => {
+    const OPEN_THREAD = `const id = document.querySelector('[data-vim-cursor="main"]').dataset.messageId; window.fixtureNavigation.open({ version: 1, kind: "conversation", channelId: "alpha", messageId: id, threadRootId: id, scope: { viewer: ${JSON.stringify(app.viewer)}, communityOrigin: "https://primary.example" } }, { focus: "preserve" })`;
+    const cursorOn = () => page.evaluate(() => document.querySelector('[data-vim-cursor="main"]')?.dataset.messageId);
+    await expect(bar(page)).toContainText("NORMAL");
+    await page.keyboard.press("g");
+    await page.keyboard.press("g");
+    await page.waitForTimeout(500);
+    for (let i = 0; i < 6 && (await cursorOn()) !== app.exact.root.id; i++) {
+      await page.keyboard.press("j");
+      await page.waitForTimeout(150);
+    }
+    expect(await cursorOn(), "the cursor is on the message that has the 80-reply thread").toBe(app.exact.root.id);
+    await rows([
+      {
+        pair: [{ key: "o: the 80-reply thread", seq: ["o"], after: threadLanded }, { key: "h: back from the 80-reply thread", seq: ["h"] }],
+        crosses: true,
+        before: async (page) => {
+          await press(page, "o"); // opens it once, so that the host only brings its tab forward afterwards
+          await threadLanded(page);
+          await press(page, "h");
+          await page.waitForTimeout(400);
+        },
+      },
+      {
+        pair: [
+          { key: "control: open the 80-reply thread (the page itself)", seq: ["F9"], control: true, after: (page) => page.waitForTimeout(300) },
+          { key: "control: open the 80-reply thread again (the page itself)", seq: ["F10"], control: true, after: (page) => page.waitForTimeout(300) },
+        ],
+        before: controls(OPEN_THREAD, OPEN_THREAD),
+      },
+    ]);
+  }, IN_MAIN_LIST);
+});
 
 // A draft is typed into the box in one insertion (no key events), mentions are picked from the @ list.
 const pickMention = async (page, count) => {
