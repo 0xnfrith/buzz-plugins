@@ -43,6 +43,16 @@ Never hard-code a colour. Use the CSS custom properties the host sets on `<html>
 
 `color-mix(in srgb, var(--accent-9) 45%, transparent)` gives a faint version of a token. Give each `var()` a fallback in case a later host drops the token. For cards and dialogs, prefer the host's own classes (`ui-card`) over styling them yourself.
 
+### When a plugin carries a look of its own
+
+One exception to "never hard-code a colour": a plugin that has a look of its own (a brand) may add its own accent colours, on these terms.
+
+- **Surfaces, text, muted text, borders and focus still come from the host's tokens**, each with a fallback. The accents sit on top of them; they do not replace them.
+- **The accents are named custom properties on the plugin's own root element**, never on `<html>` or `<body>`, so nothing outside the plugin changes. Name every class and variable after the plugin.
+- **Check both themes.** A brand colour that is faint on white (bright cyan is 1.8:1) must not carry text or a line that means something. Derive a darker ink for light: at least 4.5:1 for text, and at least 3:1 for a line, an input's edge, a selected or default state, and the focus ring. Keep the bright colour for fills and for decoration that nothing depends on. Say in the README which values are derived.
+- **Glows and shadows suit dark only.** Leave them out in light.
+- **Fonts cannot be loaded** (§4), so a plugin that wants one embeds it in `plugin.js` as a data URL. Do this only for a font whose licence allows redistribution, keep its licence text and copyright notice in a `licenses/` folder beside the plugin, check whether the licence reserves a font name (a subset can count as a modified version), say in the README how much the file grows, and always end the font stack with system fonts so the plugin still reads without the embedded one.
+
 ## 3. Clean up everything in `ctx.effect`
 
 Update in Settings disposes the old revision and applies the new one in the same page. Anything the old revision left behind keeps running next to the new one. So:
