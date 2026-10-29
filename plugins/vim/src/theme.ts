@@ -84,7 +84,7 @@ const FOLD_CSS =
   `${FOLD}>:last-child{display:none}` +
   `${FOLD}>:first-child::after{display:none}` +
   `${FOLD}::after{content:attr(${FOLD_ATTR});display:flex;align-items:center;min-height:var(--size-control-sm,2rem);` +
-  `margin-inline-start:calc(var(--size-control-sm,2rem) + var(--space-2,.5rem));padding-inline:var(--space-4,1rem);` +
+  `margin-inline-start:calc(var(--size-control-sm,2rem) + var(--space-2,.5rem));padding-inline:var(--space-4,1rem);cursor:pointer;` +
   `color:var(--text-standard,inherit);font-size:var(--text-body-sm,.875rem);line-height:var(--text-body-sm--line-height,1.43)}`;
 
 // The whole stylesheet, written once when the plugin is applied.

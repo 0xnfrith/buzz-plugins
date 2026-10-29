@@ -11,6 +11,7 @@ import { onSettingsKey } from "./settings-dialog";
 import { bar, renderBar, resetBar } from "./status";
 import { dispose, onAnyKey, state, subscribe } from "./state";
 import { onEscapeCapture, onPointerDown } from "./escape";
+import { onFoldClick } from "./threads";
 
 export const mount = () => {
   resetBar();
@@ -40,6 +41,7 @@ export const mount = () => {
   listen("keydown", "onAnyKey", onAnyKey);
   listen("keydown", "onHelpKey", onHelpKey);
   listen("pointerdown", "onPointerDown", onPointerDown);
+  listen("click", "onFoldClick", onFoldClick);
   // The performance trace follows its setting (the Vim mode page).
   let traced = state.perf;
   perf.start(traced);

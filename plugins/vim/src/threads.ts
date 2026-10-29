@@ -135,28 +135,52 @@ export const openThread = async () => {
 // leans on the host's markup, so it is made to fail safe: where that markup is not found, or the mark does not hide the replies, `o`
 // does nothing to an open branch (it still opens a closed one), and it never throws. On a message with no replies of its own (and on
 // the thread's first message) `o` does nothing.
-const pillCount = (pill: Element) => Number(/\d+/.exec(pill.getAttribute("aria-label") ?? "")?.[0] ?? 0);
+const numberIn = (text: string | null) => Number(/\d+/.exec(text ?? "")?.[0] ?? 0);
+const FOLDED = `[${FOLD_ATTR}]`;
+// The replies under a branch's message, at every depth: the rows the host drew, the replies that a branch inside this one still keeps
+// behind its pill, and the replies of a branch inside this one that is folded itself. A folded branch has its rows out of the page, and
+// the pills inside it, and says how many it hides in its mark, which has counted both (so its mark is added, and what is inside it is not).
+const replyCount = (panel: Element) => {
+  const marks = [...panel.querySelectorAll(FOLDED)].filter((fold) => !fold.parentElement?.closest(FOLDED));
+  const pills = [...panel.querySelectorAll(BRANCH_PILL)].filter((pill) => !pill.closest(FOLDED));
+  return (
+    rowsOf(panel).length +
+    pills.reduce((sum, pill) => sum + numberIn(pill.getAttribute("aria-label")), 0) +
+    marks.reduce((sum, fold) => sum + numberIn(fold.getAttribute(FOLD_ATTR)), 0)
+  );
+};
 const foldBranch = (branch: HTMLElement, row: HTMLElement) => {
   const panel = branch.lastElementChild;
   if (!panel || branch.getAttribute("data-open") !== "true") return;
-  // The replies, at every depth: the rows the host drew, and the replies that a branch inside this one still keeps behind its pill.
-  const count = rowsOf(panel).length + [...panel.querySelectorAll(BRANCH_PILL)].reduce((sum, pill) => sum + pillCount(pill), 0);
+  const count = replyCount(panel);
   if (!count) return;
   branch.setAttribute(FOLD_ATTR, `${count} ${count === 1 ? "reply" : "replies"}`);
   // The stylesheet takes the replies out of the page. If it did not, the markup is not the one it was written for: leave the branch open.
   if (visible(panel)) branch.removeAttribute(FOLD_ATTR);
   else row.scrollIntoView({ block: "nearest" });
 };
+// The pill that opens the replies of the message `row` shows: the host's branch wrapper (marked data-depth) holds the message first and
+// the pill's own wrapper after it. Where the host does not mark its branches that way, the same shape finds it: the nearest ancestor of
+// the row that holds the row in its first child and has a pill of its own. (There an open branch is not found, and `o` leaves it be.)
+const pillOf = (row: HTMLElement, scroller: Element, branch: Element | null | undefined) => {
+  const own = `:scope > * > ${BRANCH_PILL}`;
+  if (branch) return branch.querySelector<HTMLElement>(own);
+  for (let el = row.parentElement; el && el !== scroller; el = el.parentElement) {
+    const pill = el.firstElementChild?.contains(row) ? el.querySelector<HTMLElement>(own) : null;
+    if (pill) return pill;
+  }
+  return null;
+};
 const toggleBranch = async () => {
   clearPending();
   try {
     const scroller = activeTimeline();
     const row = cursorRow();
-    const branch = row?.closest<HTMLElement>(BRANCH);
-    if (!scroller || !row || !branch) return;
-    if (branch.hasAttribute(FOLD_ATTR)) return branch.removeAttribute(FOLD_ATTR);
-    const pill = branch.querySelector<HTMLElement>(`:scope > * > ${BRANCH_PILL}`);
-    if (!pill) return foldBranch(branch, row);
+    if (!scroller || !row) return;
+    const branch = row.closest<HTMLElement>(BRANCH);
+    if (branch?.hasAttribute(FOLD_ATTR)) return branch.removeAttribute(FOLD_ATTR);
+    const pill = pillOf(row, scroller, branch);
+    if (!pill) return branch ? foldBranch(branch, row) : undefined;
     const epoch = keyEpoch;
     pill.click();
     // The host moves the focus to the first reply it shows: back to the message list, with the cursor where it was.
@@ -168,6 +192,14 @@ const toggleBranch = async () => {
   } catch {
     // Nothing the host draws is worth an error in a key handler: the key does nothing.
   }
+};
+// A folded branch shows its count in a pseudo-element, which a pointer cannot press, so a click on the branch itself in the band the count
+// fills at its foot opens it again. One listener of the plugin's, and no element of its own on the page.
+export const onFoldClick = (event: MouseEvent) => {
+  const branch = event.target;
+  if (!(branch instanceof HTMLElement) || !branch.hasAttribute(FOLD_ATTR)) return;
+  const band = parseFloat(getComputedStyle(branch, "::after").height) || Infinity;
+  if (event.clientY >= branch.getBoundingClientRect().bottom - band) branch.removeAttribute(FOLD_ATTR);
 };
 // `o`: in a thread it opens or folds the replies of the message under the cursor; in the channel it opens the message's thread. A
 // thread that replaces the channel's list is told from the channel by what the list is: only the channel's carries data-channel-timeline.

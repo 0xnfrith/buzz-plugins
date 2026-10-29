@@ -621,7 +621,7 @@ var ACTIVE_MAIN = "html:not([data-vim-region=\"side\"]):not([data-vim-box]) ";
 var ACTIVE_SIDE = "html[data-vim-region=\"side\"]:not([data-vim-box]) ";
 var CURSOR_CSS = `${around(`${MAIN}, ${SIDE}`, "", ` ${ROW} ${BUBBLE}`)}{${MARK_RESTING.bubble}}${around(`${MAIN}, ${SIDE}`, "", ` ${ROW}${BARE}`)}{${MARK_RESTING.bare}}${ACTIVE_MAIN}${ROW}[${CURSOR_ATTR}="main"] ${BUBBLE}{${MARK_ACTIVE.bubble}}${ACTIVE_MAIN}${ROW}[${CURSOR_ATTR}="main"]${BARE}{${MARK_ACTIVE.bare}}${ACTIVE_SIDE}${ROW}[${CURSOR_ATTR}="side"] ${BUBBLE}{${MARK_ACTIVE.bubble}}${ACTIVE_SIDE}${ROW}[${CURSOR_ATTR}="side"]${BARE}{${MARK_ACTIVE.bare}}`;
 var FOLD = `[${FOLD_ATTR}]`;
-var FOLD_CSS = `${FOLD}>:last-child{display:none}${FOLD}>:first-child::after{display:none}${FOLD}::after{content:attr(${FOLD_ATTR});display:flex;align-items:center;min-height:var(--size-control-sm,2rem);margin-inline-start:calc(var(--size-control-sm,2rem) + var(--space-2,.5rem));padding-inline:var(--space-4,1rem);color:var(--text-standard,inherit);font-size:var(--text-body-sm,.875rem);line-height:var(--text-body-sm--line-height,1.43)}`;
+var FOLD_CSS = `${FOLD}>:last-child{display:none}${FOLD}>:first-child::after{display:none}${FOLD}::after{content:attr(${FOLD_ATTR});display:flex;align-items:center;min-height:var(--size-control-sm,2rem);margin-inline-start:calc(var(--size-control-sm,2rem) + var(--space-2,.5rem));padding-inline:var(--space-4,1rem);cursor:pointer;color:var(--text-standard,inherit);font-size:var(--text-body-sm,.875rem);line-height:var(--text-body-sm--line-height,1.43)}`;
 var STATIC_CSS = FOCUS_CSS + LINE_CSS + BOX_FOCUS_CSS + CURSOR_CSS + FOLD_CSS;
 // src/cursor.ts
 var PANE_LIST = ["main", "side"];
@@ -1627,26 +1627,41 @@ var openThread = async () => {
 	}
 	goRegion(region, true);
 };
-var pillCount = (pill) => Number(/\d+/.exec(pill.getAttribute("aria-label") ?? "")?.[0] ?? 0);
+var numberIn = (text) => Number(/\d+/.exec(text ?? "")?.[0] ?? 0);
+var FOLDED = `[${FOLD_ATTR}]`;
+var replyCount = (panel) => {
+	const marks = [...panel.querySelectorAll(FOLDED)].filter((fold) => !fold.parentElement?.closest(FOLDED));
+	const pills = [...panel.querySelectorAll(BRANCH_PILL)].filter((pill) => !pill.closest(FOLDED));
+	return rowsOf(panel).length + pills.reduce((sum, pill) => sum + numberIn(pill.getAttribute("aria-label")), 0) + marks.reduce((sum, fold) => sum + numberIn(fold.getAttribute(FOLD_ATTR)), 0);
+};
 var foldBranch = (branch, row) => {
 	const panel = branch.lastElementChild;
 	if (!panel || branch.getAttribute("data-open") !== "true") return;
-	const count = rowsOf(panel).length + [...panel.querySelectorAll(BRANCH_PILL)].reduce((sum, pill) => sum + pillCount(pill), 0);
+	const count = replyCount(panel);
 	if (!count) return;
 	branch.setAttribute(FOLD_ATTR, `${count} ${count === 1 ? "reply" : "replies"}`);
 	if (visible(panel)) branch.removeAttribute(FOLD_ATTR);
 	else row.scrollIntoView({ block: "nearest" });
+};
+var pillOf = (row, scroller, branch) => {
+	const own = `:scope > * > ${BRANCH_PILL}`;
+	if (branch) return branch.querySelector(own);
+	for (let el = row.parentElement; el && el !== scroller; el = el.parentElement) {
+		const pill = el.firstElementChild?.contains(row) ? el.querySelector(own) : null;
+		if (pill) return pill;
+	}
+	return null;
 };
 var toggleBranch = async () => {
 	clearPending();
 	try {
 		const scroller = activeTimeline();
 		const row = cursorRow();
-		const branch = row?.closest(BRANCH);
-		if (!scroller || !row || !branch) return;
-		if (branch.hasAttribute("data-vim-fold")) return branch.removeAttribute(FOLD_ATTR);
-		const pill = branch.querySelector(`:scope > * > ${BRANCH_PILL}`);
-		if (!pill) return foldBranch(branch, row);
+		if (!scroller || !row) return;
+		const branch = row.closest(BRANCH);
+		if (branch?.hasAttribute("data-vim-fold")) return branch.removeAttribute(FOLD_ATTR);
+		const pill = pillOf(row, scroller, branch);
+		if (!pill) return branch ? foldBranch(branch, row) : void 0;
 		const epoch = keyEpoch;
 		pill.click();
 		await nextFrame();
@@ -1655,6 +1670,12 @@ var toggleBranch = async () => {
 			row.scrollIntoView({ block: "nearest" });
 		}
 	} catch {}
+};
+var onFoldClick = (event) => {
+	const branch = event.target;
+	if (!(branch instanceof HTMLElement) || !branch.hasAttribute("data-vim-fold")) return;
+	const band = parseFloat(getComputedStyle(branch, "::after").height) || Infinity;
+	if (event.clientY >= branch.getBoundingClientRect().bottom - band) branch.removeAttribute(FOLD_ATTR);
 };
 var openOrFold = () => {
 	const scroller = activeTimeline();
@@ -2545,6 +2566,7 @@ var mount = () => {
 	listen("keydown", "onAnyKey", onAnyKey);
 	listen("keydown", "onHelpKey", onHelpKey);
 	listen("pointerdown", "onPointerDown", onPointerDown);
+	listen("click", "onFoldClick", onFoldClick);
 	let traced = state.perf;
 	start(traced);
 	const stopPerf = subscribe(() => {
