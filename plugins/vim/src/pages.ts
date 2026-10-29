@@ -37,22 +37,35 @@ const cyclePage = (direction: number) => {
 };
 // [API] Settings is a navigation target, not a page. Like the host's own Cmd/Ctrl+, it opens
 // for the community on screen (scope null when there is none, which is Personal space).
-const openSettings = () => {
+const openSettings = (section?: string) => {
   const { status, viewer, origin } = ctx.relay.snapshot();
   const scope = status === "ready" && viewer && origin ? { viewer, communityOrigin: origin } : null;
-  void ctx.navigation.open({ version: 1, kind: "settings", scope }).catch(() => {});
+  const open = (named?: string) =>
+    ctx.navigation.open({ version: 1, kind: "settings", ...(named ? { section: named } : {}), scope });
+  // A Buzz that does not take the section (an older one, whose Settings target has no such field, answers "failed", or rejects): Settings
+  // still opens, on the section it opens on.
+  void (async () => {
+    try {
+      const result = await open(section);
+      if (!section || result.status !== "failed") return;
+    } catch {
+      if (!section) return;
+    }
+    await open();
+  })().catch(() => {});
 };
-// The letter after a `g`: t and T walk the pages, s opens Settings, any other letter picks the page
-// whose name starts with it (gi Inbox, gm Messages). Both the lists (through the shortcut service) and
+// The letter after a `g`: t and T walk the pages, s opens Settings, p opens Settings on Manage plugins (a section the
+// host's navigation names: `plugins`), any other letter picks the page whose name starts with it (gi Inbox, gm Messages). Both the lists (through the shortcut service) and
 // the message box's NORMAL mode (its own key handler) come here: one NORMAL mode, one set of g keys.
 export const goPage = (letter: string) => {
   clearPending();
   if (letter === "t" || letter === "T") return cyclePage(letter === "t" ? 1 : -1);
   if (letter === "s") return openSettings();
+  if (letter === "p") return openSettings("plugins");
   const page = pageList().find((entry) => pageName(entry).toLowerCase().startsWith(letter));
   if (page) openPage(page);
 };
 // The letters the message box takes after a g (the others are its own gg, ge and gE).
-export const PAGE_KEYS = "imarwvtTs";
+export const PAGE_KEYS = "imarwvtTsp";
 // Keys already bound for something else call this first when `g` is pending.
 export const afterG = (letter: string, run: () => unknown) => () => (state.operator === "g" ? goPage(letter) : run());

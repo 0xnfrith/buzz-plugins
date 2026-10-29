@@ -48,7 +48,7 @@ export interface Scope {
 export type NavigationTarget =
   | { version: 1; kind: "conversation"; scope: Scope; channelId: string; messageId?: string; threadRootId?: string }
   | { version: 1; kind: "page"; pluginId: string; pageId: string }
-  | { version: 1; kind: "settings"; scope: Scope | null };
+  | { version: 1; kind: "settings"; section?: string; scope: Scope | null };
 
 export interface RelaySnapshot {
   status: string;

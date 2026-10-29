@@ -1875,6 +1875,11 @@ var groups = () => {
 					"API"
 				],
 				[
+					"gp",
+					"Open Settings on Manage plugins",
+					"API"
+				],
+				[
 					"i  a  A",
 					"Go to INSERT: focus the message box (a: after the character under the caret; A: at the end of the draft)",
 					"API + DOM"
@@ -2231,22 +2236,33 @@ var cyclePage = (direction) => {
 	const here = pages.findIndex((page) => page.key === key);
 	openPage(pages[((here < 0 ? direction > 0 ? -1 : 0 : here) + direction + pages.length) % pages.length]);
 };
-var openSettings = () => {
+var openSettings = (section) => {
 	const { status, viewer, origin } = ctx.relay.snapshot();
 	const scope = status === "ready" && viewer && origin ? {
 		viewer,
 		communityOrigin: origin
 	} : null;
-	ctx.navigation.open({
+	const open = (named) => ctx.navigation.open({
 		version: 1,
 		kind: "settings",
+		...named ? { section: named } : {},
 		scope
-	}).catch(() => {});
+	});
+	(async () => {
+		try {
+			const result = await open(section);
+			if (!section || result.status !== "failed") return;
+		} catch {
+			if (!section) return;
+		}
+		await open();
+	})().catch(() => {});
 };
 var goPage = (letter) => {
 	clearPending();
 	if (letter === "t" || letter === "T") return cyclePage(letter === "t" ? 1 : -1);
 	if (letter === "s") return openSettings();
+	if (letter === "p") return openSettings("plugins");
 	const page = pageList().find((entry) => pageName(entry).toLowerCase().startsWith(letter));
 	if (page) openPage(page);
 };
@@ -2259,7 +2275,7 @@ var textKey = timed("textKey", (key) => {
 		return armPending();
 	}
 	if (state.visual) return visualKey(key);
-	if (state.prefix === "g" && !state.operator && "imarwvtTs".includes(key)) return goPage(key);
+	if (state.prefix === "g" && !state.operator && "imarwvtTsp".includes(key)) return goPage(key);
 	const operator = state.operator;
 	const typed = state.count;
 	const motion = resolveMotion(key);
@@ -2647,6 +2663,7 @@ var registerShortcuts = () => {
 	key("page-workflows", "After g: Workflows", { key: "w" }, afterG("w", () => {}));
 	key("page-vim", "After g: the Vim mode page (its switches)", { key: "v" }, afterG("v", () => {}));
 	key("settings", "After g: open Settings (the host also has Cmd/Ctrl+,)", { key: "s" }, () => state.operator === "g" && goPage("s"));
+	key("plugins", "After g: open Settings on Manage plugins", { key: "p" }, () => state.operator === "g" && goPage("p"));
 	key("next-community", "Next community", {
 		key: "}",
 		shift: true

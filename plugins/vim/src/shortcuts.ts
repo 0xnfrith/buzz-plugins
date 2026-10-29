@@ -67,6 +67,7 @@ export const registerShortcuts = () => {
   key("page-workflows", "After g: Workflows", { key: "w" }, afterG("w", () => {}));
   key("page-vim", "After g: the Vim mode page (its switches)", { key: "v" }, afterG("v", () => {}));
   key("settings", "After g: open Settings (the host also has Cmd/Ctrl+,)", { key: "s" }, () => state.operator === "g" && goPage("s"));
+  key("plugins", "After g: open Settings on Manage plugins", { key: "p" }, () => state.operator === "g" && goPage("p"));
   key("next-community", "Next community", { key: "}", shift: true }, () => void switchCommunity(1));
   key("previous-community", "Previous community", { key: "{", shift: true }, () => void switchCommunity(-1));
   key("communities", "Open the community switcher", { key: "C", shift: true }, () => void openCommunityPicker());
