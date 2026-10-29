@@ -594,7 +594,7 @@ var stepsIntoTrailingRun = (selection) => {
 	return after[0] === "chip" || before.findLast((item) => item !== "space") === "chip";
 };
 // src/theme.ts
-var FOCUS_CSS = `html[data-vim-region="sidebar"] ${SIDEBAR_ROW}:focus{outline:2px solid ${FOCUS_RING};outline-offset:-2px}html[data-vim-driving] ${COMMUNITY_POPUP}{opacity:0!important;transition:none!important;animation:none!important}`;
+var FOCUS_CSS = `html[data-vim-region="sidebar"] ${SIDEBAR_ROW}:focus{outline:2px solid ${FOCUS_RING};outline-offset:-2px}html[data-vim-driving] ${COMMUNITY_POPUP}{opacity:0!important;transition:none!important;animation:none!important}[role="menu"][data-vim-yanking]{opacity:0!important;transition:none!important;animation:none!important}`;
 var around = (list, before, after = "") => list.split(",").map((part) => `${before}${part.trim()}${after}`).join(",");
 var PANES = [["main", MAIN], ["side", SIDE]];
 var PANE_HEADER = {
@@ -1865,6 +1865,11 @@ var groups = () => {
 					"DOM"
 				],
 				[
+					"yy  yY",
+					"Yank the message under the cursor in the message list or a thread: yy copies its link, yY its text (the app's own Copy link and Copy message, so its own toast says \"Link copied\" / \"Message copied\"). The cursor and the focus stay. In the message box y is the box's own",
+					"DOM"
+				],
+				[
 					"gt  gT",
 					"Next / previous page, cycling through the pages the app lists",
 					"API"
@@ -2548,6 +2553,7 @@ var mount = () => {
 		stopNavigation();
 		for (const remove of undo) remove();
 		delete document.documentElement.dataset.vimDriving;
+		for (const menu of document.querySelectorAll("[data-vim-yanking]")) menu.removeAttribute("data-vim-yanking");
 		cursorStyle.remove();
 		unwatchCursors();
 		resetCursors();
@@ -2639,6 +2645,46 @@ var registerPage = () => {
 		}
 	});
 };
+// src/yank.ts
+var MENU = "[role=\"menu\"][data-message-id]";
+var YANKING = "data-vim-yanking";
+var pressable = (el) => el && el.getAttribute("aria-disabled") !== "true" && !el.hasAttribute("data-disabled") ? el : void 0;
+var yankMessage = async (what) => {
+	clearPending();
+	const id = cursorRow()?.dataset.messageId;
+	if (!id) return;
+	const list = activeTimeline();
+	let hide;
+	try {
+		if (what === "link") {
+			await rowControl("Copy link");
+			await nextFrame();
+			await nextFrame();
+			return;
+		}
+		hide = new MutationObserver((records) => {
+			for (const record of records) for (const node of record.addedNodes) if (node instanceof HTMLElement) for (const menu of node.matches(MENU) ? [node] : node.querySelectorAll(MENU)) menu.setAttribute(YANKING, "");
+		});
+		hide.observe(document.body, {
+			childList: true,
+			subtree: true
+		});
+		await rowControl("More message actions");
+		const menu = () => [...document.querySelectorAll(MENU)].find((el) => el.dataset.messageId === id);
+		const item = await settle(() => [...menu()?.querySelectorAll("[role=\"menuitem\"]") ?? []].find((el) => el.textContent?.trim() === "Copy message"), 1200);
+		if (pressable(item)) item?.click();
+		else menu()?.dispatchEvent(new KeyboardEvent("keydown", {
+			key: "Escape",
+			bubbles: true,
+			cancelable: true
+		}));
+		await settle(() => !document.querySelector(MENU), 1500);
+	} catch {} finally {
+		hide?.disconnect();
+		for (const menu of document.querySelectorAll(`[${YANKING}]`)) menu.removeAttribute(YANKING);
+		if (!disposed) focusEl(list?.isConnected ? list : activeTimeline());
+	}
+};
 // src/shortcuts.ts
 var eligible = () => state.enabled && contextOk();
 var ctrl = (letter) => apple ? {
@@ -2713,6 +2759,15 @@ var registerShortcuts = () => {
 	key("open-thread", "Open the thread of the message under the cursor, at its end; in a thread, open or fold the replies to it (after z: show the thread pane)", { key: "o" }, afterG("o", () => state.operator === "z" ? showPane() : openOrFold()));
 	key("open-thread-enter", "Open the thread of the message under the cursor", { key: "Enter" }, () => void openThread(), { when: () => eligible() && enterOpens() });
 	key("close-thread", "Close the active thread", { key: "q" }, afterG("q", closeThread));
+	key("yank", "Yank prefix: yy copies the link of the message under the cursor, yY its text", { key: "y" }, afterG("y", () => {
+		if (state.operator === "y") return void yankMessage("link");
+		set({ operator: "y" });
+		armPending();
+	}));
+	key("yank-text", "After y: copy the text of the message under the cursor", {
+		key: "Y",
+		shift: true
+	}, () => state.operator === "y" && void yankMessage("text"));
 	key("fold", "Fold prefix: zc hides the thread pane, zo shows it", { key: "z" }, afterG("z", () => {
 		set({ operator: "z" });
 		armPending();

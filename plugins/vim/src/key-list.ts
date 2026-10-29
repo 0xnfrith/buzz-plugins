@@ -27,6 +27,7 @@ export const groups = (): KeyGroup[] => {
         ["|  =", "Thread pane as wide as it goes / back to its default width", "DOM"],
         ["r", "Reply in a thread to the message under the cursor; focus lands in the reply box", "DOM"],
         ["m", "Open the menu of the message under the cursor (copy, mark unread, ...). j / k move, Enter picks", "DOM"],
+        ["yy  yY", "Yank the message under the cursor in the message list or a thread: yy copies its link, yY its text (the app's own Copy link and Copy message, so its own toast says \"Link copied\" / \"Message copied\"). The cursor and the focus stay. In the message box y is the box's own", "DOM"],
         ["gt  gT", "Next / previous page, cycling through the pages the app lists", "API"],
         ["gi gm ga gr gw gv gs", "Open Inbox, Messages, Agents, Reminders, Workflows, the Vim mode page (its switches), Settings (the page whose name starts with the letter). The app has Cmd+, or Ctrl+, for Settings too", "API"],
         ["gp", "Open Settings on Manage plugins", "API"],

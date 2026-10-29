@@ -61,6 +61,7 @@ export const mount = () => {
     stopNavigation();
     for (const remove of undo) remove();
     delete document.documentElement.dataset.vimDriving;
+    for (const menu of document.querySelectorAll("[data-vim-yanking]")) menu.removeAttribute("data-vim-yanking");
     cursorStyle.remove();
     unwatchCursors();
     resetCursors();

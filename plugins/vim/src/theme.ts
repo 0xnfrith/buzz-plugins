@@ -7,7 +7,9 @@ import { ACCENT, COMMUNITY_POPUP, COMPOSER, FOCUS_RING, FOLD_ATTR, MAIN, mix, SI
 // While the plugin drives the community switcher, its popover is hidden so it does not flash.
 const FOCUS_CSS =
   `html[data-vim-region="sidebar"] ${SIDEBAR_ROW}:focus{outline:2px solid ${FOCUS_RING};outline-offset:-2px}` +
-  `html[data-vim-driving] ${COMMUNITY_POPUP}{opacity:0!important;transition:none!important;animation:none!important}`;
+  `html[data-vim-driving] ${COMMUNITY_POPUP}{opacity:0!important;transition:none!important;animation:none!important}` +
+  // Likewise a message's menu while yY presses its item (yank.ts marks the menu itself).
+  `[role="menu"][data-vim-yanking]{opacity:0!important;transition:none!important;animation:none!important}`;
 // Put text before and after every part of a selector list.
 const around = (list: string, before: string, after = "") =>
   list
