@@ -163,7 +163,9 @@ const markEdge = (scroller: HTMLElement, end: boolean) => {
 // bringing rows in after that (the host follows the bottom while it does, a virtual list moves it as it measures rows). So the
 // landing follows the end for as long as the pane keeps changing: each frame it checks the pane is at the bottom and the newest
 // row that shows is the one marked, until nothing has changed for LANDED_MS (at most LANDING_MS in all). A key pressed meanwhile
-// has moved the user on: stop at once, and mark nothing over what that key did. Resolves false then, true when it ran its course.
+// has moved the user on: stop at once, and mark nothing over what that key did. So does the pane showing another list than the one
+// it landed in (a thread tab left for the channel's, which gets the cursor back: threads.ts). Resolves false then, true when it ran
+// its course.
 const LANDED_MS = 600;
 const LANDING_MS = 3000;
 export const landAtEnd = async (pane: Pane) => {
@@ -173,9 +175,12 @@ export const landAtEnd = async (pane: Pane) => {
   let height = -1;
   let changed = performance.now();
   let moved = false;
+  let list = timelineOf(pane); // the list it lands in (the pane may not show one yet)
   await settle(() => {
     if (keyEpoch !== epoch || (cursors[pane] && cursors[pane] !== mine)) return (moved = true);
     const scroller = timelineOf(pane);
+    list ??= scroller;
+    if (scroller && scroller !== list) return (moved = true);
     if (!scroller || scroller.getAttribute("aria-busy") === "true") return false;
     const now = performance.now();
     if (!atBottom(scroller)) {

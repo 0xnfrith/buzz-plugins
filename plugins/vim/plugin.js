@@ -757,9 +757,12 @@ var landAtEnd = async (pane) => {
 	let height = -1;
 	let changed = performance.now();
 	let moved = false;
+	let list = timelineOf(pane);
 	await settle(() => {
 		if (keyEpoch !== epoch || cursors[pane] && cursors[pane] !== mine) return moved = true;
 		const scroller = timelineOf(pane);
+		list ??= scroller;
+		if (scroller && scroller !== list) return moved = true;
 		if (!scroller || scroller.getAttribute("aria-busy") === "true") return false;
 		const now = performance.now();
 		if (!atBottom(scroller)) {
@@ -1551,10 +1554,10 @@ var cursorBack = () => {
 	leaving?.disconnect();
 	const rows = rowsOf(scroller);
 	const kept = rows.find((row) => row.dataset.messageId === cursors.main);
-	if (kept) return selectRow(kept, false);
+	if (kept) return selectRow(kept);
 	clearCursor("main");
 	const row = rows.find((row) => row.dataset.messageId === id);
-	if (row) selectRow(row, false);
+	if (row) selectRow(row);
 	paintCursor();
 };
 var watchBeneath = (tab) => {

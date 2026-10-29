@@ -58,10 +58,11 @@ const cursorBack = () => {
   leaving?.disconnect();
   const rows = rowsOf(scroller);
   const kept = rows.find((row) => row.dataset.messageId === cursors.main);
-  if (kept) return selectRow(kept, false); // the cursor is in the list already (put there since, or the thread's own copy of the same message): it needs its mark back
+  // The channel's list comes back at its bottom, which can leave the row far above the view: it is shown too, not only marked.
+  if (kept) return selectRow(kept); // the cursor is in the list already (put there since, or the thread's own copy of the same message): it needs its mark back
   clearCursor("main");
   const row = rows.find((row) => row.dataset.messageId === id);
-  if (row) selectRow(row, false);
+  if (row) selectRow(row);
   paintCursor();
 };
 const watchBeneath = (tab: HTMLElement) => {

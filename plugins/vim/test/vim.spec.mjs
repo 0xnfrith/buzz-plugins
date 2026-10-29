@@ -1049,6 +1049,15 @@ test.describe("o opens a thread at its end", () => {
       await route.continue();
     });
 
+  // The rows behind a thread's loader are inert, which keeps them out of what the plugin can mark. A host that did not make them inert would
+  // show them: the page takes the attribute off again whenever it is put on, so that a landing that did not wait for the list would mark one.
+  const showRowsBehindLoader = (page) =>
+    page.evaluate(() => {
+      const unlock = () => document.querySelectorAll("[data-thread-rows][inert]").forEach((el) => el.removeAttribute("inert"));
+      new MutationObserver(unlock).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["inert"] });
+      unlock();
+    });
+
   test("a thread brought in a page at a time, the second long after the first: the mark follows the end", async ({ page, app }) => {
     await open(page, app);
     await toRoot(page, app);
@@ -1068,7 +1077,8 @@ test.describe("o opens a thread at its end", () => {
   test("a thread whose first page comes after the landing has given up: nothing was marked, and the newest is when it comes", async ({ page, app }) => {
     await open(page, app);
     await toRoot(page, app);
-    await slowThread(page, { first: 4200 }); // more than the landing's 3 s
+    await slowThread(page, { first: 4200 }); // more than the landing's 3 s: the follow waits for the list, as the landing did
+    await showRowsBehindLoader(page);
     await press(page, "o");
     await expect(threadPane(page)).toBeVisible();
     await page.waitForTimeout(3500);
@@ -1107,6 +1117,36 @@ test.describe("o opens a thread at its end", () => {
     await press(page, "o"); // a new thread pane, its own landing
     await expect.poll(() => cursor(page), { timeout: 10000 }).toBe(app.exact.target.id);
     await expect.poll(() => atEnd(sideScroller(page))).toBe(true);
+  });
+
+  test("while the thread's first page is awaited its list is busy: nothing is marked, and the newest reply is when the page comes", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await slowThread(page, { first: 1500 }); // within the landing's 3 s: the landing itself waits for the list
+    await showRowsBehindLoader(page);
+    await press(page, "o");
+    await expect(threadPane(page)).toBeVisible();
+    await page.waitForTimeout(900);
+    expect(await cursor(page)).toBeUndefined(); // the message shown behind the loader is not marked
+    const list = sideScroller(page);
+    await expect.poll(() => cursor(page), { timeout: 10000 }).toBe(app.exact.target.id);
+    await expect.poll(() => atEnd(list)).toBe(true);
+  });
+
+  test("with threads placed in the main pane: the channel's tab clicked while the thread still lands, the landing stands down", async ({ page, app }) => {
+    await page.addInitScript(() => localStorage.setItem("buzz-thread-placement.v1", "main"));
+    await open(page, app);
+    await toRoot(page, app);
+    await slowThread(page, { first: 1500 }); // the landing waits for the thread's list
+    await press(page, "o");
+    const tab = page.locator('[data-main-workspace] [role="tab"][data-tab-value^="thread:"]');
+    await expect(tab).toHaveCount(1);
+    await page.waitForTimeout(300);
+    await page.locator('[role="tab"][data-tab-value="conversation"]').click(); // not a key: the message the thread came from gets the cursor
+    await page.waitForTimeout(2500); // the landing's time, and the thread's page coming into the tab that is hidden
+    const channelList = page.locator('[data-main-workspace] [data-message-scroller][data-channel-timeline="alpha"]');
+    await expect(channelList.locator('[data-vim-cursor="main"]')).toHaveAttribute("data-message-id", app.exact.root.id);
+    expect(await page.locator("style[data-vim-cursor-style]").getAttribute("data-main-message-id")).toBe(app.exact.root.id);
   });
 
   test("a held o (its auto-repeats) does not end its own landing", async ({ page, app }) => {
@@ -1345,6 +1385,73 @@ test.describe("o in a thread opens and folds the replies to a message", () => {
     await expect(bar(page)).toContainText("side");
     await expect.poll(() => cursor(page)).toBe(app.exact.replies.at(-2).id);
   });
+});
+
+// With threads placed over the channel, the row the cursor goes back to shows, not only is marked: the channel's list comes back at its
+// bottom, which leaves an older message far above the view.
+const channelRowShows = (page) =>
+  page.evaluate(() => {
+    const list = document.querySelector('[data-main-workspace] [data-message-scroller][data-channel-timeline="alpha"]');
+    const row = list?.querySelector('[data-vim-cursor="main"]');
+    if (!list || !row) return false;
+    const edge = list.getBoundingClientRect();
+    const box = row.getBoundingClientRect();
+    return box.top >= edge.top - 1 && box.bottom <= edge.bottom + 1;
+  });
+// The ways out of a thread tab.
+const LEAVES = [
+  ["q", (page) => press(page, "q")],
+  ["a click on the channel's tab", (page) => page.locator('[role="tab"][data-tab-value="conversation"]').click()],
+  ["the tab's close button", (page) => page.locator('[data-closable="true"]:has([role="tab"][data-tab-value^="thread:"]) button[aria-label^="Close "]').click()],
+];
+const mainCursorId = (page) => page.locator("style[data-vim-cursor-style]").getAttribute("data-main-message-id");
+// A message with no replies: the thread's newest message is a copy of it, so the cursor's id is in the channel's rows when the tab goes.
+test.describe("with threads over a long channel: the row the cursor goes back to shows", () => {
+  test.use({ historyCounts: { alpha: 200, beta: 3 } });
+  for (const [how, leave] of LEAVES) {
+    test(`o on an older message, then ${how}: that row is marked and in view`, async ({ page, app }) => {
+      await page.addInitScript(() => localStorage.setItem("buzz-thread-placement.v1", "main"));
+      await open(page, app);
+      await press(page, "Escape", "k"); // out of the box: the newest message
+      await expect.poll(() => cursor(page)).toBeDefined();
+      for (let i = 0; i < 12; i++) await press(page, "k"); // a few rows above the newest, beyond what the list shows when it comes back at its bottom
+      await page.waitForTimeout(500); // the list follows the cursor
+      const older = await cursor(page);
+      await press(page, "o");
+      const tab = page.locator('[data-main-workspace] [role="tab"][data-tab-value^="thread:"]');
+      await expect(tab).toHaveCount(1);
+      await page.waitForTimeout(1500); // the thread has landed
+      await leave(page);
+      await expect.poll(() => mainCursorId(page)).toBe(older);
+      await expect.poll(() => channelRowShows(page), { timeout: 3000 }).toBe(true);
+    });
+  }
+});
+// A message that has replies (the third from the top, with 80): the thread's newest message is a reply, which the channel's list does not
+// have, so the cursor goes back to the message the thread was opened from, by the other path of `cursorBack`.
+test.describe("with threads over a channel that scrolls, on a message that has replies: the row the cursor goes back to shows", () => {
+  test.use({ exactMessages: true, historyCounts: { alpha: 16, beta: 3 } });
+  for (const [how, leave] of LEAVES) {
+    test(`o on the message with the long thread, then ${how}: that row is marked and in view`, async ({ page, app }) => {
+      await page.addInitScript(() => localStorage.setItem("buzz-thread-placement.v1", "main"));
+      await open(page, app);
+      await press(page, "g", "g"); // the top of the list: the root is the third message
+      await page.waitForTimeout(800);
+      for (let i = 0; i < 12 && (await mainCursorId(page)) !== app.exact.root.id; i++) {
+        await press(page, "j");
+        await page.waitForTimeout(100);
+      }
+      expect(await mainCursorId(page)).toBe(app.exact.root.id);
+      await press(page, "o");
+      const tab = page.locator('[data-main-workspace] [role="tab"][data-tab-value^="thread:"]');
+      await expect(tab).toHaveCount(1);
+      await expect.poll(() => mainCursorId(page), { timeout: 10000 }).toBe(app.exact.target.id); // the thread's newest reply
+      await page.waitForTimeout(800);
+      await leave(page);
+      await expect.poll(() => mainCursorId(page)).toBe(app.exact.root.id);
+      await expect.poll(() => channelRowShows(page), { timeout: 3000 }).toBe(true);
+    });
+  }
 });
 
 const replyBox = (page) => page.getByRole("textbox", { name: "Reply to thread", exact: true });

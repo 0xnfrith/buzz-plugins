@@ -11,6 +11,14 @@
     "control": "control: open the thread (the page itself)",
     "why": "Opening a thread costs the app a render of its pane, even when the thread is already open and only its tab comes forward: some 75 ms of script on a two-core machine (the control row is the page asking the host to open the same thread itself). `o` adds the plugin's own work after the frames measured, landing at the thread's end."
   },
+  "list q: close the thread": {
+    "control": "control: close the thread (the page itself)",
+    "why": "Closing a thread's pane costs the app a render and the layout of the channel's list in the room it gives back (the control row is the page sending the window event that `q` sends, the native Close Tab menu's)."
+  },
+  "longthread o: the 80-reply thread": {
+    "control": "control: open the 80-reply thread (the page itself)",
+    "why": "Opening the long thread costs the app a render of its pane with 80 replies, even when the thread is already open and only its tab comes forward, and that is all of what `o` costs there (the control row is the page asking the host to open the same thread itself); the plugin's landing runs after the frames measured."
+  },
   "thread gg": {
     "control": "control: jump to the top (the page itself)",
     "why": "Jumping to the top of the 80-reply thread costs the app the layout of the rows it lands on (the control row is the page setting scrollTop itself); `gg` also moves the cursor row."
