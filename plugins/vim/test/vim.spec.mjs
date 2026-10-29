@@ -2876,8 +2876,9 @@ test.describe("the Settings dialog", () => {
     await press(page, "l");
     await expect(section(page, "Custom emoji")).toHaveAttribute("aria-current", "page");
     await expect(detail(page)).toBeFocused();
-    await press(page, "j", "k"); // scroll the section; nothing else happens
-    await expect(detail(page)).toBeFocused();
+    await press(page, "j"); // the first control of the section takes the focus (a section with none scrolls)
+    await expect(detail(page)).not.toBeFocused();
+    await expect(detail(page).locator(":focus")).toHaveCount(1);
     await press(page, "h"); // back to the list, on the open section
     await expect(section(page, "Custom emoji")).toBeFocused();
     await press(page, "k", "Enter"); // Enter opens and goes in, as l does
@@ -2886,6 +2887,82 @@ test.describe("the Settings dialog", () => {
     // Nothing reached the page behind the dialog.
     expect(await cursor(page)).toBeUndefined();
     await expect(bar(page)).toContainText("main");
+    await press(page, "Escape");
+    await expect(dialog(page)).toHaveCount(0);
+  });
+
+  test("in Manage plugins, l goes into the section and j and k walk the cards and their buttons; h comes back, Esc closes", async ({ page, app }) => {
+    await open(page, app);
+    await press(page, "g", "p");
+    await expect(section(page, "Manage plugins")).toHaveAttribute("aria-current", "page");
+    await press(page, "j"); // from the close button into the list, on the open section
+    await expect(section(page, "Manage plugins")).toBeFocused();
+    await press(page, "l"); // into the section
+    await expect(detail(page)).toBeFocused();
+    const button = (name) => detail(page).getByRole("button", { name, exact: true });
+    await press(page, "j"); // the first control; a disabled one ("Required") is skipped, as Tab skips it
+    await expect(button("View Channels details")).toBeFocused();
+    await press(page, "j");
+    await expect(button("View Agents details")).toBeFocused();
+    await press(page, "j");
+    await expect(button("Disable Agents")).toBeFocused();
+    await press(page, "j", "j");
+    await expect(button("Disable Profiles")).toBeFocused();
+    await press(page, "k");
+    await expect(button("View Profiles details")).toBeFocused();
+    await press(page, "k", "k", "k");
+    await expect(button("View Channels details")).toBeFocused();
+    await press(page, "k"); // nothing before the first control: the focus stays
+    await expect(button("View Channels details")).toBeFocused();
+    // Down through the rest of the section: the tab list, the search box, the plugin rows and their buttons, to the last control.
+    for (let i = 0; i < 5; i++) await press(page, "j");
+    await expect(detail(page).getByRole("tab", { name: "All plugins", exact: true })).toBeFocused();
+    await press(page, "j");
+    await expect(detail(page).getByRole("searchbox")).toBeFocused();
+    // The search box keeps its keys: j types.
+    await page.keyboard.type("jk");
+    await expect(detail(page).getByRole("searchbox")).toHaveValue("jk");
+    await page.keyboard.press("Control+a");
+    await page.keyboard.press("Backspace");
+    // Tab leaves the box, and j walks on from there.
+    await press(page, "Tab");
+    await press(page, "j");
+    await expect(detail(page).locator(":focus")).toHaveCount(1);
+    await press(page, "h"); // back to the list, on the open section
+    await expect(section(page, "Manage plugins")).toBeFocused();
+    await press(page, "l");
+    await expect(detail(page)).toBeFocused();
+    await press(page, "j");
+    await expect(button("View Channels details")).toBeFocused();
+    // Nothing reached the page behind the dialog, and Esc closes Settings as it always did.
+    expect(await cursor(page)).toBeUndefined();
+    await press(page, "Escape");
+    await expect(dialog(page)).toHaveCount(0);
+  });
+
+  test("Enter presses a switch; a shut menu button lets j and k move on", async ({ page, app }) => {
+    await open(page, app);
+    await press(page, "g", "s");
+    await selectSettingsSection(page, "Notifications"); // a click: the focus is on its button in the list
+    await expect(section(page, "Notifications")).toBeFocused();
+    await press(page, "l"); // into the section ...
+    await expect(detail(page)).toBeFocused();
+    await press(page, "j"); // ... onto its first control: the first switch
+    const first = detail(page).locator(":focus");
+    await expect(first).toHaveCount(1);
+    const state = () => first.evaluate((el) => el.checked ?? el.getAttribute("aria-checked"));
+    const before = await state();
+    await press(page, "Enter");
+    await expect.poll(state).not.toBe(before);
+    await press(page, "Enter");
+    await expect.poll(state).toBe(before);
+    // A menu button: reach one (Direct messages, a select in this section) and move on past it.
+    const menu = detail(page).getByRole("combobox").first();
+    await menu.focus();
+    await press(page, "j");
+    await expect(menu).not.toBeFocused();
+    await expect(detail(page).locator(":focus")).toHaveCount(1);
+    await expect(page.getByRole("listbox")).toHaveCount(0); // j opened nothing
     await press(page, "Escape");
     await expect(dialog(page)).toHaveCount(0);
   });
@@ -3245,11 +3322,7 @@ test.describe("Ctrl-e and Ctrl-y scroll the view a line at a time", () => {
       const detail = page.locator("[data-test-scroller]");
       await expect(detail).toHaveCount(1);
       const navTop = await top(nav);
-      // j and k scroll the section too (they scrolled an element that never moves until this change).
-      await press(page, "j");
-      await expect.poll(() => top(detail)).toBe(48);
-      await press(page, "k");
-      await expect.poll(() => top(detail)).toBe(0);
+      // (j and k no longer scroll the section when it has controls: they move the focus from one to the next, and the section follows.)
       await ctrl(page, "e");
       await expect.poll(() => top(detail)).toBe(line);
       await press(page, "3", "Control+e");

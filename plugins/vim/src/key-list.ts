@@ -34,7 +34,7 @@ export const groups = (): KeyGroup[] => {
         ["Esc", "Nothing. It does not close a thread: q does", "DOM"],
         ["/", "Search this conversation (presses the host's own chord)", "API-adjacent"],
         ["?", "Show this list over the page. j k, Ctrl-d Ctrl-u and gg G scroll it; q, Esc or ? closes it", "DOM"],
-        ["j  k  l  Enter  h", "Only in the Settings dialog (every other dialog and menu keeps the keys off): j k move through its sections, l or Enter opens one and goes into it (j k then scroll it), h comes back to the list. Esc closes the dialog, as it always did", "DOM"],
+        ["j  k  l  Enter  h", "Only in the Settings dialog (every other dialog and menu keeps the keys off): j k move through its sections, l or Enter opens one and goes into it, h comes back to the list. Inside a section j k move from one control to the next (the plugin cards and their buttons, tabs, switches, menus: what Tab visits), Enter presses the one that has the focus (a switch included), and a field or an open menu keeps its own keys. Esc closes the dialog, as it always did", "DOM"],
         [apple ? "⌘⇧E" : "Ctrl+Shift+E", "Turn Vim keys on or off", "API"],
       ],
     },

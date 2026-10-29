@@ -1901,7 +1901,7 @@ var groups = () => {
 				],
 				[
 					"j  k  l  Enter  h",
-					"Only in the Settings dialog (every other dialog and menu keeps the keys off): j k move through its sections, l or Enter opens one and goes into it (j k then scroll it), h comes back to the list. Esc closes the dialog, as it always did",
+					"Only in the Settings dialog (every other dialog and menu keeps the keys off): j k move through its sections, l or Enter opens one and goes into it, h comes back to the list. Inside a section j k move from one control to the next (the plugin cards and their buttons, tabs, switches, menus: what Tab visits), Enter presses the one that has the focus (a switch included), and a field or an open menu keeps its own keys. Esc closes the dialog, as it always did",
 					"DOM"
 				],
 				[
@@ -2379,6 +2379,12 @@ var onTextKey = (event) => {
 var SETTINGS_NAV = "nav[aria-label=\"Settings sections\"]";
 var SETTINGS_OWN_KEYS = "select, [role=\"combobox\"], [role=\"listbox\"], [role=\"menu\"], [role=\"menuitem\"], [role=\"option\"]";
 var settingsDialog = () => document.querySelector(SETTINGS_NAV)?.closest("[role=\"dialog\"]");
+var ownKeys = (el) => {
+	const own = el.closest(SETTINGS_OWN_KEYS);
+	return !!own && !(own.getAttribute("role") === "combobox" && own.tagName === "BUTTON" && own.getAttribute("aria-expanded") !== "true");
+};
+var TAB_STOPS = "a[href], button, input, select, textarea, [tabindex]";
+var paneStops = (content) => [...content.querySelectorAll(TAB_STOPS)].filter((el) => el.tabIndex >= 0 && !el.disabled && visible(el));
 var settingsItems = (dialog) => [...dialog.querySelectorAll(`${SETTINGS_NAV} button:not([aria-label])`)].filter(visible);
 var focusSection = (item) => {
 	if (!item) return;
@@ -2388,6 +2394,14 @@ var focusSection = (item) => {
 		focusVisible: true
 	});
 	item.scrollIntoView({ block: "nearest" });
+};
+var focusControl = (el) => {
+	document.documentElement.dataset.keyboardNavigation = "";
+	el.focus({
+		preventScroll: true,
+		focusVisible: true
+	});
+	el.scrollIntoView({ block: "nearest" });
 };
 var scrollParent = (el, stop) => {
 	for (let node = el; node && node !== stop; node = node.parentElement) if (node.scrollHeight > node.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(node).overflowY)) return node;
@@ -2403,7 +2417,7 @@ var onSettingsKey = (event) => {
 	if (!line && !digit && key !== "j" && key !== "k" && key !== "h" && key !== "l" && key !== "Enter") return;
 	const dialog = settingsDialog();
 	const el = event.target;
-	if (!dialog || !dialog.contains(el) || isEditable(el) || el.closest?.(SETTINGS_OWN_KEYS)) return;
+	if (!dialog || !dialog.contains(el) || isEditable(el) || ownKeys(el)) return;
 	if (digit) {
 		set({ count: Math.min(state.count * 10 + Number(key), 999) });
 		return armPending();
@@ -2434,15 +2448,40 @@ var onSettingsKey = (event) => {
 		} else if (key === "l" || key === "Enter") {
 			swallow();
 			if (!items.includes(item)) return;
-			if (item.getAttribute("aria-current") !== "page" || !content || !visible(content)) item.click();
-			afterLayout(() => content?.focus({ preventScroll: true }));
+			if (item.getAttribute("aria-current") === "page" && !!content && visible(content)) content.focus({ preventScroll: true });
+			else {
+				item.click();
+				afterLayout(() => content?.focus({ preventScroll: true }));
+			}
 		} else swallow();
+		return;
+	}
+	if (content?.contains(el)) {
+		if (key === "h") {
+			swallow();
+			return focusSection(current);
+		}
+		if (key === "j" || key === "k") {
+			swallow();
+			const stops = paneStops(content);
+			const after = (stop) => !!(el.compareDocumentPosition(stop) & Node.DOCUMENT_POSITION_FOLLOWING) && !el.contains(stop);
+			const before = (stop) => !!(el.compareDocumentPosition(stop) & Node.DOCUMENT_POSITION_PRECEDING) && !stop.contains(el);
+			const next = el === content ? key === "j" ? stops[0] : void 0 : key === "j" ? stops.find(after) : stops.findLast(before);
+			if (next) return focusControl(next);
+			return scrollParent(el, dialog).scrollBy({ top: key === "j" ? 48 : -48 });
+		}
+		if (key === "Enter") {
+			if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
+				swallow();
+				el.click();
+			}
+			return;
+		}
 		return;
 	}
 	if (key === "Enter" || key === "l") return;
 	swallow();
 	if (key === "h") focusSection(current);
-	else if (content?.contains(el)) scrollParent(el, dialog).scrollBy({ top: key === "j" ? 48 : -48 });
 	else focusSection(current);
 };
 // src/escape.ts
