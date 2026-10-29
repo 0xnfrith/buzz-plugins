@@ -2,12 +2,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { createLinkStore, checkUrl, inject, apply, STORAGE_KEY, DEFAULT_KEY, PLUGIN_ID } from "../plugin.js";
+import { createLinkStore, checkUrl, pinPageId, inject, apply, STORAGE_KEY, DEFAULT_KEY, PINNED_KEY, PLUGIN_ID } from "../plugin.js";
 
-const memory = (seed, savedDefault) => {
+const memory = (seed, savedDefault, savedPinned) => {
   const map = new Map(seed ? [[STORAGE_KEY, seed]] : []);
   if (savedDefault !== undefined) map.set(DEFAULT_KEY, savedDefault);
-  return { getItem: (k) => map.get(k) ?? null, setItem: (k, v) => void map.set(k, v), raw: () => map.get(STORAGE_KEY), rawDefault: () => map.get(DEFAULT_KEY) };
+  if (savedPinned !== undefined) map.set(PINNED_KEY, savedPinned);
+  return { getItem: (k) => map.get(k) ?? null, setItem: (k, v) => void map.set(k, v), raw: () => map.get(STORAGE_KEY), rawDefault: () => map.get(DEFAULT_KEY), rawPinned: () => map.get(PINNED_KEY) };
 };
 
 test("add keeps the link, normalized, with a default name", () => {
@@ -122,7 +123,7 @@ test("apply registers a sidebar page and a settings card, and opens the browser 
 // ---- The default page ----
 
 const row = (id) => ({ id, name: `page ${id}`, url: `https://example.org/${id}` });
-const seeded = (ids, savedDefault) => memory(JSON.stringify(ids.map(row)), savedDefault);
+const seeded = (ids, savedDefault, savedPinned) => memory(JSON.stringify(ids.map(row)), savedDefault, savedPinned);
 
 test("the first page ever added becomes the default; later ones do not take it", () => {
   const storage = memory();
@@ -243,21 +244,79 @@ test("a full or blocked storage still changes the default in memory", () => {
 
 // ---- The default page in the page and the settings card ----
 
-/** Mounts the plugin on a fake React and storage. `openId` is what the page's useState holds; `typed` feeds the settings card's useState calls in order. */
-function mount({ rows = [], savedDefault, openId, available = true, typed = [] } = {}) {
-  const pages = [], cards = [];
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+/**
+ * The parts of Buzz's plugin host that pinning leans on, as block/buzz-app d92bfb2c has them: a page stays listed until the
+ * scope that registered it ends (src/plugins/contributions.ts), `pages.register` returns nothing, a page id must match
+ * [a-z0-9][a-z0-9._-]* and be unique (src/features/pages/service.ts, contributions.ts), and `ctx.plugin` opens a child scope
+ * whose `dispose()` is asynchronous. `listed` is what the shell would list.
+ */
+function fakeHost({ failFor } = {}) {
+  const listed = new Map();
+  const scope = () => {
+    const cleanups = [], children = [];
+    const ctx = {
+      effect(run) {
+        const off = run();
+        cleanups.push(off);
+        return off;
+      },
+      pages: {
+        register(page) {
+          if (!/^[a-z0-9][a-z0-9._-]*$/.test(page.id) || !String(page.title).trim() || typeof page.component !== "function") throw new Error("A page needs an id, a title, and a React component function");
+          if (listed.has(page.id)) throw new Error(`Contribution already registered: ${page.id}`);
+          listed.set(page.id, page);
+          cleanups.push(() => listed.delete(page.id));
+        },
+      },
+      plugin(definition) {
+        if (failFor?.(definition)) throw new Error("cannot create effect on inactive context");
+        const child = scope();
+        definition.apply(child.ctx);
+        children.push(child);
+        return { dispose: child.dispose };
+      },
+    };
+    const dispose = async () => {
+      await Promise.resolve();
+      for (const child of children.splice(0)) await child.dispose();
+      for (const off of cleanups.splice(0).reverse()) off?.();
+    };
+    return { ctx, dispose };
+  };
+  return { listed, root: scope() };
+}
+
+/**
+ * Mounts the plugin on a fake React, storage and host. `openId` is what the page's useState holds; `typed` feeds the settings
+ * card's useState calls in order; `edits` maps a text field's starting value to what has been typed into it; `storage` reuses
+ * storage from an earlier mount, as a restart does.
+ */
+function mount({ rows = [], savedDefault, savedPinned, openId, available = true, typed = [], edits = {}, storage: kept, failFor } = {}) {
+  const cards = [];
   const View = () => null;
   let typedAt = 0;
   const React = {
     createElement: (type, props, ...children) => ({ type, props: props ?? {}, children }),
-    useState: (initial) => (initial === undefined ? [openId, () => {}] : [typedAt < typed.length ? typed[typedAt++] : initial, () => {}]),
+    useState: (initial) => (initial === undefined ? [openId, () => {}] : [typedAt < typed.length ? typed[typedAt++] : typeof initial === "string" && Object.hasOwn(edits, initial) ? edits[initial] : initial, () => {}]),
     useSyncExternalStore: (_subscribe, get) => get(),
   };
-  const storage = rows.length || savedDefault !== undefined ? memory(JSON.stringify(rows.map(row)), savedDefault) : memory();
+  const storage = kept ?? (rows.length || savedDefault !== undefined || savedPinned !== undefined ? memory(JSON.stringify(rows.map(row)), savedDefault, savedPinned) : memory());
   globalThis.window = { localStorage: storage };
   globalThis.document = { createElement: () => ({ dataset: {}, remove() {} }), head: { append() {} } };
-  apply({ react: React, browser: { available, View }, pages: { register: (p) => pages.push(p) }, settingsCards: { register: (c) => cards.push(c) }, effect: () => {} });
-  return { storage, View, page: () => pages[0].component({}), settings: () => cards[0].component({}) };
+  const { listed, root } = fakeHost({ failFor });
+  apply({ ...root.ctx, react: React, browser: { available, View }, settingsCards: { register: (c) => cards.push(c) } });
+  return {
+    storage,
+    View,
+    listed,
+    unmount: () => root.dispose(),
+    /** The pages listed in the top bar, by page id. */
+    topbar: () => Object.fromEntries([...listed].filter(([, page]) => page.placement === "topbar").map(([id, page]) => [id, page.title])),
+    page: () => listed.get("artifacts").component({}),
+    settings: () => cards[0].component({}),
+  };
 }
 
 /** Every element in a tree, with function components (other than `skip`) rendered where they stand. */
@@ -289,7 +348,7 @@ test("an old list with no saved default opens on its first page", () => {
 
 test("the default chip is marked, the open chip is current, and only the default is marked", () => {
   const { page, View } = mount({ rows: ["1", "2", "3"], savedDefault: "2" });
-  const chips = buttons(page(), View).filter((b) => b.props.className.includes("megatech-artifacts__chip") && !b.props.className.includes("megatech-artifacts__default"));
+  const chips = buttons(page(), View).filter((b) => b.props.className.includes("megatech-artifacts__chip") && !b.props.className.includes("megatech-artifacts__action"));
   assert.equal(chips.length, 3);
   assert.deepEqual(chips.map((b) => b.props["data-default"]), ["false", "true", "false"]);
   assert.deepEqual(chips.map((b) => b.props["aria-label"]), [undefined, "page 2 (default)", undefined]);
@@ -349,4 +408,290 @@ test("on a host without the browser, the chip bar still shows the default as cur
   assert.match(textOf(tree), /only available in the macOS desktop app/);
   const chips = buttons(tree, m.View);
   assert.equal(chips.find((b) => b.props["aria-current"] === "true").props.title, "https://example.org/2");
+});
+
+// ---- Pinning a page to the top bar: the store ----
+
+test("pin and unpin keep the pinned ids in the order pinned, save them beside the list, and the list keeps its shape", () => {
+  const storage = seeded(["1", "2", "3"]);
+  const store = createLinkStore(storage);
+  assert.deepEqual(store.pinnedIds(), []);
+  assert.equal(store.pin("3").ok, true);
+  assert.equal(store.pin("1").ok, true);
+  assert.deepEqual(store.pinnedIds(), ["3", "1"]);
+  assert.equal(store.isPinned("3"), true);
+  assert.equal(store.isPinned("2"), false);
+  assert.deepEqual(JSON.parse(storage.rawPinned()), ["3", "1"]);
+  for (const saved of JSON.parse(storage.raw())) assert.deepEqual(Object.keys(saved).sort(), ["id", "name", "url"]);
+  assert.equal(store.unpin("3").ok, true);
+  assert.deepEqual(store.pinnedIds(), ["1"]);
+  assert.deepEqual(JSON.parse(storage.rawPinned()), ["1"]);
+  assert.deepEqual(createLinkStore(storage).pinnedIds(), ["1"], "pins survive a reload");
+});
+
+test("a list saved before pins existed has none", () => {
+  const storage = seeded(["1", "2"]);
+  assert.equal(storage.rawPinned(), undefined);
+  assert.deepEqual(createLinkStore(storage).pinnedIds(), []);
+});
+
+test("an unknown id is refused for pin and for unpin, and changes nothing", () => {
+  const storage = seeded(["1"]);
+  const store = createLinkStore(storage);
+  let heard = 0;
+  store.subscribe(() => heard++);
+  assert.equal(store.pin("missing").ok, false);
+  assert.equal(store.unpin("missing").ok, false);
+  assert.equal(store.pin("").ok, false);
+  assert.deepEqual(store.pinnedIds(), []);
+  assert.equal(storage.rawPinned(), undefined);
+  assert.equal(heard, 0);
+});
+
+test("a saved page whose id could not make a valid top-bar page cannot be pinned", () => {
+  const invalid = ["Upper", "has space", "slash/x", "\u00fcn\u00ef"];
+  const valid = ["ld3k-0-ab12", "1", "a.b_c"];
+  const storage = memory(JSON.stringify([...invalid, ...valid].map((id) => ({ id, name: id, url: `https://example.org/${encodeURIComponent(id)}` }))));
+  const store = createLinkStore(storage);
+  for (const id of invalid) {
+    assert.equal(pinPageId(id), undefined, id);
+    assert.equal(store.pin(id).ok, false, id);
+  }
+  for (const id of valid) assert.equal(store.pin(id).ok, true, id);
+  assert.deepEqual(store.pinnedIds(), valid);
+  assert.equal(pinPageId("ld3k-0-ab12"), "pin-ld3k-0-ab12");
+  // A hand-edited pin list naming an unusable id drops it on load.
+  assert.deepEqual(createLinkStore(memory(storage.raw(), undefined, JSON.stringify(["Upper", "1"]))).pinnedIds(), ["1"]);
+});
+
+test("pinning twice, or unpinning a page that is not pinned, changes nothing and tells nobody", () => {
+  const store = createLinkStore(seeded(["1", "2"]));
+  let heard = 0;
+  store.subscribe(() => heard++);
+  store.pin("1");
+  const after = store.pinnedIds();
+  assert.equal(heard, 1);
+  assert.equal(store.pin("1").ok, true);
+  assert.equal(store.unpin("2").ok, true);
+  assert.equal(heard, 1);
+  assert.equal(store.pinnedIds(), after, "the same array until a pin is added or dropped");
+  store.rename("2", "renamed");
+  assert.equal(store.pinnedIds(), after, "a save that changes no pin keeps it too");
+  store.unpin("1");
+  assert.equal(heard, 3);
+});
+
+test("removing a page unpins it, and the pin is gone from storage too", () => {
+  const storage = seeded(["1", "2"], undefined, JSON.stringify(["1", "2"]));
+  const store = createLinkStore(storage);
+  let heard = 0;
+  store.subscribe(() => heard++);
+  store.remove("1");
+  assert.deepEqual(store.pinnedIds(), ["2"]);
+  assert.deepEqual(JSON.parse(storage.rawPinned()), ["2"]);
+  assert.equal(heard, 1);
+  store.add("again", "https://example.org/1");
+  assert.deepEqual(store.pinnedIds(), ["2"], "a page added later never inherits a pin");
+});
+
+test("stale or garbage saved pins are dropped without throwing", () => {
+  for (const bad of ["not json", "{\"a\":1}", "\"x\"", "null", "7", "", "[1,null,{},[]]", "[\"gone\"]"]) {
+    assert.deepEqual(createLinkStore(seeded(["1", "2"], undefined, bad)).pinnedIds(), [], JSON.stringify(bad));
+  }
+  const storage = seeded(["1", "2"], undefined, JSON.stringify(["2", 5, "gone", "2", null, "1", "2"]));
+  const store = createLinkStore(storage);
+  assert.deepEqual(store.pinnedIds(), ["2", "1"], "only saved pages, once each, in saved order");
+  store.rename("1", "renamed");
+  assert.deepEqual(JSON.parse(storage.rawPinned()), ["2", "1"]);
+  assert.deepEqual(createLinkStore({ getItem: (k) => (k === PINNED_KEY ? (() => { throw new Error("blocked"); })() : null), setItem() {} }).pinnedIds(), []);
+});
+
+test("a full or blocked storage still pins in memory", () => {
+  const store = createLinkStore({ getItem: () => null, setItem: () => { throw new Error("full"); } });
+  const a = store.add("a", "https://example.org/a").value;
+  assert.equal(store.pin(a.id).ok, true);
+  assert.deepEqual(store.pinnedIds(), [a.id]);
+});
+
+// ---- Pinning a page to the top bar: the top bar, the page, the settings card ----
+
+const rowsOf = (tree) => elements(tree).filter((n) => n.props?.className === "megatech-artifacts__row" && n.type === "div");
+const press = (node, label) => buttons(node).find((b) => textOf(b) === label).props.onClick();
+
+test("the sidebar page is unchanged and no top-bar page exists until one is pinned", async () => {
+  const m = mount({ rows: ["1", "2"] });
+  await settle();
+  const sidebar = m.listed.get("artifacts");
+  assert.equal(sidebar.title, "Artifacts");
+  assert.equal(sidebar.primary, true);
+  assert.equal(sidebar.placement, undefined, "the sidebar entry keeps the host's default placement");
+  assert.deepEqual(m.topbar(), {});
+});
+
+test("each pinned page registers as its own primary top-bar page, named for the saved page", async () => {
+  const m = mount({ rows: ["1", "2", "3"], savedPinned: JSON.stringify(["3", "1"]) });
+  assert.deepEqual(m.topbar(), { "pin-3": "page 3", "pin-1": "page 1" }, "registered during activation, before any await");
+  for (const id of ["pin-1", "pin-3"]) {
+    const page = m.listed.get(id);
+    assert.equal(page.primary, true);
+    assert.equal(page.placement, "topbar");
+    assert.equal(page.layout, "workspace");
+    assert.match(page.icon, /^data:image\/svg\+xml/);
+    assert.equal(typeof page.component, "function");
+  }
+  await settle();
+  assert.deepEqual(Object.keys(m.topbar()).sort(), ["pin-1", "pin-3"], "nothing registered twice");
+});
+
+test("pinning from the settings card adds a top-bar page without a restart; unpinning removes it", async () => {
+  const m = mount({ rows: ["1", "2"] });
+  assert.match(textOf(rowsOf(m.settings())[1]), /Pin to top bar/);
+  press(rowsOf(m.settings())[1], "Pin to top bar");
+  await settle();
+  assert.deepEqual(m.topbar(), { "pin-2": "page 2" });
+  assert.match(textOf(rowsOf(m.settings())[1]), /Unpin/);
+  assert.doesNotMatch(textOf(rowsOf(m.settings())[0]), /Unpin/);
+  assert.deepEqual(JSON.parse(m.storage.rawPinned()), ["2"]);
+  press(rowsOf(m.settings())[1], "Unpin");
+  await settle();
+  assert.deepEqual(m.topbar(), {});
+  assert.deepEqual(JSON.parse(m.storage.rawPinned()), []);
+  assert.ok(m.listed.has("artifacts"), "the sidebar entry stays");
+});
+
+test("the Artifacts page offers Pin to top bar for the open page and Unpin once it is pinned", async () => {
+  const m = mount({ rows: ["1", "2"], savedDefault: "1", openId: "2" });
+  assert.equal(buttons(m.page(), m.View).some((b) => textOf(b) === "Unpin"), false);
+  press(m.page(), "Pin to top bar");
+  await settle();
+  assert.deepEqual(m.topbar(), { "pin-2": "page 2" });
+  const after = m.page();
+  assert.equal(buttons(after, m.View).some((b) => textOf(b) === "Pin to top bar"), false);
+  assert.ok(buttons(after, m.View).some((b) => textOf(b) === "Make default"), "the default control is still there beside it");
+  press(after, "Unpin");
+  await settle();
+  assert.deepEqual(m.topbar(), {});
+  assert.equal(buttons(m.page(), m.View).some((b) => textOf(b) === "Pin to top bar"), true);
+});
+
+test("the pin control follows the open page, including the default page, and is absent with no pages", () => {
+  const onDefault = mount({ rows: ["1", "2"], savedDefault: "1" });
+  assert.ok(buttons(onDefault.page(), onDefault.View).some((b) => textOf(b) === "Pin to top bar"));
+  const empty = mount();
+  assert.equal(buttons(empty.page(), empty.View).some((b) => /Pin|Unpin/.test(textOf(b))), false);
+});
+
+test("renaming a pinned page renames its top-bar entry; renaming an unpinned one adds none", async () => {
+  const m = mount({ rows: ["1", "2"], savedPinned: JSON.stringify(["2"]), edits: { "page 1": "unpinned one", "page 2": "renamed" } });
+  assert.deepEqual(m.topbar(), { "pin-2": "page 2" });
+  press(rowsOf(m.settings())[1], "Rename");
+  await settle();
+  assert.deepEqual(m.topbar(), { "pin-2": "renamed" });
+  press(rowsOf(m.settings())[0], "Rename");
+  await settle();
+  assert.deepEqual(m.topbar(), { "pin-2": "renamed" });
+  assert.equal(m.listed.get("artifacts").title, "Artifacts", "the sidebar title does not follow a rename");
+});
+
+test("removing a pinned page removes its top-bar entry and its pin", async () => {
+  const m = mount({ rows: ["1", "2"], savedPinned: JSON.stringify(["1", "2"]) });
+  const gone = m.listed.get("pin-1");
+  press(rowsOf(m.settings())[0], "Remove");
+  await settle();
+  assert.deepEqual(m.topbar(), { "pin-2": "page 2" });
+  assert.deepEqual(JSON.parse(m.storage.rawPinned()), ["2"]);
+  assert.equal(gone.component({}), null, "a page that is going away renders nothing");
+});
+
+test("pins survive a restart: the same storage mounted again registers the same top-bar pages", async () => {
+  const first = mount({ rows: ["1", "2", "3"] });
+  press(rowsOf(first.settings())[2], "Pin to top bar");
+  press(rowsOf(first.settings())[0], "Pin to top bar");
+  await settle();
+  assert.deepEqual(Object.keys(first.topbar()).sort(), ["pin-1", "pin-3"]);
+  await first.unmount();
+  assert.deepEqual(first.topbar(), {});
+  const restarted = mount({ storage: first.storage });
+  assert.deepEqual(restarted.topbar(), { "pin-1": "page 1", "pin-3": "page 3" });
+});
+
+test("a pinned page shows its own address in the browser at once, with no chip bar, and nothing else is pinned into it", () => {
+  const m = mount({ rows: ["1", "2"], savedPinned: JSON.stringify(["2"]) });
+  const tree = m.listed.get("pin-2").component({});
+  const view = elements(tree, m.View).find((n) => n.type === m.View);
+  assert.ok(view, "the browser view is rendered on the first render");
+  assert.equal(view.props.url, "https://example.org/2");
+  assert.equal(view.props.storage, "claude");
+  assert.equal(view.props.label, "page 2");
+  assert.equal(view.props.key, "2");
+  assert.equal(buttons(tree, m.View).length, 0, "no chip bar to pick from");
+  assert.equal(elements(tree, m.View).some((n) => n.props?.role === "toolbar"), false);
+});
+
+test("on a host without the browser a pinned page says so and names the page", () => {
+  const m = mount({ rows: ["1", "2"], savedPinned: JSON.stringify(["2"]), available: false });
+  const text = textOf(m.listed.get("pin-2").component({}));
+  assert.match(text, /only available in the macOS desktop app/);
+  assert.match(text, /page 2/);
+});
+
+test("a change that arrives while the last one is still being applied ends in the last state, with no double registration", async () => {
+  const warnings = [];
+  const warn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(" "));
+  try {
+    const m = mount({ rows: ["1", "2"], edits: { "page 1": "second", second: "third" } });
+    press(rowsOf(m.settings())[0], "Pin to top bar");
+    press(rowsOf(m.settings())[0], "Unpin");
+    press(rowsOf(m.settings())[0], "Pin to top bar");
+    await settle();
+    assert.deepEqual(m.topbar(), { "pin-1": "page 1" });
+    // Unpin and pin again before the old entry has finished going away: the new one must wait for it.
+    press(rowsOf(m.settings())[0], "Unpin");
+    assert.deepEqual(m.topbar(), { "pin-1": "page 1" }, "disposal is asynchronous, so the entry is still listed");
+    press(rowsOf(m.settings())[0], "Pin to top bar");
+    await settle();
+    assert.deepEqual(m.topbar(), { "pin-1": "page 1" });
+    // Rename twice in a row, the second while the first is still going.
+    press(rowsOf(m.settings())[0], "Rename");
+    press(rowsOf(m.settings())[0], "Rename");
+    await settle();
+    assert.deepEqual(m.topbar(), { "pin-1": "third" });
+    // Swap which page is pinned in one go.
+    press(rowsOf(m.settings())[0], "Unpin");
+    press(rowsOf(m.settings())[1], "Pin to top bar");
+    await settle();
+    assert.deepEqual(m.topbar(), { "pin-2": "page 2" });
+    assert.deepEqual(warnings, [], "no failed registration along the way");
+  } finally {
+    console.warn = warn;
+  }
+});
+
+test("one page that cannot be pinned is logged and the others still are; nothing throws", async () => {
+  const warnings = [];
+  const warn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(" "));
+  try {
+    const m = mount({ rows: ["1", "2", "3"], savedPinned: JSON.stringify(["1", "2", "3"]), failFor: (definition) => definition.name === "pin-2" });
+    await settle();
+    assert.deepEqual(Object.keys(m.topbar()).sort(), ["pin-1", "pin-3"]);
+    assert.ok(warnings.some((line) => line.includes("pin-2")));
+  } finally {
+    console.warn = warn;
+  }
+});
+
+test("when the plugin's scope ends every top-bar page goes with it, and a later change registers nothing", async () => {
+  const m = mount({ rows: ["1", "2"], savedPinned: JSON.stringify(["1"]) });
+  assert.deepEqual(Object.keys(m.topbar()), ["pin-1"]);
+  await m.unmount();
+  assert.deepEqual([...m.listed.keys()], []);
+  press(rowsOf(m.settings())[1], "Pin to top bar");
+  await settle();
+  assert.deepEqual([...m.listed.keys()], []);
+});
+
+test("the plugin asks for no more services than it uses", () => {
+  assert.deepEqual(inject, ["react", "pages", "settingsCards", "browser"]);
 });

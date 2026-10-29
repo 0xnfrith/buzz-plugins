@@ -1,4 +1,4 @@
-// Artifacts: a sidebar page that lists your saved web pages and opens each in Buzz's built-in browser.
+// Artifacts: a sidebar page that lists your saved web pages and opens each in Buzz's built-in browser, and a top-bar entry for each page you pin.
 // No build step: this file is the plugin. The links are kept in localStorage under the plugin's id; nothing is fetched.
 
 export const inject = ["react", "pages", "settingsCards", "browser"];
@@ -7,6 +7,8 @@ export const PLUGIN_ID = "megatech.artifacts";
 export const STORAGE_KEY = PLUGIN_ID;
 /** The id of the default page, kept beside the list so the list's own format is unchanged. */
 export const DEFAULT_KEY = `${PLUGIN_ID}.default`;
+/** The ids of the pages pinned to the top bar, as a JSON array, kept beside the list so the list's own format is unchanged. */
+export const PINNED_KEY = `${PLUGIN_ID}.pinned`;
 /** The named website storage the browser keeps between opens and restarts (macOS 14+), so a sign-in survives. */
 export const BROWSER_STORAGE = "claude";
 const MAX_URL_BYTES = 2048; // Buzz's browser limit, after normalization
@@ -63,23 +65,47 @@ function readDefault(storage) {
   }
 }
 
+function readPinned(storage) {
+  try {
+    const parsed = JSON.parse(storage.getItem(PINNED_KEY) ?? "[]");
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Buzz's rule for a page id (`src/features/pages/service.ts`): it starts with a lowercase letter or digit, then letters, digits, `.`, `_` or `-`. */
+const PAGE_ID = /^[a-z0-9][a-z0-9._-]*$/;
+
+/** The id of the top-bar page for a saved page, or `undefined` when the saved id could not make a valid one. */
+export function pinPageId(linkId) {
+  const id = `pin-${linkId}`;
+  return PAGE_ID.test(id) ? id : undefined;
+}
+
 /**
- * The saved list and which page is the default. `storage` is a localStorage-shaped object; every call that changes
+ * The saved list, which page is the default, and which pages are pinned to the top bar. `storage` is a localStorage-shaped object; every call that changes
  * either saves it and tells subscribers. The default is the saved id when that page exists, otherwise the first
- * page, so a list saved before defaults existed, or a stale id, still has one.
+ * page, so a list saved before defaults existed, or a stale id, still has one. The pinned ids are only ever ones
+ * that name a saved page and could make a valid top-bar page, without repeats; anything else saved is dropped.
  */
 export function createLinkStore(storage) {
   let links = readSaved(storage);
   let savedDefault = readDefault(storage);
+  const keepPinned = (ids) => [...new Set(ids)].filter((id) => pinPageId(id) && links.some((link) => link.id === id));
+  let pinned = keepPinned(readPinned(storage));
   let counter = 0;
   const listeners = new Set();
   const defaultId = () => (links.some((link) => link.id === savedDefault) ? savedDefault : links[0]?.id);
   const save = () => {
     links = [...links]; // a new array each time, so a React snapshot sees the change
     savedDefault = defaultId() ?? ""; // write the default that applies now, so a stale id is repaired and the first page added sticks
+    const kept = keepPinned(pinned); // a removed page is unpinned
+    if (kept.length !== pinned.length) pinned = kept;
     try {
       storage.setItem(STORAGE_KEY, JSON.stringify(links));
       storage.setItem(DEFAULT_KEY, savedDefault);
+      storage.setItem(PINNED_KEY, JSON.stringify(pinned));
     } catch {
       // Storage full or blocked: the list still works until the page is closed.
     }
@@ -90,6 +116,9 @@ export function createLinkStore(storage) {
     list: () => links,
     /** The id of the default page, or `undefined` while the list is empty. A string, so a React snapshot compares it by value. */
     defaultId,
+    /** The ids of the pinned pages, in the order they were pinned. The same array until a pin is added or dropped, so a React snapshot compares it by identity. */
+    pinnedIds: () => pinned,
+    isPinned: (id) => pinned.includes(id),
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -125,6 +154,25 @@ export function createLinkStore(storage) {
       }
       return { ok: true, value: link };
     },
+    pin(id) {
+      const link = links.find((entry) => entry.id === id);
+      if (!link) return { ok: false, message: "That link is gone." };
+      if (!pinPageId(id)) return { ok: false, message: "That link cannot be pinned." };
+      if (!pinned.includes(id)) {
+        pinned = [...pinned, id];
+        save();
+      }
+      return { ok: true, value: link };
+    },
+    unpin(id) {
+      const link = links.find((entry) => entry.id === id);
+      if (!link) return { ok: false, message: "That link is gone." };
+      if (pinned.includes(id)) {
+        pinned = pinned.filter((entry) => entry !== id);
+        save();
+      }
+      return { ok: true, value: link };
+    },
   };
 }
 
@@ -142,7 +190,8 @@ const CSS = `
 .megatech-artifacts__chip:hover{background:var(--affordance-backdrop-pressed,color-mix(in srgb,currentColor 10%,transparent))}
 .megatech-artifacts__chip[aria-current="true"]{outline:2px solid var(--accent-9,currentColor)}
 .megatech-artifacts__chip[data-default="true"]::before{content:"\\2605\\00a0";color:var(--accent-9,currentColor)}
-.megatech-artifacts__default{margin-left:auto;font-size:.9em}
+.megatech-artifacts__actions{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.megatech-artifacts__action{font-size:.9em}
 .megatech-artifacts__mark{opacity:.85;white-space:nowrap}
 .megatech-artifacts__view{flex:1;min-height:0;display:flex;flex-direction:column}
 .megatech-artifacts__empty{padding:24px 16px;opacity:.8;line-height:1.5}
@@ -160,6 +209,8 @@ export function apply(ctx) {
   const store = createLinkStore(window.localStorage);
   const useLinks = () => React.useSyncExternalStore(store.subscribe, store.list);
   const useDefaultId = () => React.useSyncExternalStore(store.subscribe, store.defaultId);
+  const usePinnedIds = () => React.useSyncExternalStore(store.subscribe, store.pinnedIds);
+  const unavailable = (what) => h("div", { className: "megatech-artifacts__empty" }, `Buzz's built-in browser is only available in the macOS desktop app, so ${what} cannot be opened here.`);
 
   ctx.effect(() => {
     // [DOM] No style service in API v1: one <style> element, removed when the plugin's scope ends.
@@ -173,11 +224,12 @@ export function apply(ctx) {
   function ArtifactsPage() {
     const links = useLinks();
     const defaultId = useDefaultId();
+    const pinnedIds = usePinnedIds();
     const [openId, setOpenId] = React.useState(undefined);
     // Open on the default until a chip is clicked; if the chosen page is removed, fall back to the default.
     const current = links.find((link) => link.id === openId) ?? links.find((link) => link.id === defaultId);
     const body = !ctx.browser.available
-      ? h("div", { className: "megatech-artifacts__empty" }, "Buzz's built-in browser is only available in the macOS desktop app, so these pages cannot be opened here.")
+      ? unavailable("these pages")
       : links.length === 0
         ? h("div", { className: "megatech-artifacts__empty" }, "No saved pages yet. Add one in Settings, in the Artifacts card.")
         : current
@@ -206,15 +258,38 @@ export function apply(ctx) {
             link.name,
           ),
         ),
-        current && current.id !== defaultId
-          ? h("button", { type: "button", className: "megatech-artifacts__chip megatech-artifacts__default", title: `Open ${current.name} first each time`, onClick: () => store.setDefault(current.id) }, "Make default")
+        current
+          ? h(
+              "span",
+              { className: "megatech-artifacts__actions" },
+              current.id !== defaultId
+                ? h("button", { type: "button", className: "megatech-artifacts__chip megatech-artifacts__action", title: `Open ${current.name} first each time`, onClick: () => store.setDefault(current.id) }, "Make default")
+                : null,
+              pinnedIds.includes(current.id)
+                ? h("button", { type: "button", className: "megatech-artifacts__chip megatech-artifacts__action", title: `Take ${current.name} off the top bar`, onClick: () => store.unpin(current.id) }, "Unpin")
+                : h("button", { type: "button", className: "megatech-artifacts__chip megatech-artifacts__action", title: `Show ${current.name} in the top bar`, onClick: () => store.pin(current.id) }, "Pin to top bar"),
+            )
           : null,
       ),
       h("div", { className: "megatech-artifacts__view" }, body),
     );
   }
 
-  function LinkRow({ link, isDefault }) {
+  /** The page behind a top-bar entry: one saved page, straight in the browser, with no chip bar. */
+  function pinnedPage(linkId) {
+    return function PinnedPage() {
+      const link = useLinks().find((entry) => entry.id === linkId);
+      // A page removed while its entry is still going away has nothing to show.
+      if (!link) return null;
+      return h(
+        "div",
+        { className: "megatech-artifacts" },
+        h("div", { className: "megatech-artifacts__view" }, ctx.browser.available ? h(ctx.browser.View, { key: link.id, url: link.url, storage: BROWSER_STORAGE, label: link.name }) : unavailable(link.name)),
+      );
+    };
+  }
+
+  function LinkRow({ link, isDefault, isPinned }) {
     const [name, setName] = React.useState(link.name);
     return h(
       "div",
@@ -225,6 +300,9 @@ export function apply(ctx) {
       isDefault
         ? h("span", { className: "megatech-artifacts__mark" }, h("span", { "aria-hidden": "true" }, "\u2605 "), "Default")
         : h("button", { type: "button", className: "ui-button", "aria-label": `Make default: ${link.name}`, onClick: () => store.setDefault(link.id) }, "Make default"),
+      isPinned
+        ? h("button", { type: "button", className: "ui-button", "aria-label": `Unpin from the top bar: ${link.name}`, onClick: () => store.unpin(link.id) }, "Unpin")
+        : h("button", { type: "button", className: "ui-button", "aria-label": `Pin to the top bar: ${link.name}`, onClick: () => store.pin(link.id) }, "Pin to top bar"),
       h("div", { className: "megatech-artifacts__url", style: { flexBasis: "100%" } }, link.url),
     );
   }
@@ -232,6 +310,7 @@ export function apply(ctx) {
   function ArtifactsSettings() {
     const links = useLinks();
     const defaultId = useDefaultId();
+    const pinnedIds = usePinnedIds();
     const [name, setName] = React.useState("");
     const [address, setAddress] = React.useState("");
     const [error, setError] = React.useState("");
@@ -247,7 +326,7 @@ export function apply(ctx) {
     return h(
       "div",
       { className: "megatech-artifacts megatech-artifacts__card", style: { height: "auto" } },
-      h("p", null, "Saved pages show in the Artifacts page in the sidebar, which opens on the default page (the first one you add, until you pick another). They are kept on this computer, in this app's storage. Pages open in Buzz's built-in browser (macOS 14 or later keeps the sign-in between restarts)."),
+      h("p", null, "Saved pages show in the Artifacts page in the sidebar, which opens on the default page (the first one you add, until you pick another). Pin a page to give it its own entry in the top bar, next to Messages, which opens it at once; pinning and unpinning take effect straight away. They are kept on this computer, in this app's storage. Pages open in Buzz's built-in browser (macOS 14 or later keeps the sign-in between restarts)."),
       h(
         "form",
         { className: "megatech-artifacts__row", onSubmit: add },
@@ -256,10 +335,67 @@ export function apply(ctx) {
         h("button", { type: "submit", className: "ui-button" }, "Add"),
       ),
       error ? h("div", { className: "megatech-artifacts__error", role: "alert" }, error) : null,
-      links.map((link) => h(LinkRow, { key: link.id, link, isDefault: link.id === defaultId })),
+      links.map((link) => h(LinkRow, { key: link.id, link, isDefault: link.id === defaultId, isPinned: pinnedIds.includes(link.id) })),
     );
   }
 
   ctx.pages.register({ id: "artifacts", title: "Artifacts", primary: true, layout: "workspace", icon: ICON, component: ArtifactsPage });
   ctx.settingsCards.register({ id: "settings", title: "Artifacts", group: "Plugins", component: ArtifactsSettings });
+
+  // One top-bar page per pinned saved page. `pages.register` returns no disposer and a registration lasts as long as its
+  // scope, so each lives in a child scope (`ctx.plugin`) that is disposed to unpin. A title cannot change in place, so a
+  // rename disposes the entry and registers it again. Disposal is asynchronous and the same id cannot be registered twice,
+  // so changes are applied one round at a time, and a change that arrives during a round is applied in the next.
+  const live = new Map(); // saved page id -> { title, fiber }
+  let busy = false;
+  let again = false;
+  const wanted = () => {
+    const titles = new Map();
+    for (const link of store.list()) if (store.isPinned(link.id)) titles.set(link.id, link.name.trim() || link.url);
+    return titles;
+  };
+  const register = (linkId, title) => {
+    const id = pinPageId(linkId);
+    if (!id) return;
+    try {
+      const fiber = ctx.plugin({
+        name: id,
+        inject: ["pages"],
+        apply: (scope) => scope.pages.register({ id, title, primary: true, placement: "topbar", layout: "workspace", icon: ICON, component: pinnedPage(linkId) }),
+      });
+      live.set(linkId, { title, fiber });
+    } catch (error) {
+      console.warn(`Artifacts: could not pin ${id}`, error); // a failed pin never breaks the others
+    }
+  };
+  async function reconcile() {
+    const keep = wanted();
+    const stale = [...live].filter(([linkId, entry]) => keep.get(linkId) !== entry.title);
+    for (const [linkId] of stale) live.delete(linkId);
+    if (stale.length) {
+      await Promise.all(stale.map(([, entry]) => Promise.resolve(entry.fiber.dispose()).catch((error) => console.warn("Artifacts: could not unpin", error))));
+    }
+    for (const [linkId, title] of wanted()) if (!live.has(linkId)) register(linkId, title);
+  }
+  async function sync() {
+    if (busy) {
+      again = true;
+      return;
+    }
+    busy = true;
+    try {
+      do {
+        again = false;
+        await reconcile();
+      } while (again);
+    } catch (error) {
+      console.warn("Artifacts: could not update the top bar", error);
+    } finally {
+      busy = false;
+    }
+  }
+  ctx.effect(() => {
+    sync();
+    return store.subscribe(sync); // the scope's end stops listening; its child scopes end with it
+  });
 }
