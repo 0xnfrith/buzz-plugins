@@ -1,7 +1,20 @@
 // One stylesheet, added to <head> inside ctx.effect and removed by its cleanup. Surfaces, text,
 // borders and the accent come from the host's theme tokens, so light and dark follow Settings →
 // Appearance with no listener. Every var() has a fallback in case a later host drops a token.
+import { PAGE_ICON } from "./icons";
+
 export const CSS = /* css */ `
+/* [DOM] The page's entry in navigation and search. The host draws its icon as an <img> of PAGE_ICON, which
+   cannot follow the theme, so paint the same shape in the entry's text colour (a mask) and move the
+   image's own pixels out of its box. It matches only an <img> whose src is exactly PAGE_ICON, so no
+   other icon is touched. If a later host draws the icon some other way this stops matching and the
+   icon is simply the plain black one. */
+img[src="${PAGE_ICON}"] {
+  background-color: currentColor;
+  -webkit-mask: url("${PAGE_ICON}") center / contain no-repeat;
+  mask: url("${PAGE_ICON}") center / contain no-repeat;
+  object-position: 999px 0;
+}
 .mtb-root {
   --mtb-accent: var(--accent-9, #3e63dd);
   --mtb-ink: var(--text-standard, #e9eef4);

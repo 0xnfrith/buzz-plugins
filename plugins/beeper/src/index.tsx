@@ -26,6 +26,8 @@ export function apply(ctx: Context) {
 
   ctx.effect(() => {
     // [DOM] The page's styles are one <style> element: API v1 has no separate CSS, and the host has no style service.
+    // [DOM] One rule in it reaches the host's <img> of this page's own icon (matched by that exact data URL), because an icon drawn
+    // in an <img> cannot take the theme's colour. It goes with the element when this scope ends.
     const style = document.createElement("style");
     style.dataset.megatechBeeper = "";
     style.textContent = CSS;

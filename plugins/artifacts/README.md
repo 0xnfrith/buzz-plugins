@@ -37,18 +37,22 @@ Only `https://` addresses are saved, with no user name or password in them, up t
 
 | Part | How |
 | --- | --- |
-| Sidebar entry | `ctx.pages.register({ id: "artifacts", primary: true, layout: "workspace", icon })` |
+| Sidebar entry | `ctx.pages.register({ id: "artifacts", primary: true, layout: "workspace" })`, with no `icon` (see below) |
 | Opening a page | `ctx.browser.View({ url, storage: "claude", label })` rendered inside the page. The host owns the controls, the website and the session |
 | The list | `localStorage` under the plugin id, `megatech.artifacts`, as JSON. Only on this computer, never sent anywhere |
 | The default | The id of the default page, as plain text in `localStorage` under `megatech.artifacts.default`, beside the list. The list keeps its old format, so a list saved before defaults existed reads unchanged and its first page is the default. A saved id that matches no page (stale or hand-edited) also falls back to the first page. The first page added becomes the default; removing the default moves it to the first page left; no pages, no default |
 | Opening the page | The page renders the default page's `browser.View` on its first render. Clicking a chip shows that page until you leave the page. If the page you are on is removed, it falls back to the default |
-| Top-bar entry | One page per pinned saved page: `ctx.pages.register({ id: "pin-<saved id>", title: <page name>, primary: true, placement: "topbar", layout: "workspace", icon })`. `pages.register` returns no disposer and a registration lasts as long as the scope that made it, so each one is registered in a child scope of the plugin (`ctx.plugin`), and unpinning ends that scope: no reload |
+| Top-bar entry | One page per pinned saved page: `ctx.pages.register({ id: "pin-<saved id>", title: <page name>, primary: true, placement: "topbar", layout: "workspace" })`. `pages.register` returns no disposer and a registration lasts as long as the scope that made it, so each one is registered in a child scope of the plugin (`ctx.plugin`), and unpinning ends that scope: no reload |
 | The pinned page | Renders `ctx.browser.View({ url, storage: "claude", label })` for its own saved page, and nothing else: no chip bar |
 | The pins | The ids of the pinned pages, as a JSON array in `localStorage` under `megatech.artifacts.pinned`, beside the list and the default. The list keeps its format. Only ids of saved pages that can make a valid page id are kept (Buzz needs `^[a-z0-9][a-z0-9._-]*$`, and the id is `pin-` plus the saved id); anything else saved there is dropped. Removing a page unpins it |
 | Changing a pin | One round at a time. Unpinning or renaming ends the old entry first (ending a scope is asynchronous, and Buzz refuses the same page id twice), then the new one is registered; a change that arrives during a round is applied right after it. A title cannot change in place, so a rename ends the entry and registers it again, and the page stays open if it was |
 | Settings | `ctx.settingsCards.register(...)`: add, rename, remove, make default, pin and unpin |
 | Colours | The host's tokens (`--accent-9`, `--affordance-backdrop-pressed`, `--text-standard`, `--border-focus`), each with a fallback |
 | Manifest | `id`, `name`, `apiVersion`, `description`, `discovery`. No `host` block: the plugin declares no command and no network origin |
+
+### The icon
+
+The plugin gives no `icon` to any page. Buzz draws a page's `icon` as an `<img>` of a `data:` image, and an SVG inside an `<img>` cannot see the app's theme, so a plugin icon comes out in a fixed colour (black for this plugin's earlier one) next to Buzz's own entries, which follow the theme. With no `icon`, Buzz draws its own icon for the page, in the same colour as its other entries in light and dark, for the sidebar entry and for every pinned top-bar entry. Sources are in `NOTES.md`.
 
 ### The no-network rule
 
