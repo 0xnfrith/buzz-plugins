@@ -2242,12 +2242,21 @@ var openSettings = (section) => {
 		viewer,
 		communityOrigin: origin
 	} : null;
-	ctx.navigation.open({
+	const open = (named) => ctx.navigation.open({
 		version: 1,
 		kind: "settings",
-		...section ? { section } : {},
+		...named ? { section: named } : {},
 		scope
-	}).catch(() => {});
+	});
+	(async () => {
+		try {
+			const result = await open(section);
+			if (!section || result.status !== "failed") return;
+		} catch {
+			if (!section) return;
+		}
+		await open();
+	})().catch(() => {});
 };
 var goPage = (letter) => {
 	clearPending();

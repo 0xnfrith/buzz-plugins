@@ -1,7 +1,7 @@
 {
   "sidebar gp: open Manage plugins": {
     "control": "control: open Manage plugins (the page itself)",
-    "why": "Opening Settings costs the app the render of its dialog and of the Manage plugins section (some 200 to 400 ms on a two-core machine); the control row is the page asking the host for the same section itself, and costs as much or more. `gp` adds the one navigation call and nothing else."
+    "why": "Opening Settings costs the app the render of its dialog and of the Manage plugins section: about 140 ms at the median on CI, where the control row (the page asking the host for the same section itself, and closing the dialog) is about 150 ms. `gp` adds the one navigation call."
   },
   "list gg": {
     "control": "control: jump to the top (the page itself)",

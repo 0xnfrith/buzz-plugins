@@ -383,6 +383,31 @@ test("gp opens Settings on Manage plugins; a lone p does nothing; gs still opens
   await closeSettings(page);
 });
 
+test("gp on a Buzz that rejects the section field still opens Settings", async ({ page, app }) => {
+  await open(page, app);
+  const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+  // A Buzz that does not take the section (an older one, whose Settings target has no such field) rejects the target. The page makes
+  // this one's pattern for the section name refuse "plugins", which is what its validator then does with the field.
+  await page.evaluate(() => {
+    const test = RegExp.prototype.test;
+    RegExp.prototype.test = function (value) {
+      return value === "plugins" && this.source.includes("(?:") ? false : test.call(this, value);
+    };
+  });
+  const answer = await page.evaluate(
+    (viewer) =>
+      window.fixtureNavigation.open({ version: 1, kind: "settings", section: "plugins", scope: { viewer, communityOrigin: "https://primary.example" } }),
+    app.viewer,
+  );
+  expect(answer).toEqual({ status: "failed", reason: "invalid-target" }); // the host refuses a target that names the section
+  await expect(settings).toHaveCount(0);
+  await press(page, "g", "p");
+  await expect(settings).toBeVisible(); // Settings opened all the same, on the section it opens on
+  await expect(settings.locator('nav[aria-label="Settings sections"] [aria-current]')).not.toHaveText("Manage plugins");
+  await closeSettings(page);
+  await expect(settings).toHaveCount(0);
+});
+
 test("gs opens Settings, for the community on screen; a lone s does nothing", async ({ page, app }) => {
   await open(page, app);
   const settings = page.getByRole("dialog", { name: "Settings", exact: true });
