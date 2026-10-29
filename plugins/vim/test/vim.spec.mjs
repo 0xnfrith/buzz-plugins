@@ -2966,6 +2966,58 @@ test.describe("the g page keys", () => {
       await expect(bar(page)).not.toContainText("g");
     });
   }
+
+  // g1 ... g9 are the entries of the top bar, counted from its left. The harness has a plugin whose page is placed there (and one placed in the
+  // toolbar, which is not an entry of the bar), so the bar is Messages, Reminders, that page, Agents, Workflows: the host puts the others by name.
+  const tabs = (page) => page.getByRole("tablist", { name: "Topbar pages", exact: true }).getByRole("tab");
+  const ORDER = ["Messages", "Reminders", "A deliberately long topbar destination", "Agents", "Workflows"];
+  for (const place of ["the channel's list", "the thread's list", "the channel list", "the channel's box", "the thread's box"]) {
+    test(`g1 to g5 open the entries of the top bar from ${place}, g6 and g0 nothing`, async ({ page, app }) => {
+      await page.addInitScript(() => {
+        localStorage.setItem("buzzodz.plugins.v1", JSON.stringify({ version: 2, enabled: { "fixture.page-placement": true } }));
+      });
+      await open(page, app);
+      const inBox = place.endsWith("box");
+      await expect(tabs(page)).toHaveText(ORDER);
+      for (const n of [1, 2, 3, 4, 5]) {
+        await enter(page, place);
+        const draft = inBox ? await composer(page).evaluate((el) => el.textContent) : "";
+        await press(page, "g", String(n));
+        await expect(tabs(page).nth(n - 1), `g${n} from ${place}`).toHaveAttribute("aria-selected", "true");
+        await expect(tabs(page).nth(n - 1)).toHaveText(ORDER[n - 1]);
+        if (n === 1) {
+          // Messages again: nothing typed, no count left over (the next k moves one message, not one more).
+          await expect(bar(page)).toContainText("NORMAL");
+          if (inBox) expect(await composer(page).evaluate((el) => el.textContent)).toBe(draft);
+        }
+      }
+      // Nothing is the sixth entry, and nothing happens: the page stays, the prefix is gone.
+      await press(page, "g", "6");
+      await expect(tabs(page).nth(4)).toHaveAttribute("aria-selected", "true");
+      await press(page, "g", "0");
+      await expect(tabs(page).nth(4)).toHaveAttribute("aria-selected", "true");
+      await expect(bar(page)).not.toContainText("g");
+    });
+  }
+
+  test("a digit after g is the entry's number, not a count; a count before a motion still is one", async ({ page, app }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("buzzodz.plugins.v1", JSON.stringify({ version: 2, enabled: { "fixture.page-placement": true } }));
+    });
+    await open(page, app);
+    await enter(page, "the channel's list");
+    await press(page, "g", "2"); // Reminders
+    await expect(tabs(page).nth(1)).toHaveAttribute("aria-selected", "true");
+    await press(page, "g", "m");
+    await enter(page, "the channel's list");
+    const ids = await rowIds(page);
+    await shifted(page, "G");
+    await expect.poll(() => cursor(page)).toBe(ids.at(-1));
+    await press(page, "k"); // one message: the 2 of g2 is not waiting as a count
+    await expect.poll(() => cursor(page)).toBe(ids.at(-2));
+    await press(page, "3", "k");
+    await expect.poll(() => cursor(page)).toBe(ids.at(-5));
+  });
 });
 
 test.describe("the g page keys on a Mac", () => {

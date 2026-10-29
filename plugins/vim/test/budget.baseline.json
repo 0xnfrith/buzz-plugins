@@ -3,6 +3,14 @@
     "control": "control: open Manage plugins (the page itself)",
     "why": "Opening Settings costs the app the render of its dialog and of the Manage plugins section: about 140 ms at the median on CI, where the control row (the page asking the host for the same section itself, and closing the dialog) is about 150 ms. `gp` adds the one navigation call."
   },
+  "sidebar g2: the second entry of the top bar": {
+    "control": "control: open Reminders (the page itself)",
+    "why": "Opening another page costs the app the render of that page (the control row is the page asking the host to open the same page itself). `g2` adds the one navigation call, and the look at the top bar's entries to find the second."
+  },
+  "sidebar g1: the first entry of the top bar": {
+    "control": "control: open Messages (the page itself)",
+    "why": "Coming back to Messages costs the app the render of the channel's conversation and of the channel list (the control row is the page asking the host to open the same page itself). `g1` adds the one navigation call, and the look at the top bar's entries to find the first."
+  },
   "list gg": {
     "control": "control: jump to the top (the page itself)",
     "why": "Jumping to the top of a list of 2,400 messages costs the app the layout of the rows it lands on, and the most of what `gg` costs (the control row is the page setting scrollTop itself); `gg` also moves the cursor row after the jump."

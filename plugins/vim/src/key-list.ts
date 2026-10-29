@@ -31,6 +31,7 @@ export const groups = (): KeyGroup[] => {
         ["gt  gT", "Next / previous page, cycling through the pages the app lists", "API"],
         ["gi gm ga gr gw gv gs", "Open Inbox, Messages, Agents, Reminders, Workflows, the Vim mode page (its switches), Settings (the page whose name starts with the letter). The app has Cmd+, or Ctrl+, for Settings too", "API"],
         ["gp", "Open Settings on Manage plugins", "API"],
+        ["g1  ...  g9", "Open the nth entry of the top bar, counted from the left as the bar shows them: Messages, Reminders, then the others by name (Agents and Workflows, and the pages plugins pin to the bar, such as Artifacts' pins, among them). A digit after g is the entry's number, not a count. The pages of the sidebar (Inbox, the Vim mode page) keep their letters and gt", "API"],
         ["i  a  A", "Go to INSERT: focus the message box (a: after the character under the caret; A: at the end of the draft)", "API + DOM"],
         ["Esc", "Nothing. It does not close a thread: q does", "DOM"],
         ["/", "Search this conversation (presses the host's own chord)", "API-adjacent"],
