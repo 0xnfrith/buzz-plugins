@@ -1901,7 +1901,7 @@ var groups = () => {
 				],
 				[
 					"j  k  l  Enter  h",
-					"Only in the Settings dialog (every other dialog and menu keeps the keys off): j k move through its sections, l or Enter opens one and goes into it, h comes back to the list. Inside a section j k move from one control to the next (the plugin cards and their buttons, tabs, switches, menus: what Tab visits), Enter presses the one that has the focus (a switch included), and a field or an open menu keeps its own keys. Esc closes the dialog, as it always did",
+					"Only in the Settings dialog (every other dialog and menu keeps the keys off): j k move through its sections, l or Enter opens one and goes into it, h comes back to the list. Inside a section j k move from one control to the next (the plugin cards and their buttons, tabs, switches, menus: what Tab visits, so from the cards j reaches a plugin's Disable button with no Tab; with no control further on they scroll the section), Enter is the app's own on the control that has the focus (a button, a link and a switch all take it), and a text field such as the search box or a select is stepped over: Tab reaches it, and there j types. An open menu keeps its own keys. Esc closes the dialog, as it always did",
 					"DOM"
 				],
 				[
@@ -2383,8 +2383,10 @@ var ownKeys = (el) => {
 	const own = el.closest(SETTINGS_OWN_KEYS);
 	return !!own && !(own.getAttribute("role") === "combobox" && own.tagName === "BUTTON" && own.getAttribute("aria-expanded") !== "true");
 };
+var NOT_TYPED_IN = /^(checkbox|radio|button|submit|reset|image|file|color|range)$/;
+var typing = (el) => isEditable(el) && !(el instanceof HTMLInputElement && NOT_TYPED_IN.test(el.type));
 var TAB_STOPS = "a[href], button, input, select, textarea, [tabindex]";
-var paneStops = (content) => [...content.querySelectorAll(TAB_STOPS)].filter((el) => el.tabIndex >= 0 && !el.disabled && visible(el));
+var paneStops = (content) => [...content.querySelectorAll(TAB_STOPS)].filter((el) => el.tabIndex >= 0 && !el.disabled && visible(el) && !typing(el));
 var settingsItems = (dialog) => [...dialog.querySelectorAll(`${SETTINGS_NAV} button:not([aria-label])`)].filter(visible);
 var focusSection = (item) => {
 	if (!item) return;
@@ -2417,7 +2419,7 @@ var onSettingsKey = (event) => {
 	if (!line && !digit && key !== "j" && key !== "k" && key !== "h" && key !== "l" && key !== "Enter") return;
 	const dialog = settingsDialog();
 	const el = event.target;
-	if (!dialog || !dialog.contains(el) || isEditable(el) || ownKeys(el)) return;
+	if (!dialog || !dialog.contains(el) || typing(el) || ownKeys(el)) return;
 	if (digit) {
 		set({ count: Math.min(state.count * 10 + Number(key), 999) });
 		return armPending();
@@ -2469,13 +2471,6 @@ var onSettingsKey = (event) => {
 			const next = el === content ? key === "j" ? stops[0] : void 0 : key === "j" ? stops.find(after) : stops.findLast(before);
 			if (next) return focusControl(next);
 			return scrollParent(el, dialog).scrollBy({ top: key === "j" ? 48 : -48 });
-		}
-		if (key === "Enter") {
-			if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
-				swallow();
-				el.click();
-			}
-			return;
 		}
 		return;
 	}

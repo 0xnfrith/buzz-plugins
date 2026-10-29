@@ -4,7 +4,8 @@
 // through its sections, l or Enter opens one and goes into it, h comes back to the list. Esc closes it,
 // which the host already does. Inside a section j and k move from one control to the next (the plugin
 // cards and their buttons, the tabs, a section's switches and menus: the tab stops, in the order Tab
-// takes them), Enter presses the one that has the focus, and a field, a select or an open menu keep
+// takes them, except the fields, which j and k step over: Tab reaches one, and there j types), Enter is
+// the host's own (a button, a link and a switch all take it), and a field, a select or an open menu keep
 // their own keys. Plugin API: nothing, there is no keyboard service for a dialog. DOM: the dialog, its
 // `nav[aria-label="Settings sections"]` and the host's own `#settings-content`.
 import { afterLayout, clamp, isEditable, visible } from "./dom";
@@ -19,12 +20,17 @@ const ownKeys = (el: HTMLElement) => {
   const own = el.closest<HTMLElement>(SETTINGS_OWN_KEYS);
   return !!own && !(own.getAttribute("role") === "combobox" && own.tagName === "BUTTON" && own.getAttribute("aria-expanded") !== "true");
 };
+// Where a key is typed: a text field, a native select, a text area, an editable region. j and k are letters there. (A check box or
+// a radio button is an input too, and takes no letters.)
+const NOT_TYPED_IN = /^(checkbox|radio|button|submit|reset|image|file|color|range)$/;
+const typing = (el: Element) => isEditable(el) && !(el instanceof HTMLInputElement && NOT_TYPED_IN.test(el.type));
 // The controls of a section in the order Tab visits them: what takes the focus (a tabindex of 0 or more, so a tab list's
-// roving items count once) and shows.
+// roving items count once) and shows, except where a key is typed (the search box, a select): j and k step over those, so that
+// they reach a plugin's Disable button from the cards without a Tab, and Tab reaches them.
 const TAB_STOPS = 'a[href], button, input, select, textarea, [tabindex]';
 const paneStops = (content: HTMLElement) =>
   [...content.querySelectorAll<HTMLElement>(TAB_STOPS)].filter(
-    (el) => el.tabIndex >= 0 && !(el as HTMLButtonElement).disabled && visible(el),
+    (el) => el.tabIndex >= 0 && !(el as HTMLButtonElement).disabled && visible(el) && !typing(el),
   );
 // The sections, not the community address button the list starts with (it copies a URL).
 const settingsItems = (dialog: Element) =>
@@ -64,7 +70,7 @@ export const onSettingsKey = (event: KeyboardEvent) => {
   const dialog = settingsDialog();
   const el = event.target as HTMLElement;
   // Typing, a select, a menu or a popup over the dialog (its focus is outside it) keep their own keys.
-  if (!dialog || !dialog.contains(el) || isEditable(el) || ownKeys(el)) return;
+  if (!dialog || !dialog.contains(el) || typing(el) || ownKeys(el)) return;
   if (digit) {
     set({ count: Math.min(state.count * 10 + Number(key), 999) });
     return armPending();
@@ -124,15 +130,7 @@ export const onSettingsKey = (event: KeyboardEvent) => {
       if (next) return focusControl(next);
       return scrollParent(el, dialog as HTMLElement).scrollBy({ top: key === "j" ? 48 : -48 });
     }
-    if (key === "Enter") {
-      // A switch or a check box ignores Enter; it is pressed here. A button or a link keeps its own.
-      if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
-        swallow();
-        el.click();
-      }
-      return;
-    }
-    return; // l: nothing further in
+    return; // Enter is the host's own (a button, a link and a switch all take it themselves); l: nothing further in
   }
   if (key === "Enter" || key === "l") return; // a button or link around the section keeps its Enter
   swallow();

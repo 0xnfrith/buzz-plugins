@@ -729,8 +729,9 @@ for (const [id, letter, name] of [
     ]);
   });
 
-// The controls of the open Settings section in the order Tab visits them, for the control rows.
-const PANE_STOPS = `const stops = [...document.querySelectorAll('#settings-content :is(a[href], button, input, select, textarea, [tabindex])')].filter((e) => e.tabIndex >= 0 && !e.disabled && e.getClientRects().length > 0)`;
+// The controls of the open Settings section in the order Tab visits them, without the fields where a key is typed (j and k step over those),
+// for the control rows.
+const PANE_STOPS = `const stops = [...document.querySelectorAll('#settings-content :is(a[href], button, input, select, textarea, [tabindex])')].filter((e) => e.tabIndex >= 0 && !e.disabled && e.getClientRects().length > 0 && !e.matches('input:not([type=checkbox]):not([type=radio]):not([type=button]), select, textarea'))`;
 surface("settings", "Settings dialog", async ({ page, rows }) => {
   await page.keyboard.press("g");
   await page.keyboard.press("s");
@@ -752,8 +753,8 @@ surface("settings", "Settings dialog", async ({ page, rows }) => {
     ),
     control("click the open section (the page itself)", "focus the open section (the page itself)", `document.querySelector('nav[aria-label="Settings sections"] button[aria-current]').click()`, `document.querySelector('nav[aria-label="Settings sections"] button[aria-current]').focus()`, 30),
     { pair: [{ key: "Ctrl-e", seq: ["Control+e"] }, { key: "Ctrl-y", seq: ["Control+y"] }] },
-    // Inside a section: j and k move from one control to the next. Manage plugins has the most (the cards, the tabs, the search box and
-    // two buttons for each of some forty plugins). The row starts on the fourth control, and the two keys alternate between the fourth and the third.
+    // Inside a section: j and k move from one control to the next. Manage plugins has the most (the cards, the tabs and two buttons
+    // for each of some forty plugins; the search box is stepped over). The row starts on the fourth control, and the two keys alternate between the fourth and the third.
     {
       pair: [{ key: "j: the next control (Manage plugins)", seq: ["j"] }, { key: "k: the control before (Manage plugins)", seq: ["k"] }],
       before: async (page) => {
