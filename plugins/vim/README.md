@@ -98,7 +98,7 @@ Every key the plugin handles has to answer within a frame or two, in a channel w
 
 | Surface | Keys |
 | --- | --- |
-| Channel list, message list, thread's list | `j k 5j 5k Ctrl-e Ctrl-y gg G` (message list and thread also `h l`, between panes; message list also `o` and `Enter` on the newest message with its thread already open beside the channel, and `h` back from them, and `q` closing that thread; thread also `o` on a reply that has a reply of its own, which folds the replies and opens them again) |
+| Channel list, message list, thread's list | `j k 5j 5k Ctrl-e Ctrl-y gg G` (message list and thread also `h l`, between panes; message list also `o` and `Enter` on the newest message with its thread already open beside the channel, and `h` back from them, and `q` closing that thread beside the channel (the hand-back of a thread placed over the channel is not in a measured frame); thread also `o` on a reply that has a reply of its own, which folds the replies and opens them again) |
 | A channel with a long thread (12 messages, one with 80 replies) | `o` on the message that has the thread, with the thread open already, and `h` back from it |
 | Message box (600 words, and 30 mentions) | `w b 5w 5b 0 $ h l` |
 | Reminders, Agents, Workflows pages | `Ctrl-e Ctrl-y`; `j k 5j 5k G gg` are control rows (a page has no message list: they find nothing to move) |

@@ -1387,24 +1387,28 @@ test.describe("o in a thread opens and folds the replies to a message", () => {
   });
 });
 
-// With threads placed over the channel, the row the cursor goes back to is shown, not only marked: the channel's list comes back at its
+// With threads placed over the channel, the row the cursor goes back to shows, not only is marked: the channel's list comes back at its
 // bottom, which leaves an older message far above the view.
+const channelRowShows = (page) =>
+  page.evaluate(() => {
+    const list = document.querySelector('[data-main-workspace] [data-message-scroller][data-channel-timeline="alpha"]');
+    const row = list?.querySelector('[data-vim-cursor="main"]');
+    if (!list || !row) return false;
+    const edge = list.getBoundingClientRect();
+    const box = row.getBoundingClientRect();
+    return box.top >= edge.top - 1 && box.bottom <= edge.bottom + 1;
+  });
+// The ways out of a thread tab.
+const LEAVES = [
+  ["q", (page) => press(page, "q")],
+  ["a click on the channel's tab", (page) => page.locator('[role="tab"][data-tab-value="conversation"]').click()],
+  ["the tab's close button", (page) => page.locator('[data-closable="true"]:has([role="tab"][data-tab-value^="thread:"]) button[aria-label^="Close "]').click()],
+];
+const mainCursorId = (page) => page.locator("style[data-vim-cursor-style]").getAttribute("data-main-message-id");
+// A message with no replies: the thread's newest message is a copy of it, so the cursor's id is in the channel's rows when the tab goes.
 test.describe("with threads over a long channel: the row the cursor goes back to shows", () => {
   test.use({ historyCounts: { alpha: 200, beta: 3 } });
-  const rowShows = (page) =>
-    page.evaluate(() => {
-      const list = document.querySelector('[data-main-workspace] [data-message-scroller][data-channel-timeline="alpha"]');
-      const row = list?.querySelector('[data-vim-cursor="main"]');
-      if (!list || !row) return false;
-      const edge = list.getBoundingClientRect();
-      const box = row.getBoundingClientRect();
-      return box.top >= edge.top - 1 && box.bottom <= edge.bottom + 1;
-    });
-  for (const [how, leave] of [
-    ["q", (page) => press(page, "q")],
-    ["a click on the channel's tab", (page) => page.locator('[role="tab"][data-tab-value="conversation"]').click()],
-    ["the tab's close button", (page) => page.locator('[data-closable="true"]:has([role="tab"][data-tab-value^="thread:"]) button[aria-label^="Close "]').click()],
-  ]) {
+  for (const [how, leave] of LEAVES) {
     test(`o on an older message, then ${how}: that row is marked and in view`, async ({ page, app }) => {
       await page.addInitScript(() => localStorage.setItem("buzz-thread-placement.v1", "main"));
       await open(page, app);
@@ -1418,8 +1422,34 @@ test.describe("with threads over a long channel: the row the cursor goes back to
       await expect(tab).toHaveCount(1);
       await page.waitForTimeout(1500); // the thread has landed
       await leave(page);
-      await expect.poll(() => page.locator("style[data-vim-cursor-style]").getAttribute("data-main-message-id")).toBe(older);
-      await expect.poll(() => rowShows(page), { timeout: 3000 }).toBe(true);
+      await expect.poll(() => mainCursorId(page)).toBe(older);
+      await expect.poll(() => channelRowShows(page), { timeout: 3000 }).toBe(true);
+    });
+  }
+});
+// A message that has replies (the third from the top, with 80): the thread's newest message is a reply, which the channel's list does not
+// have, so the cursor goes back to the message the thread was opened from, by the other path of `cursorBack`.
+test.describe("with threads over a channel that scrolls, on a message that has replies: the row the cursor goes back to shows", () => {
+  test.use({ exactMessages: true, historyCounts: { alpha: 16, beta: 3 } });
+  for (const [how, leave] of LEAVES) {
+    test(`o on the message with the long thread, then ${how}: that row is marked and in view`, async ({ page, app }) => {
+      await page.addInitScript(() => localStorage.setItem("buzz-thread-placement.v1", "main"));
+      await open(page, app);
+      await press(page, "g", "g"); // the top of the list: the root is the third message
+      await page.waitForTimeout(800);
+      for (let i = 0; i < 12 && (await mainCursorId(page)) !== app.exact.root.id; i++) {
+        await press(page, "j");
+        await page.waitForTimeout(100);
+      }
+      expect(await mainCursorId(page)).toBe(app.exact.root.id);
+      await press(page, "o");
+      const tab = page.locator('[data-main-workspace] [role="tab"][data-tab-value^="thread:"]');
+      await expect(tab).toHaveCount(1);
+      await expect.poll(() => mainCursorId(page), { timeout: 10000 }).toBe(app.exact.target.id); // the thread's newest reply
+      await page.waitForTimeout(800);
+      await leave(page);
+      await expect.poll(() => mainCursorId(page)).toBe(app.exact.root.id);
+      await expect.poll(() => channelRowShows(page), { timeout: 3000 }).toBe(true);
     });
   }
 });
