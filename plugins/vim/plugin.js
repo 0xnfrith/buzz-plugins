@@ -1896,7 +1896,7 @@ var groups = () => {
 				],
 				[
 					"Esc",
-					"Nothing. It does not close a thread: q does",
+					"Cancels a pending g and a pending count (g Esc p opens nothing, 3 Esc k moves one message), wherever the focus is. Otherwise nothing in a message list: it does not close a thread, q does",
 					"DOM"
 				],
 				[
@@ -2499,12 +2499,13 @@ var onEscapeCapture = (event) => {
 	const el = event.target;
 	if (event.key !== "Escape" || !state.enabled || event.defaultPrevented) return;
 	if (event.isComposing || event.keyCode === 229) return;
+	if (!isEditable(el)) clearPending();
 	if (!el.closest?.(`[data-panel-workspace], [data-main-workspace], [data-solo-focus-pane]`)) return;
 	if (!isEditable(el)) {
 		if (!el.matches?.("[data-message-scroller]") || el.closest("[role=\"menu\"], [role=\"listbox\"], [role=\"combobox\"], [role=\"dialog\"], [aria-modal=\"true\"], .xterm")) return;
 		event.preventDefault();
 		event.stopPropagation();
-		return clearPending();
+		return;
 	}
 	if (el.closest("form[data-editing]") || el.hasAttribute("aria-activedescendant") || el.getAttribute("aria-expanded") === "true") return;
 	event.preventDefault();

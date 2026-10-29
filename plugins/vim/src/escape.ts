@@ -16,6 +16,11 @@ export const onEscapeCapture = (event: KeyboardEvent) => {
   const el = event.target as Element;
   if (event.key !== "Escape" || !state.enabled || event.defaultPrevented) return;
   if (event.isComposing || event.keyCode === 229) return;
+  // A pending g, y, z or count is Esc's to cancel wherever the focus is. The host's own handlers take Esc in places (the app's main
+  // region, a pane) before the dispatcher the shortcut service uses sees it, so the shortcut alone would leave the g pending and
+  // `g` Esc `p` would open Settings. This only clears the plugin's own state: the event is not consumed, the host keeps its Esc.
+  // (In a box the pending d, f or g is dealt with by escape() below, which also decides what Esc does to the mode.)
+  if (!isEditable(el)) clearPending();
   if (!el.closest?.(`${SIDE}, ${MAIN}`)) return;
   if (!isEditable(el)) {
     // In a message list Esc does nothing in NORMAL. The host would close a thread's tab here; q and
@@ -23,7 +28,7 @@ export const onEscapeCapture = (event: KeyboardEvent) => {
     if (!el.matches?.(SCROLLER) || el.closest(POPUP)) return;
     event.preventDefault();
     event.stopPropagation();
-    return clearPending();
+    return;
   }
   if (
     el.closest("form[data-editing]") ||

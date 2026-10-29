@@ -3045,6 +3045,97 @@ test.describe("the g page keys", () => {
     await press(page, "3", "k");
     await expect.poll(() => cursor(page)).toBe(ids.at(-5));
   });
+
+  // Esc cancels what is pending, as in vim: a g (the page letter or the digit that would follow) and a count. Nothing opens, and the key after
+  // the Esc is a fresh one. The key follows the Esc at once, with no wait for the label: a pending g lapses by itself after 1.5 s, and a test
+  // that waited for it to be gone would pass without Esc doing anything.
+  const afterEscape = async (page, next) => {
+    await press(page, "g", "Escape", next);
+    await page.waitForTimeout(700); // long enough for Settings, or another page, to have opened
+  };
+  const channelIndex = (page) =>
+    page.evaluate(() => [...document.querySelectorAll("button[data-channel-id]")].indexOf(document.activeElement));
+  for (const place of ["the channel's list", "the thread's list", "the channel list", "the channel's box", "the thread's box"]) {
+    test(`Esc cancels a pending g and a pending count in ${place}`, async ({ page, app }) => {
+      await page.addInitScript(() => {
+        localStorage.setItem("buzzodz.plugins.v1", JSON.stringify({ version: 2, enabled: { "fixture.page-placement": true } }));
+      });
+      await open(page, app);
+      const inBox = place.endsWith("box");
+      for (const next of ["p", "s", "4"]) {
+        await enter(page, place);
+        const draft = inBox ? await composer(page).evaluate((el) => el.textContent) : "";
+        await afterEscape(page, next);
+        await expect(settings(page), `g Esc ${next} from ${place}`).toHaveCount(0);
+        expect(await where(page), `g Esc ${next} from ${place}`).toBe("conversation");
+        await expect(tabs(page).nth(0)).toHaveAttribute("aria-selected", "true");
+        await expect(bar(page)).toContainText("NORMAL");
+        if (inBox) expect(await composer(page).evaluate((el) => el.textContent)).toBe(draft); // nothing typed
+      }
+      // A count is cancelled the same way: 3 Esc k moves one, not three.
+      await enter(page, place);
+      if (place === "the thread's list") {
+        // The thread of the fixture has two messages: one step and three are the same there. The count is cancelled by the same code
+        // as in the channel's list; here the g is what the test says.
+      } else if (place === "the channel's list") {
+        const ids = await rowIds(page);
+        await shifted(page, "G");
+        await expect.poll(() => cursor(page)).toBe(ids.at(-1));
+        await press(page, "3", "Escape", "k");
+        await expect.poll(() => cursor(page)).toBe(ids.at(-2));
+      } else if (place === "the channel list") {
+        const was = await channelIndex(page);
+        await press(page, "3", "Escape", "j");
+        await expect.poll(() => channelIndex(page)).toBe(was + 1);
+      } else {
+        const box = place === "the channel's box" ? composer(page) : replyBox(page);
+        await press(page, "i");
+        await page.keyboard.type("abcdef");
+        await press(page, "Escape", "0", "3", "Escape", "x"); // x with a count of 3 would take three letters
+        await expect.poll(() => box.evaluate((el) => el.textContent)).toBe("bcdef");
+      }
+    });
+  }
+
+  // Where the focus is when no list has it: the app's main region (where it leaves the focus when it opens), a button of a pane, a tab of the
+  // top bar. The host takes Esc in such places before the plugin's shortcut sees it (in the main region it never gets past the capture phase
+  // of the window), so the plugin cancels the pending g in the capture phase itself and leaves Esc to the host.
+  for (const place of ["the page as the app opens it", "the app's main region", "a button in the channel's pane", "a button in the thread's pane", "a tab of the top bar"]) {
+    test(`Esc cancels a pending g with the focus on ${place}`, async ({ page, app }) => {
+      await open(page, app);
+      await page.waitForTimeout(600);
+      const focusPlace = async () => {
+        if (place === "the page as the app opens it") return; // nothing has been focused: the app has left the focus on its main region
+        if (place === "the app's main region") await page.evaluate(() => document.querySelector("main").focus());
+        else if (place === "a button in the channel's pane") await page.locator("[data-main-workspace] button:visible").first().focus();
+        else if (place === "a button in the thread's pane") {
+          if ((await page.locator("[data-panel-workspace] [data-message-scroller] >> visible=true").count()) === 0) await openThreadBeside(page);
+          await page.locator("[data-panel-workspace] button:visible").first().focus();
+        } else await tabs(page).nth(0).focus();
+      };
+      for (const next of ["p", "s"]) {
+        await focusPlace(); // the host may have moved the focus since (it closes a thread's tab on Esc)
+        expect(await page.evaluate(() => document.activeElement.tagName), `the focus is on ${place}`).not.toBe("BODY");
+        await afterEscape(page, next);
+        await expect(settings(page), `g Esc ${next} with the focus on ${place}`).toHaveCount(0);
+      }
+    });
+  }
+
+  // The pages other than Messages have no message list, and the same Esc is wanted there.
+  for (const [letter, name] of [["a", "Agents"], ["r", "Reminders"], ["i", "Inbox"], ["w", "Workflows"]]) {
+    test(`Esc cancels a pending g on the ${name} page`, async ({ page, app }) => {
+      await open(page, app);
+      await press(page, "g", letter);
+      await expect.poll(() => where(page)).not.toBe("conversation");
+      const here = await where(page);
+      for (const next of ["p", "s"]) {
+        await afterEscape(page, next);
+        await expect(settings(page), `g Esc ${next} on ${name}`).toHaveCount(0);
+        expect(await where(page)).toBe(here);
+      }
+    });
+  }
 });
 
 test.describe("the g page keys on a Mac", () => {

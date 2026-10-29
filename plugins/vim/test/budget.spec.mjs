@@ -429,6 +429,8 @@ const moves = (reps, list, walk = reps, middle = false) => {
     { pair: [{ key: "Ctrl-y", seq: ["Control+y"] }, { key: "Ctrl-e", seq: ["Control+e"] }], ...at },
     { ...control("scroll a line up (the page itself)", "scroll a line down (the page itself)", `${list}.scrollTop -= 24`, `${list}.scrollTop += 24`), ...at },
     { pair: [{ key: "gg", seq: ["g", "g"] }, { key: "G", seq: ["Shift+g"] }] },
+    // Esc cancels a pending g: the pair presses g (the label shows it) and Esc (the label loses it again).
+    { pair: [{ key: "g", seq: ["g"] }, { key: "Esc after g", seq: ["Escape"] }] },
     control("jump to the top (the page itself)", "jump to the bottom (the page itself)", `${list}.scrollTop = 0`, `${list}.scrollTop = ${list}.scrollHeight`),
   ];
 };
@@ -472,6 +474,7 @@ surface("sidebar", "channel list (130 channels)", async ({ page, app, rows }) =>
     { pair: [{ key: "5k", seq: ["5", "k"] }, { key: "5j", seq: ["5", "j"] }] },
     { pair: [{ key: "Ctrl-y", seq: ["Control+y"] }, { key: "Ctrl-e", seq: ["Control+e"] }] },
     { pair: [{ key: "gg", seq: ["g", "g"] }, { key: "G", seq: ["Shift+g"] }], reps: 50 },
+    { pair: [{ key: "g", seq: ["g"] }, { key: "Esc after g", seq: ["Escape"] }] },
     // gp opens Settings on Manage plugins; Esc closes it again (the host's key, so a control row), which sets the page back for the next gp.
     {
       pair: [
