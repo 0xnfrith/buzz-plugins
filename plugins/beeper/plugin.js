@@ -1701,10 +1701,11 @@ function createSettingsCard({ config, client }) {
 }
 // src/ui/styles.ts
 var CSS$1 = `
-/* The page's entry in navigation and search. The host draws its icon as an <img> of PAGE_ICON, which
+/* [DOM] The page's entry in navigation and search. The host draws its icon as an <img> of PAGE_ICON, which
    cannot follow the theme, so paint the same shape in the entry's text colour (a mask) and move the
-   image's own pixels out of its box. If a later host draws the icon some other way this stops
-   matching and the icon is simply the plain black one. */
+   image's own pixels out of its box. It matches only an <img> whose src is exactly PAGE_ICON, so no
+   other icon is touched. If a later host draws the icon some other way this stops matching and the
+   icon is simply the plain black one. */
 img[src="${PAGE_ICON}"] {
   background-color: currentColor;
   -webkit-mask: url("${PAGE_ICON}") center / contain no-repeat;
