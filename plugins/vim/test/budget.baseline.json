@@ -1,4 +1,8 @@
 {
+  "sidebar gp: open Manage plugins": {
+    "control": "control: open Manage plugins (the page itself)",
+    "why": "Opening Settings costs the app the render of its dialog and of the Manage plugins section (some 200 to 400 ms on a two-core machine); the control row is the page asking the host for the same section itself, and costs as much or more. `gp` adds the one navigation call and nothing else."
+  },
   "list gg": {
     "control": "control: jump to the top (the page itself)",
     "why": "Jumping to the top of a list of 2,400 messages costs the app the layout of the rows it lands on, and the most of what `gg` costs (the control row is the page setting scrollTop itself); `gg` also moves the cursor row after the jump."

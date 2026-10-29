@@ -437,7 +437,12 @@ const markSidebarScroller = (page) =>
       }
     return false;
   });
-surface("sidebar", "channel list (130 channels)", async ({ page, rows }) => {
+// Settings by a key: the dialog and the section it opens on. The page asks for the same section (the control), and closes the dialog.
+const settingsShown = (page) => page.waitForFunction(() => !!document.querySelector('nav[aria-label="Settings sections"] [aria-current]'), null, { timeout: 10_000 });
+const settingsGone = (page) => page.waitForFunction(() => !document.querySelector('nav[aria-label="Settings sections"]'), null, { timeout: 10_000 });
+const CLOSE_SETTINGS = `document.querySelector('button[aria-label="Close Settings"]').click()`;
+surface("sidebar", "channel list (130 channels)", async ({ page, app, rows }) => {
+  const OPEN_MANAGE_PLUGINS = `window.fixtureNavigation.open({ version: 1, kind: "settings", section: "plugins", scope: { viewer: ${JSON.stringify(app.viewer)}, communityOrigin: "https://primary.example" } })`;
   await markSidebarScroller(page);
   await page.keyboard.press("h"); // the channel list has the keys
   await expect(bar(page)).toContainText("sidebar");
@@ -448,6 +453,24 @@ surface("sidebar", "channel list (130 channels)", async ({ page, rows }) => {
     { pair: [{ key: "5k", seq: ["5", "k"] }, { key: "5j", seq: ["5", "j"] }] },
     { pair: [{ key: "Ctrl-y", seq: ["Control+y"] }, { key: "Ctrl-e", seq: ["Control+e"] }] },
     { pair: [{ key: "gg", seq: ["g", "g"] }, { key: "G", seq: ["Shift+g"] }], reps: 50 },
+    // gp opens Settings on Manage plugins; Esc closes it again (the host's key, so a control row), which sets the page back for the next gp.
+    {
+      pair: [
+        { key: "gp: open Manage plugins", seq: ["g", "p"], after: settingsShown },
+        { key: "control: close Settings (Esc)", seq: ["Escape"], control: true, after: settingsGone },
+      ],
+      crosses: true,
+      reps: 50,
+    },
+    // The control for gp: the page asks the host for the same section, and closes the dialog itself.
+    {
+      pair: [
+        { key: "control: open Manage plugins (the page itself)", seq: ["F9"], control: true, after: settingsShown },
+        { key: "control: close Settings (the page itself)", seq: ["F10"], control: true, after: settingsGone },
+      ],
+      reps: 50,
+      before: controls(OPEN_MANAGE_PLUGINS, CLOSE_SETTINGS),
+    },
     control(
       "focus the row above (the page itself)",
       "focus the row below (the page itself)",
