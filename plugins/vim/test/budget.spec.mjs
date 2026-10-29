@@ -429,8 +429,9 @@ const moves = (reps, list, walk = reps, middle = false) => {
     { pair: [{ key: "Ctrl-y", seq: ["Control+y"] }, { key: "Ctrl-e", seq: ["Control+e"] }], ...at },
     { ...control("scroll a line up (the page itself)", "scroll a line down (the page itself)", `${list}.scrollTop -= 24`, `${list}.scrollTop += 24`), ...at },
     { pair: [{ key: "gg", seq: ["g", "g"] }, { key: "G", seq: ["Shift+g"] }] },
-    // Esc cancels a pending g: the pair presses g (the label shows it) and Esc (the label loses it again).
-    { pair: [{ key: "g", seq: ["g"] }, { key: "Esc after g", seq: ["Escape"] }] },
+    // Esc cancels a pending g: the pair presses g (the label shows it) and Esc (the label loses it again). The list has the focus: with it on a
+    // button of a pane (where a thread opened by the page leaves it) Esc is the host's, and it closes the thread, as it always did.
+    { pair: [{ key: "g", seq: ["g"] }, { key: "Esc after g", seq: ["Escape"] }], before: (page) => page.evaluate(`${list}.focus({ preventScroll: true })`) },
     control("jump to the top (the page itself)", "jump to the bottom (the page itself)", `${list}.scrollTop = 0`, `${list}.scrollTop = ${list}.scrollHeight`),
   ];
 };
