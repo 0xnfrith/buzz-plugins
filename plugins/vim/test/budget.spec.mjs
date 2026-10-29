@@ -58,6 +58,12 @@ import { open } from "./timeline.mjs";
 
 const REPS = Number(process.env.BUDGET_REPS ?? 100);
 const WARM = Number(process.env.BUDGET_WARM ?? 15);
+// Rows whose every press costs 100 ms or more and sets the page back after it (a thread closing and opening, a long thread landing) take
+// minutes at 100 presses, on every attempt and again for their controls: the whole job went from about 20 to about 46 minutes with them,
+// close to the 60 minutes it is allowed. They name this many presses instead (a row may name fewer than REPS, never more). The p99 of
+// 40 presses is the largest, not the second largest; the rows are known rows read against a control that is pressed as often, and
+// their median is checked too, which one stalled press does not move.
+const SLOW_REPS = 40;
 const ATTEMPTS = Number(process.env.BUDGET_ATTEMPTS ?? 3);
 const P95_TARGET = 16;
 const P99_LIMIT = 50;
@@ -535,6 +541,7 @@ surface("list", "message list (2,400 messages loaded)", async ({ page, app, rows
         { key: "q: close the thread", seq: ["q"] },
         { key: "control: open the thread (the page itself, after q)", seq: ["F10"], control: true, after: (page) => page.waitForTimeout(300) },
       ],
+      reps: SLOW_REPS,
       before: async (page) => {
         await controls(CLOSE_THREAD, OPEN_THREAD)(page);
         await openNewestOnce(page);
@@ -546,6 +553,7 @@ surface("list", "message list (2,400 messages loaded)", async ({ page, app, rows
         { key: "control: close the thread (the page itself)", seq: ["F9"], control: true, after: (page) => page.waitForTimeout(300) },
         { key: "control: open the thread again (the page itself, after the close)", seq: ["F10"], control: true, after: (page) => page.waitForTimeout(300) },
       ],
+      reps: SLOW_REPS,
       before: controls(CLOSE_THREAD, OPEN_THREAD),
     },
     control("focus a channel row (the page itself)", "focus the message list (the page itself)", `${CHANNEL_ROWS}[0].focus({ preventScroll: true })`, `${MAIN_LIST}.focus({ preventScroll: true })`),
@@ -619,8 +627,10 @@ test.describe("a channel with a long thread", () => {
     expect(await cursorOn(), "the cursor is on the message that has the 80-reply thread").toBe(app.exact.root.id);
     await rows([
       {
-        pair: [{ key: "o: the 80-reply thread", seq: ["o"], after: threadLanded }, { key: "h: back from the 80-reply thread", seq: ["h"] }],
+        // h brings the cursor back to the list; it has its rows already (the message list and the thread), so here it only sets the page back.
+        pair: [{ key: "o: the 80-reply thread", seq: ["o"], after: threadLanded }, { key: "control: h back from the 80-reply thread (it has its rows elsewhere)", seq: ["h"], control: true }],
         crosses: true,
+        reps: SLOW_REPS,
         before: async (page) => {
           await press(page, "o"); // opens it once, so that the host only brings its tab forward afterwards
           await threadLanded(page);
@@ -628,13 +638,9 @@ test.describe("a channel with a long thread", () => {
           await page.waitForTimeout(400);
         },
       },
-      {
-        pair: [
-          { key: "control: open the 80-reply thread (the page itself)", seq: ["F9"], control: true, after: (page) => page.waitForTimeout(300) },
-          { key: "control: open the 80-reply thread again (the page itself)", seq: ["F10"], control: true, after: (page) => page.waitForTimeout(300) },
-        ],
-        before: controls(OPEN_THREAD, OPEN_THREAD),
-      },
+      // The control: the page asks the host to open the same thread, pressed as often as the key (the thread is open already, so the host only
+      // brings its tab forward, as for `o`). One part is enough: the baseline names this one.
+      { key: "control: open the 80-reply thread (the page itself)", seq: ["F9"], control: true, after: (page) => page.waitForTimeout(300), reps: SLOW_REPS, before: controls(OPEN_THREAD, OPEN_THREAD) },
     ]);
   }, IN_MAIN_LIST);
 });
