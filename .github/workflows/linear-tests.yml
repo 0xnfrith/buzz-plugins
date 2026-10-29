@@ -1,0 +1,46 @@
+# Type check and unit tests of the Linear plugin (plugins/linear/test/unit). The browser suite (plugins/linear/test/run.sh) needs a
+# block/buzz-app checkout and is run by hand; plugins/linear/NOTES.md says what it covers.
+name: Linear tests
+
+on:
+  pull_request:
+    paths:
+      - "plugins/linear/**"
+      - ".github/workflows/linear-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "plugins/linear/**"
+      - ".github/workflows/linear-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Linear type check and unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: plugins/linear
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@12.16.1 --activate
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Linear's published schema (a pinned commit, hash checked)
+        run: test/fake-linear/fetch-schema.sh
+      - name: Type check
+        run: pnpm exec tsc
+      - name: Unit tests
+        run: pnpm test

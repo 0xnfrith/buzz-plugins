@@ -74,7 +74,7 @@ Plugins run unsandboxed in the app's own page, so these are our rules, not somet
 - **Never shown, never logged, off the command line.** After saving, the credential is not rendered anywhere. It goes into one request header and nowhere else: not a URL, a console message, an error message or a stack, and not an argument of a program (the process list shows those): a command takes it on stdin. Errors shown to the user are fixed text, since a host or service error can name the request.
 - **A test says so.** The browser spec shows the credential is not in the page after saving, not in the console, and in no address, and that the page itself makes no request to the service: everything goes through the declared route. The unit tests make the real failures happen (a wrong credential, a missing permission, nothing listening, a garbled reply) and check that no error carries the credential, and read the command line of the running program to check it is not there (where the system lets a test read it).
 
-A plugin that needs more (several routes, a credential that is not the user's own, a secret held for others, a server of its own) is a different design and gets reviewed as one. [`plugins/beeper`](../plugins/beeper) is the worked example of a local connector.
+A plugin that needs more (several routes, a credential that is not the user's own, a secret held for others, a server of its own) is a different design and gets reviewed as one. [`plugins/beeper`](../plugins/beeper) is the worked example of a local connector, and [`plugins/linear`](../plugins/linear) of a connector to a service on the internet.
 
 ## 5. Measure before and after big changes
 
