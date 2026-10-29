@@ -1,7 +1,7 @@
 // ---- Moving focus between regions [DOM] -------------------------------------------------
 import { SIDEBAR_ROW } from "./constants";
 import { ctx } from "./ctx";
-import { clearCursors, cursors, moveCursor, nearestVisible, selectRow } from "./cursor";
+import { clearCursors, cursors, landAtEnd, moveCursor, nearestVisible, selectRow } from "./cursor";
 import {
   afterLayout,
   channelRows,
@@ -14,7 +14,7 @@ import {
   timelineOf,
 } from "./dom";
 import { openCommunityPicker } from "./communities";
-import { disposed, set, state, takeCount } from "./state";
+import { disposed, keyEpoch, set, state, takeCount } from "./state";
 import type { Region } from "./types";
 
 // [API] Open a channel through ctx.navigation, asking the host not to move focus into the
@@ -43,16 +43,26 @@ const REGIONS: Region[] = ["sidebar", "main", "side"];
 export const available = (region: Region) => (region === "sidebar" ? channelRows().length > 0 : !!timelineOf(region));
 // Moving into a message pane marks a row in it: the row it already had, else the oldest row on
 // screen in a thread and the newest in the channel. Without this the pane you arrive in would
-// show nothing at all until the first j or k.
-const ensureCursor = async (pane: "main" | "side") => {
+// show nothing at all until the first j or k. A pane that is opened on purpose (`o`) lands at its
+// end instead: scrolled to the bottom, the newest message marked. A key pressed while it lands
+// ends the landing, and the pane then gets the mark it would have had, unless another key comes
+// before the pane has a row to mark: a thread closed (q) and opened again at once has a new
+// list, which that landing's mark would take, and the new landing would find its pane taken. Nor does it mark once the pane
+// shows another list than the one the landing ran on: a thread tab closed (q) puts the channel's list in the pane, and its newest
+// row is not where the cursor goes (the message the thread was opened from gets it back, threads.ts).
+const ensureCursor = async (pane: "main" | "side", atEnd: boolean) => {
   if (cursors[pane]) return;
+  const list = timelineOf(pane);
+  if (atEnd && (await landAtEnd(pane))) return;
+  if (atEnd && list && timelineOf(pane) !== list) return;
+  const epoch = keyEpoch;
   const row = await settle(() => {
     const scroller = timelineOf(pane);
     return scroller && nearestVisible(scroller, pane === "main");
   }, 1000);
-  if (row && !cursors[pane] && !disposed) selectRow(row);
+  if (row && !cursors[pane] && !disposed && (!atEnd || (keyEpoch === epoch && (!list || timelineOf(pane) === list)))) selectRow(row);
 };
-export const goRegion = (region: Region) => {
+export const goRegion = (region: Region, atEnd = false) => {
   const was = document.activeElement;
   if (isEditable(was) && inComposer(was)) {
     // Leaving the box by this route too: no selection may stay in it (see leaveBox).
@@ -66,7 +76,7 @@ export const goRegion = (region: Region) => {
     );
   } else focusEl(timelineOf(region));
   set({ region });
-  if (region !== "sidebar") void ensureCursor(region);
+  if (region !== "sidebar") void ensureCursor(region, atEnd);
 };
 export const shiftRegion = (direction: number) => {
   const order = REGIONS.filter(available);

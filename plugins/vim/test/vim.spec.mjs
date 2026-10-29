@@ -895,6 +895,329 @@ test("with threads placed in the main pane, o opens a tab over the channel and q
   await expect(mainScroller(page)).toHaveAttribute("data-channel-timeline", "alpha");
 });
 
+test.describe("o opens a thread at its end", () => {
+  // The channel's third message has 80 replies: a thread many screens long.
+  test.use({ exactMessages: true });
+  const atEnd = (scroller) => scroller.evaluate((el) => el.scrollTop + el.clientHeight >= el.scrollHeight - 4);
+  const top = (scroller) => scroller.evaluate((el) => Math.round(el.scrollTop));
+  // The row that carries the cursor of `pane` is in the part of the list that shows.
+  const markedShows = (scroller, pane) =>
+    scroller.evaluate((el, pane) => {
+      const row = el.querySelector(`[data-vim-cursor="${pane}"]`);
+      if (!row) return false;
+      const list = el.getBoundingClientRect();
+      const box = row.getBoundingClientRect();
+      return box.bottom > list.top && box.top < list.bottom;
+    }, pane);
+  // The cursor on the message that has the thread: the third, from the top of the channel's list.
+  const toRoot = async (page, app) => {
+    const ids = await rowIds(page);
+    const at = ids.indexOf(app.exact.root.id);
+    expect(at).toBeGreaterThanOrEqual(0);
+    await press(page, "g", "g");
+    await expect.poll(() => cursor(page)).toBe(ids[0]);
+    for (let i = 0; i < at; i++) await press(page, "j");
+    await expect.poll(() => cursor(page)).toBe(app.exact.root.id);
+  };
+
+  test("beside the channel: the pane is at its end and the newest reply is under the cursor", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await press(page, "o");
+    await expect(threadPane(page)).toBeVisible();
+    await expect(bar(page)).toContainText("side");
+    const list = sideScroller(page);
+    const newest = app.exact.target.id;
+    await expect.poll(() => cursor(page)).toBe(newest);
+    await expect.poll(() => atEnd(list)).toBe(true);
+    expect(await list.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(await list.evaluate((el) => el.clientHeight));
+    expect(await markedShows(list, "side")).toBe(true);
+    // The virtual list goes on mounting and measuring rows after the first scroll: the end it settles on is still the end.
+    await page.waitForTimeout(1000);
+    expect(await cursor(page)).toBe(newest);
+    expect(await atEnd(list)).toBe(true);
+    expect(await markedShows(list, "side")).toBe(true);
+    await expect(sideScroller(page)).toBeFocused();
+    await expect(bar(page)).toHaveText("-- NORMAL --  side");
+    // The cursor moves on from there: k to the reply before, j back, j past the newest into the reply box.
+    await press(page, "k");
+    await expect.poll(() => cursor(page)).toBe(app.exact.replies.at(-2).id);
+    await press(page, "j", "j");
+    await expect(replyBox(page)).toBeFocused();
+    // The channel's cursor stayed on the message the thread belongs to.
+    expect(await page.locator("style[data-vim-cursor-style]").getAttribute("data-main-message-id")).toBe(app.exact.root.id);
+  });
+
+  test("opening it again from the channel's list lands at the end again, wherever the pane had been scrolled to", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await press(page, "o");
+    const list = sideScroller(page);
+    await expect.poll(() => cursor(page)).toBe(app.exact.target.id);
+    await press(page, "g", "g"); // up to the thread's first message
+    await expect.poll(() => top(list)).toBe(0);
+    await expect.poll(() => cursor(page)).not.toBe(app.exact.target.id);
+    await press(page, "h"); // the channel's list; its cursor is on the root still
+    await expect(bar(page)).toContainText("main");
+    expect(await cursor(page)).toBe(app.exact.root.id);
+    await press(page, "o");
+    await expect(bar(page)).toContainText("side");
+    await expect.poll(() => cursor(page)).toBe(app.exact.target.id);
+    await expect.poll(() => atEnd(list)).toBe(true);
+  });
+
+  test("a key pressed while it lands wins: the cursor is not taken back to the newest message", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    // The moment the landing first marks a row in the pane, a k is pressed (from the page itself: a real key press takes longer than
+    // that). The thread has its first rows by then and brings the rest in afterwards, and the landing would follow its end.
+    await page.evaluate(() => {
+      const mark = '[data-panel-workspace] [data-vim-cursor="side"]';
+      const watch = new MutationObserver(() => {
+        if (!document.querySelector(mark)) return;
+        watch.disconnect();
+        (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "k", code: "KeyK", bubbles: true, cancelable: true }));
+        window.__kPressed = true;
+      });
+      watch.observe(document.body, { subtree: true, attributes: true, attributeFilter: ["data-vim-cursor"] });
+    });
+    await press(page, "o");
+    await page.waitForFunction(() => window.__kPressed);
+    await expect.poll(() => cursor(page)).toBeDefined();
+    const above = await cursor(page);
+    expect(above).not.toBe(app.exact.target.id);
+    await page.waitForTimeout(1500); // the rest of the thread arrives
+    expect(await cursor(page)).toBe(above);
+    expect(await sideScroller(page).locator(`[data-vim-cursor="side"]`).getAttribute("data-message-id")).toBe(above);
+  });
+
+  test("l, h and zo keep the cursor where the pane left it", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await press(page, "o");
+    await expect.poll(() => cursor(page)).toBe(app.exact.target.id);
+    await press(page, "k", "k");
+    await expect.poll(() => cursor(page)).toBe(app.exact.replies.at(-3).id);
+    const list = sideScroller(page);
+    const at = await top(list);
+    await press(page, "h");
+    await expect(bar(page)).toContainText("main");
+    await press(page, "l");
+    await expect(bar(page)).toContainText("side");
+    await page.waitForTimeout(500);
+    expect(await cursor(page)).toBe(app.exact.replies.at(-3).id);
+    expect(await top(list)).toBe(at);
+    await press(page, "z", "c", "z", "o");
+    await expect(threadPane(page)).toBeVisible();
+    await press(page, "l");
+    await expect(bar(page)).toContainText("side");
+    await page.waitForTimeout(500);
+    expect(await cursor(page)).toBe(app.exact.replies.at(-3).id);
+    expect(await top(list)).toBe(at);
+  });
+
+  test("q and o again at once: the second landing is not taken by the first's mark", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await press(page, "o");
+    await expect(threadPane(page)).toBeVisible();
+    await press(page, "q"); // while the thread still lands
+    await expect(threadPane(page)).toHaveCount(0);
+    await expect(bar(page)).toContainText("main");
+    await press(page, "o");
+    await expect(bar(page)).toContainText("side");
+    const list = sideScroller(page);
+    await expect.poll(() => cursor(page)).toBe(app.exact.target.id);
+    await expect.poll(() => atEnd(list)).toBe(true);
+    await page.waitForTimeout(1500);
+    expect(await cursor(page)).toBe(app.exact.target.id);
+    expect(await atEnd(list)).toBe(true);
+  });
+
+  // The fixture's relay answers a thread in two pages (the host walks them in order: the first 50 replies, then the rest, following the
+  // end as they come). A slow network leaves a wait before each: the first page is held here for `first` ms, the second for `later`.
+  // Set after the channel's list has loaded, so that only the thread's own queries are held.
+  const slowThread = (page, { first = 0, later = 0 }) =>
+    page.route("**/query", async (route) => {
+      let filters;
+      try {
+        filters = route.request().postDataJSON();
+      } catch {}
+      const walk = Array.isArray(filters) ? filters.find((filter) => filter.depth_limit !== undefined) : undefined;
+      const ms = !walk ? 0 : walk.thread_cursor === undefined ? first : later;
+      if (ms) await new Promise((resolve) => setTimeout(resolve, ms));
+      await route.continue();
+    });
+
+  test("a thread brought in a page at a time, the second long after the first: the mark follows the end", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await slowThread(page, { later: 1800 }); // three times as long as the landing waits for a change
+    await press(page, "o");
+    const list = sideScroller(page);
+    // The first page ends at the 50th reply, where the landing marks the newest row that shows.
+    await expect.poll(() => cursor(page)).toBe(app.exact.replies[49].id);
+    await page.waitForTimeout(1000); // the landing has stopped by now
+    await expect.poll(() => cursor(page), { timeout: 10000 }).toBe(app.exact.target.id);
+    await expect.poll(() => atEnd(list)).toBe(true);
+    expect(await markedShows(list, "side")).toBe(true);
+    await expect(sideScroller(page)).toBeFocused();
+    await expect(bar(page)).toHaveText("-- NORMAL --  side");
+  });
+
+  test("a thread whose first page comes after the landing has given up: nothing was marked, and the newest is when it comes", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await slowThread(page, { first: 4200 }); // more than the landing's 3 s
+    await press(page, "o");
+    await expect(threadPane(page)).toBeVisible();
+    await page.waitForTimeout(3500);
+    expect(await cursor(page)).toBeUndefined(); // nothing to mark yet
+    const list = sideScroller(page);
+    await expect.poll(() => cursor(page), { timeout: 15000 }).toBe(app.exact.target.id);
+    await expect.poll(() => atEnd(list)).toBe(true);
+    expect(await markedShows(list, "side")).toBe(true);
+    await page.waitForTimeout(1500);
+    expect(await cursor(page)).toBe(app.exact.target.id);
+  });
+
+  test("... and a key pressed before the second page comes wins over the mark following the end", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await slowThread(page, { later: 2500 });
+    await press(page, "o");
+    await expect.poll(() => cursor(page)).toBe(app.exact.replies[49].id);
+    await page.waitForTimeout(1000);
+    await press(page, "k");
+    await expect.poll(() => cursor(page)).toBe(app.exact.replies[48].id);
+    await page.waitForTimeout(3500); // the second page has come, and the host has followed the end
+    expect(await cursor(page)).toBe(app.exact.replies[48].id);
+  });
+
+  test("... and a thread closed with q, then opened again before the late page comes, is not marked by the first one's follow", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await slowThread(page, { later: 2500 });
+    await press(page, "o");
+    await expect.poll(() => cursor(page)).toBe(app.exact.replies[49].id);
+    await page.waitForTimeout(1000); // landed, following
+    await press(page, "q");
+    await expect(threadPane(page)).toHaveCount(0);
+    expect(await page.evaluate(() => document.querySelector("[data-vim-cursor=side]") === null)).toBe(true);
+    await press(page, "o"); // a new thread pane, its own landing
+    await expect.poll(() => cursor(page), { timeout: 10000 }).toBe(app.exact.target.id);
+    await expect.poll(() => atEnd(sideScroller(page))).toBe(true);
+  });
+
+  test("a held o (its auto-repeats) does not end its own landing", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await page.keyboard.down("o");
+    for (let i = 0; i < 6; i++) {
+      await page.waitForTimeout(90);
+      await page.keyboard.down("o"); // the same key still down: an auto-repeat
+    }
+    await page.keyboard.up("o");
+    await expect(threadPane(page)).toBeVisible();
+    const list = sideScroller(page);
+    await expect.poll(() => cursor(page), { timeout: 10000 }).toBe(app.exact.target.id);
+    await expect.poll(() => atEnd(list)).toBe(true);
+    await page.waitForTimeout(1500);
+    expect(await cursor(page)).toBe(app.exact.target.id);
+  });
+
+  // With threads placed over the channel the cursor goes back to the message the thread was opened from whenever the tab stops showing.
+  for (const [how, leave] of [
+    ["clicking the channel's tab", (page) => page.locator('[role="tab"][data-tab-value="conversation"]').click()],
+    [
+      "the tab's close button",
+      (page) => page.locator('[data-closable="true"]:has([role="tab"][data-tab-value^="thread:"]) button[aria-label^="Close "]').click(),
+    ],
+    ["Cmd+W (the window event the native menu sends)", (page) => page.evaluate(() => window.dispatchEvent(new Event("buzz:close-active-tab", { cancelable: true })))],
+  ]) {
+    test(`with threads placed in the main pane: leaving the tab by ${how} gives the cursor back to the message`, async ({ page, app }) => {
+      await page.addInitScript(() => localStorage.setItem("buzz-thread-placement.v1", "main"));
+      await open(page, app);
+      await toRoot(page, app);
+      await press(page, "o");
+      await expect(page.locator('[data-main-workspace] [role="tab"][data-tab-value^="thread:"]')).toHaveCount(1);
+      await expect.poll(() => cursor(page)).toBe(app.exact.target.id);
+      await page.waitForTimeout(1200); // the landing has run its course
+      await leave(page);
+      const mainCursor = () => page.locator("style[data-vim-cursor-style]").getAttribute("data-main-message-id");
+      await expect.poll(mainCursor).toBe(app.exact.root.id);
+      const channelList = page.locator('[data-main-workspace] [data-message-scroller][data-channel-timeline="alpha"]');
+      await expect(channelList.locator('[data-vim-cursor="main"]')).toHaveAttribute("data-message-id", app.exact.root.id);
+    });
+  }
+
+  // The cursor goes back to the message the thread was opened from, also when the tab is left while the landing still runs (q straight
+  // after o) and when the message has no replies, so that the tab's newest message is a copy of the message itself.
+  test("with threads placed in the main pane: o, then q while it still lands, leaves the mark on the message the thread was opened from", async ({ page, app }) => {
+    await page.addInitScript(() => localStorage.setItem("buzz-thread-placement.v1", "main"));
+    await open(page, app);
+    await toRoot(page, app);
+    await slowThread(page, { first: 1500 }); // the landing has nothing to mark yet when q comes
+    const tab = page.locator('[data-main-workspace] [role="tab"][data-tab-value^="thread:"]');
+    const channelList = page.locator('[data-main-workspace] [data-message-scroller][data-channel-timeline="alpha"]');
+    for (const wait of [0, 250]) {
+      await press(page, "o");
+      await expect(tab).toHaveCount(1);
+      await page.waitForTimeout(wait);
+      await press(page, "q"); // while it lands
+      await expect(tab).toHaveCount(0);
+      await page.waitForTimeout(1300); // longer than the landing's fallback waits for a row
+      expect(await cursor(page)).toBe(app.exact.root.id);
+      await expect(channelList.locator('[data-vim-cursor="main"]')).toHaveAttribute("data-message-id", app.exact.root.id);
+    }
+  });
+
+  test("with threads placed in the main pane: o on a message with no replies, then q, leaves that message marked", async ({ page, app }) => {
+    await page.addInitScript(() => localStorage.setItem("buzz-thread-placement.v1", "main"));
+    await open(page, app);
+    const first = (await rowIds(page))[0];
+    await press(page, "g", "g");
+    await expect.poll(() => cursor(page)).toBe(first);
+    await press(page, "o");
+    const tab = page.locator('[data-main-workspace] [role="tab"][data-tab-value^="thread:"]');
+    await expect(tab).toHaveCount(1);
+    await page.waitForTimeout(2500); // the thread is its message alone: the landing marks the tab's copy of it
+    await press(page, "q");
+    await expect(tab).toHaveCount(0);
+    await page.waitForTimeout(500);
+    expect(await cursor(page)).toBe(first);
+    await expect(page.locator('[data-main-workspace] [data-message-scroller][data-channel-timeline="alpha"] [data-vim-cursor="main"]')).toHaveAttribute("data-message-id", first);
+  });
+
+  test("with threads placed in the main pane: the tab is at its end with the newest reply under the cursor, and q gives the cursor back to the message", async ({ page, app }) => {
+    await page.addInitScript(() => localStorage.setItem("buzz-thread-placement.v1", "main"));
+    await open(page, app);
+    await toRoot(page, app);
+    await press(page, "o");
+    const tab = page.locator('[data-main-workspace] [role="tab"][data-tab-value^="thread:"]');
+    await expect(tab).toHaveCount(1);
+    const list = page.locator("[data-main-workspace] [data-message-scroller] >> visible=true");
+    await expect(bar(page)).toContainText("main");
+    await expect.poll(() => cursor(page)).toBe(app.exact.target.id);
+    await expect.poll(() => atEnd(list)).toBe(true);
+    expect(await list.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(await list.evaluate((el) => el.clientHeight));
+    expect(await markedShows(list, "main")).toBe(true);
+    await page.waitForTimeout(1000);
+    expect(await cursor(page)).toBe(app.exact.target.id);
+    expect(await atEnd(list)).toBe(true);
+    await expect(list).toBeFocused();
+    await press(page, "k");
+    await expect.poll(() => cursor(page)).toBe(app.exact.replies.at(-2).id);
+    await press(page, "j", "j");
+    await expect(replyBox(page)).toBeFocused();
+    await press(page, "k", "q");
+    await expect(tab).toHaveCount(0);
+    await expect(mainScroller(page)).toBeFocused();
+    await expect.poll(() => cursor(page)).toBe(app.exact.root.id);
+    await expect(mainScroller(page).locator(`[data-vim-cursor="main"]`)).toHaveAttribute("data-message-id", app.exact.root.id);
+  });
+});
+
 const replyBox = (page) => page.getByRole("textbox", { name: "Reply to thread", exact: true });
 const openThreadBeside = async (page) => {
   await press(page, "k");

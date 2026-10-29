@@ -357,6 +357,9 @@ var dispose = () => {
 };
 var keyEpoch = 0;
 var bumpKeyEpoch = () => void keyEpoch++;
+var onAnyKey = (event) => {
+	if (!event.repeat) bumpKeyEpoch();
+};
 var pendingTimer;
 var armPending = () => {
 	clearTimeout(pendingTimer);
@@ -643,6 +646,7 @@ var setCursor = (pane, id, row) => {
 var clearCursor = (pane) => {
 	cursors[pane] = void 0;
 	mark(pane, void 0);
+	stopFollow(pane);
 };
 var isCursorRow = (el, pane, id) => el.dataset.messageId === id && paneOf(el) === pane && !el.hasAttribute("data-membership-row") && !el.parentElement?.closest("[data-message-id]");
 var onMutations = (records) => {
@@ -733,10 +737,87 @@ var jumpEdge = (end) => {
 	const scroller = activeTimeline();
 	if (!scroller) return;
 	scroller.scrollTop = end ? scroller.scrollHeight : 0;
-	afterLayout(() => {
-		const row = nearestVisible(scroller, end);
-		if (row) selectRow(row);
+	afterLayout(() => markEdge(scroller, end));
+};
+var markEdge = (scroller, end) => {
+	const row = nearestVisible(scroller, end);
+	if (row) selectRow(row);
+};
+var LANDED_MS = 600;
+var LANDING_MS = 3e3;
+var landAtEnd = async (pane) => {
+	stopFollow();
+	const epoch = keyEpoch;
+	let mine;
+	let height = -1;
+	let changed = performance.now();
+	let moved = false;
+	await settle(() => {
+		if (keyEpoch !== epoch || cursors[pane] && cursors[pane] !== mine) return moved = true;
+		const scroller = timelineOf(pane);
+		if (!scroller || scroller.getAttribute("aria-busy") === "true") return false;
+		const now = performance.now();
+		if (!atBottom(scroller)) {
+			scroller.scrollTop = scroller.scrollHeight;
+			changed = now;
+		} else if (scroller.scrollHeight !== height || !mine) {
+			height = scroller.scrollHeight;
+			const row = nearestVisible(scroller, true);
+			if (row && row.dataset.messageId !== cursors[pane]) selectRow(row);
+			mine = cursors[pane];
+			changed = now;
+		}
+		return now - changed > LANDED_MS;
+	}, LANDING_MS);
+	if (!moved) followEnd(pane, mine, epoch);
+	return !moved;
+};
+var FOLLOW_MS = 3e4;
+var following;
+var stopFollow = (pane) => {
+	if (!pane || following?.pane === pane) following?.stop();
+};
+var followEnd = (pane, placed, epoch) => {
+	const scroller = timelineOf(pane);
+	if (!scroller) return;
+	let mine = placed;
+	let queued = true;
+	const stop = () => {
+		watch.disconnect();
+		clearTimeout(timer);
+		if (following?.stop === stop) following = void 0;
+	};
+	const check = () => {
+		queued = false;
+		if (disposed || keyEpoch !== epoch || cursors[pane] !== mine || !scroller.isConnected) return stop();
+		if (scroller.getAttribute("aria-busy") === "true") return;
+		if (!atBottom(scroller)) {
+			if (mine) return;
+			scroller.scrollTop = scroller.scrollHeight;
+		}
+		const row = nearestVisible(scroller, true);
+		if (!row || row.dataset.messageId === mine) return;
+		selectRow(row);
+		mine = row.dataset.messageId;
+	};
+	const watch = new MutationObserver(() => {
+		if (queued) return;
+		queued = true;
+		requestAnimationFrame(check);
 	});
+	const timer = setTimeout(stop, FOLLOW_MS);
+	stopFollow();
+	following = {
+		pane,
+		stop
+	};
+	watch.observe(scroller, {
+		childList: true,
+		subtree: true,
+		attributes: true,
+		attributeFilter: ["aria-busy"]
+	});
+	requestAnimationFrame(check);
 };
 var keepCursorInView = (scroller, direction, still = false) => {
 	if (still && !cursors[cursorPane()]) return;
@@ -837,15 +918,19 @@ var REGIONS = [
 	"side"
 ];
 var available = (region) => region === "sidebar" ? channelRows().length > 0 : !!timelineOf(region);
-var ensureCursor = async (pane) => {
+var ensureCursor = async (pane, atEnd) => {
 	if (cursors[pane]) return;
+	const list = timelineOf(pane);
+	if (atEnd && await landAtEnd(pane)) return;
+	if (atEnd && list && timelineOf(pane) !== list) return;
+	const epoch = keyEpoch;
 	const row = await settle(() => {
 		const scroller = timelineOf(pane);
 		return scroller && nearestVisible(scroller, pane === "main");
 	}, 1e3);
-	if (row && !cursors[pane] && !disposed) selectRow(row);
+	if (row && !cursors[pane] && !disposed && (!atEnd || keyEpoch === epoch && (!list || timelineOf(pane) === list))) selectRow(row);
 };
-var goRegion = (region) => {
+var goRegion = (region, atEnd = false) => {
 	const was = document.activeElement;
 	if (isEditable(was) && inComposer(was)) {
 		document.getSelection()?.removeAllRanges();
@@ -859,7 +944,7 @@ var goRegion = (region) => {
 		focusEl(rows.includes(document.activeElement) ? document.activeElement : selectedRow() ?? rows[0]);
 	} else focusEl(timelineOf(region));
 	set({ region });
-	if (region !== "sidebar") ensureCursor(region);
+	if (region !== "sidebar") ensureCursor(region, atEnd);
 };
 var shiftRegion = (direction) => {
 	const order = REGIONS.filter(available);
@@ -1450,8 +1535,53 @@ var threadRootOf = (messageId) => {
 		return messageId;
 	}
 };
+var beneath;
+var leaving;
+var cursorBack = () => {
+	if (!beneath || visible(beneath.tab)) return;
+	const scroller = timelineOf("main");
+	if (!scroller) return;
+	const { id } = beneath;
+	beneath = void 0;
+	leaving?.disconnect();
+	const rows = rowsOf(scroller);
+	const kept = rows.find((row) => row.dataset.messageId === cursors.main);
+	if (kept) return selectRow(kept, false);
+	clearCursor("main");
+	const row = rows.find((row) => row.dataset.messageId === id);
+	if (row) selectRow(row, false);
+	paintCursor();
+};
+var watchBeneath = (tab) => {
+	leaving?.disconnect();
+	const workspace = tab.closest(MAIN);
+	if (!workspace) return;
+	let queued = false;
+	const watch = new MutationObserver(() => {
+		if (queued) return;
+		queued = true;
+		requestAnimationFrame(() => {
+			queued = false;
+			if (disposed || !beneath) return watch.disconnect();
+			cursorBack();
+		});
+	});
+	watch.observe(workspace, {
+		childList: true,
+		subtree: true,
+		attributes: true,
+		attributeFilter: [
+			"inert",
+			"aria-hidden",
+			"data-covered",
+			"hidden"
+		]
+	});
+	leaving = watch;
+};
 var openThread = async () => {
 	clearPending();
+	stopFollow();
 	const messageId = state.region === "main" ? cursorRow()?.dataset.messageId : void 0;
 	const channelId = currentChannelId();
 	const { status, viewer, origin } = ctx.relay.snapshot();
@@ -1476,15 +1606,30 @@ var openThread = async () => {
 	clearCursor("side");
 	paintCursor();
 	const region = await settle(() => timelineOf("side") ? "side" : timelineOf("main") !== before ? "main" : void 0, 3e3);
-	if (region && keyEpoch === epoch) goRegion(region);
+	if (!region || keyEpoch !== epoch) return;
+	if (region === "main") {
+		const tab = timelineOf("main");
+		beneath = tab ? {
+			id: messageId,
+			tab
+		} : void 0;
+		if (tab) watchBeneath(tab);
+		clearCursor("main");
+		paintCursor();
+	}
+	goRegion(region, true);
 };
 var enterOpens = () => {
 	const el = document.activeElement;
 	return state.region === "main" && !!cursors.main && (!el || el === document.body || el.matches("[data-message-scroller]"));
 };
-var refocusAfter = (region) => afterLayout(() => goRegion(available(region) ? region : "main"));
+var refocusAfter = (region) => afterLayout(() => {
+	cursorBack();
+	goRegion(available(region) ? region : "main");
+});
 var closeThread = () => {
 	clearPending();
+	stopFollow();
 	if (document.querySelector("dialog[open], [aria-modal=\"true\"]")) return;
 	const request = new Event("buzz:close-active-tab", { cancelable: true });
 	window.dispatchEvent(request);
@@ -1644,7 +1789,7 @@ var groups = () => {
 				],
 				[
 					"o  Enter",
-					"Open the thread of the message under the cursor and move into it. Enter only while the message list has focus",
+					"Open the thread of the message under the cursor and move into it, at its end: scrolled to the bottom, the newest message marked. Enter only while the message list has focus",
 					"API + DOM"
 				],
 				[
@@ -2289,7 +2434,7 @@ var mount = () => {
 	listen("keydown", "onEscapeCapture", onEscapeCapture);
 	listen("keydown", "onTextKey", onTextKey);
 	listen("keydown", "onMenuKey", onMenuKey);
-	listen("keydown", "onAnyKey", bumpKeyEpoch);
+	listen("keydown", "onAnyKey", onAnyKey);
 	listen("keydown", "onHelpKey", onHelpKey);
 	listen("pointerdown", "onPointerDown", onPointerDown);
 	let traced = state.perf;
@@ -2472,7 +2617,7 @@ var registerShortcuts = () => {
 		key: "C",
 		shift: true
 	}, () => void openCommunityPicker());
-	key("open-thread", "Open the thread of the message under the cursor (after z: show the thread pane)", { key: "o" }, afterG("o", () => state.operator === "z" ? showPane() : void openThread()));
+	key("open-thread", "Open the thread of the message under the cursor, at its end (after z: show the thread pane)", { key: "o" }, afterG("o", () => state.operator === "z" ? showPane() : void openThread()));
 	key("open-thread-enter", "Open the thread of the message under the cursor", { key: "Enter" }, () => void openThread(), { when: () => eligible() && enterOpens() });
 	key("close-thread", "Close the active thread", { key: "q" }, afterG("q", closeThread));
 	key("fold", "Fold prefix: zc hides the thread pane, zo shows it", { key: "z" }, afterG("z", () => {

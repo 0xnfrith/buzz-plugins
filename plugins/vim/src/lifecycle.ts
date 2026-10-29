@@ -9,7 +9,7 @@ import { onTextKey } from "./normal";
 import * as perf from "./perf";
 import { onSettingsKey } from "./settings-dialog";
 import { bar, renderBar, resetBar } from "./status";
-import { bumpKeyEpoch, dispose, state, subscribe } from "./state";
+import { dispose, onAnyKey, state, subscribe } from "./state";
 import { onEscapeCapture, onPointerDown } from "./escape";
 
 export const mount = () => {
@@ -37,7 +37,7 @@ export const mount = () => {
   listen("keydown", "onEscapeCapture", onEscapeCapture);
   listen("keydown", "onTextKey", onTextKey);
   listen("keydown", "onMenuKey", onMenuKey);
-  listen("keydown", "onAnyKey", bumpKeyEpoch);
+  listen("keydown", "onAnyKey", onAnyKey);
   listen("keydown", "onHelpKey", onHelpKey);
   listen("pointerdown", "onPointerDown", onPointerDown);
   // The performance trace follows its setting (the Vim mode page).

@@ -20,7 +20,7 @@ export const groups = (): KeyGroup[] => {
         [`${L}  then  h  l  q  <  >  |  =`, "The leader key, for pane commands that work from anywhere, the message box too: h and l move to the pane on the left or right (from a message box, to the box of the pane beside it, or to the channel list), q closes the thread, < > | = resize it. Change the leader on the Vim mode page", "DOM"],
         ["[  ]", "Previous / next channel without leaving the message list", "DOM"],
         ["{  }  C", "Previous / next community (counts work); C opens the community switcher. j / k move in it, Enter picks, Esc closes", "DOM"],
-        ["o  Enter", "Open the thread of the message under the cursor and move into it. Enter only while the message list has focus", "API + DOM"],
+        ["o  Enter", "Open the thread of the message under the cursor and move into it, at its end: scrolled to the bottom, the newest message marked. Enter only while the message list has focus", "API + DOM"],
         ["q", "Close the thread: the active tab of the pane you are in, or of the thread pane from the message list", "DOM"],
         ["zc  zo", "Hide / show the thread pane. Its threads stay open", "DOM"],
         [">  <", "Widen / narrow the thread pane by 48 px a press; a count multiplies (3> is 144 px)", "DOM"],

@@ -16,10 +16,12 @@ import {
   focusEl,
   inView,
   rowsOf,
+  settle,
+  timelineOf,
 } from "./dom";
 import { enterBox } from "./box";
 import * as perf from "./perf";
-import { state } from "./state";
+import { disposed, keyEpoch, state } from "./state";
 import { CURSOR_ATTR, STATIC_CSS } from "./theme";
 
 type Pane = "main" | "side";
@@ -47,6 +49,7 @@ export const setCursor = (pane: Pane, id: string, row: HTMLElement) => {
 export const clearCursor = (pane: Pane) => {
   cursors[pane] = undefined;
   mark(pane, undefined);
+  stopFollow(pane); // the cursor it was following is gone
 };
 // Is this element the row of the cursor of `pane`: a message row of that pane with the id, not a nested one or a membership row.
 const isCursorRow = (el: Element, pane: Pane, id: string): el is HTMLElement =>
@@ -149,10 +152,94 @@ export const jumpEdge = (end: boolean) => {
   const scroller = activeTimeline();
   if (!scroller) return;
   scroller.scrollTop = end ? scroller.scrollHeight : 0;
-  afterLayout(() => {
-    const row = nearestVisible(scroller, end);
-    if (row) selectRow(row);
+  afterLayout(() => markEdge(scroller, end));
+};
+const markEdge = (scroller: HTMLElement, end: boolean) => {
+  const row = nearestVisible(scroller, end);
+  if (row) selectRow(row);
+};
+// A pane opened on purpose (a thread, with `o`) lands at its end: scrolled to the bottom, the newest message marked. G does the same
+// in one step. A thread is not all there at once: the host shows it behind a loader (aria-busy) until its first page, and goes on
+// bringing rows in after that (the host follows the bottom while it does, a virtual list moves it as it measures rows). So the
+// landing follows the end for as long as the pane keeps changing: each frame it checks the pane is at the bottom and the newest
+// row that shows is the one marked, until nothing has changed for LANDED_MS (at most LANDING_MS in all). A key pressed meanwhile
+// has moved the user on: stop at once, and mark nothing over what that key did. Resolves false then, true when it ran its course.
+const LANDED_MS = 600;
+const LANDING_MS = 3000;
+export const landAtEnd = async (pane: Pane) => {
+  stopFollow(); // a landing that starts ends the follow of the one before
+  const epoch = keyEpoch;
+  let mine: string | undefined; // the row this landing marked last
+  let height = -1;
+  let changed = performance.now();
+  let moved = false;
+  await settle(() => {
+    if (keyEpoch !== epoch || (cursors[pane] && cursors[pane] !== mine)) return (moved = true);
+    const scroller = timelineOf(pane);
+    if (!scroller || scroller.getAttribute("aria-busy") === "true") return false;
+    const now = performance.now();
+    if (!atBottom(scroller)) {
+      scroller.scrollTop = scroller.scrollHeight;
+      changed = now;
+    } else if (scroller.scrollHeight !== height || !mine) {
+      height = scroller.scrollHeight;
+      const row = nearestVisible(scroller, true);
+      if (row && row.dataset.messageId !== cursors[pane]) selectRow(row);
+      mine = cursors[pane];
+      changed = now;
+    }
+    return now - changed > LANDED_MS;
+  }, LANDING_MS);
+  if (!moved) followEnd(pane, mine, epoch);
+  return !moved;
+};
+// The host may bring a thread in a page at a time, following the end itself, each page as late as the network makes it: a relay that
+// answers slowly leaves more than LANDED_MS between the pages (or more than LANDING_MS before the first, so that nothing was marked
+// at all), and a landing that has stopped would leave the mark on a reply the next page makes an old one. So once it has stopped on
+// its own the mark keeps following the end for FOLLOW_MS more, with no frame running: a MutationObserver on the list (rows coming
+// in, the loader going) asks for one check a frame later. The check marks the newest row that shows when the pane is at its bottom,
+// and does nothing when it is not (the reader has scrolled up), except while nothing is marked yet: then it is still the landing,
+// and scrolls to the bottom itself. It ends at a key press, when the cursor is no longer the one the landing placed, when the pane
+// is gone, when another landing starts and when the pane's cursor is cleared (a thread opened or closed, the plugin taken off).
+const FOLLOW_MS = 30000;
+let following: { pane: Pane; stop: () => void } | undefined;
+// Ends the follow that is running, or only a follow of `pane`'s list.
+export const stopFollow = (pane?: Pane) => {
+  if (!pane || following?.pane === pane) following?.stop();
+};
+const followEnd = (pane: Pane, placed: string | undefined, epoch: number) => {
+  const scroller = timelineOf(pane);
+  if (!scroller) return;
+  let mine = placed;
+  let queued = true;
+  const stop = () => {
+    watch.disconnect();
+    clearTimeout(timer);
+    if (following?.stop === stop) following = undefined;
+  };
+  const check = () => {
+    queued = false;
+    if (disposed || keyEpoch !== epoch || cursors[pane] !== mine || !scroller.isConnected) return stop();
+    if (scroller.getAttribute("aria-busy") === "true") return;
+    if (!atBottom(scroller)) {
+      if (mine) return;
+      scroller.scrollTop = scroller.scrollHeight;
+    }
+    const row = nearestVisible(scroller, true);
+    if (!row || row.dataset.messageId === mine) return;
+    selectRow(row);
+    mine = row.dataset.messageId as string;
+  };
+  const watch = new MutationObserver(() => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(check);
   });
+  const timer = setTimeout(stop, FOLLOW_MS);
+  stopFollow();
+  following = { pane, stop };
+  watch.observe(scroller, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-busy"] });
+  requestAnimationFrame(check); // the rows may be there already
 };
 // After the view moved: a cursor that is still in it stays; one that left goes to the nearest row that is in it
 // (the first when the content went up, the last when it went down), as vim keeps its cursor in the window.

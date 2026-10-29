@@ -86,6 +86,10 @@ export const dispose = () => {
 // Counts key presses, so a landing that finishes late can tell the user has moved on.
 export let keyEpoch = 0;
 export const bumpKeyEpoch = () => void keyEpoch++;
+// A key held down repeats: the repeats are the press it began with, not another key (a held `o` must not end its own landing).
+export const onAnyKey = (event: KeyboardEvent) => {
+  if (!event.repeat) bumpKeyEpoch();
+};
 
 // Pending count/operator expire like vim's timeoutlen, so a stray "g" cannot linger.
 let pendingTimer: ReturnType<typeof setTimeout> | undefined;
