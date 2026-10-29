@@ -19,13 +19,9 @@
     "control": "control: close the thread (the page itself)",
     "why": "Closing a thread's pane costs the app a render and the layout of the channel's list in the room it gives back (the control row is the page sending the window event that `q` sends, the native Close Tab menu's)."
   },
-  "list yy": {
-    "control": "control: copy the link (the page itself)",
-    "why": "The key presses the app's own Copy link button, and what that costs is the app's: it writes to the clipboard, redraws the message's action bar (the button is disabled while it copies) and shows its toast (the control row is the page pressing the same button itself)."
-  },
   "list yY": {
     "control": "control: copy the message (the page itself)",
-    "why": "The key opens the app's More message actions menu, which the app has to mount, picks Copy message when the menu is drawn, and the app closes the menu again: the render of all that is the app's (the control row is the page doing the same itself, opening the menu and picking the item). The key adds one attribute on the page's root that keeps the menu from showing."
+    "why": "The key opens the app's More message actions menu, which the app has to mount, picks Copy message when the menu is drawn, and the app closes the menu again: the render of all that is the app's (the control row is the page doing the same itself, opening the menu and picking the item). The key marks the menu itself, as it is drawn, with an attribute that keeps it from showing."
   },
   "longthread o: the 80-reply thread": {
     "control": "control: open the 80-reply thread (the page itself)",

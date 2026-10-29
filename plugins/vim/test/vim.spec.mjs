@@ -1301,8 +1301,6 @@ test.describe("o opens a thread at its end", () => {
   });
 });
 
-// In a thread, `o` opens and folds the replies to the message under the cursor. The thread of the message with 80 replies has one reply
-// that has a reply of its own (the 80th, to the 79th): the 79th has a branch, closed behind a pill at first.
 // ---- yy and yY ----------------------------------------------------------------------------------------
 test.describe("yy and yY copy the link and the text of the message under the cursor", () => {
   test.use({ exactMessages: true });
@@ -1393,8 +1391,62 @@ test.describe("yy and yY copy the link and the text of the message under the cur
     expect(await clipboard(page)).toBe("nothing copied");
     await expect.poll(() => draft(page)).toBe("hello");
   });
+
+  // yY drives the host's More message actions menu, hidden. A menu the plugin cannot use has to be closed again, or an invisible menu
+  // stays open and takes the next keys. The page changes the menu as the host puts it into the page, before anything else can look at it
+  // (a MutationObserver is too late: the plugin's first look comes in the same run of microtasks): its Copy message item disabled, as a
+  // message that is still sending has it, or not there under that name, as another Buzz might draw it.
+  const changeMenu = (page, how) =>
+    page.evaluate((how) => {
+      const MENU = '[role="menu"][data-message-id]';
+      const change = (node) => {
+        if (!(node instanceof Element)) return;
+        const menus = new Set(node.querySelectorAll(MENU));
+        const around = node.closest(MENU);
+        if (around) menus.add(around);
+        for (const menu of menus)
+          for (const item of menu.querySelectorAll('[role="menuitem"]'))
+            if (item.textContent.trim() === "Copy message") {
+              if (how === "disabled") {
+                item.setAttribute("aria-disabled", "true");
+                item.setAttribute("data-disabled", "");
+              } else item.textContent = "Copy this message";
+            }
+      };
+      for (const name of ["appendChild", "insertBefore"]) {
+        const insert = Node.prototype[name];
+        Node.prototype[name] = function (...args) {
+          const result = insert.apply(this, args);
+          change(args[0]);
+          return result;
+        };
+      }
+    }, how);
+
+  for (const [how, title] of [
+    ["disabled", "a Copy message item that is disabled is not pressed: yY copies nothing and the menu is closed again"],
+    ["renamed", "a menu with no Copy message item is closed again: yY copies nothing and no menu is left to take the keys"],
+  ])
+    test(title, async ({ page, app }) => {
+      await open(page, app);
+      await toRoot(page, app);
+      await emptyClipboard(page);
+      await changeMenu(page, how);
+      await press(page, "y");
+      await shifted(page, "Y");
+      await expect(page.getByRole("menu")).toHaveCount(0); // nothing is left open (an open menu is drawn again once the plugin stops hiding it)
+      await page.waitForTimeout(600);
+      expect(await clipboard(page)).toBe("nothing copied");
+      await expect(mainScroller(page)).toBeFocused();
+      await expect.poll(() => cursor(page)).toBe(app.exact.root.id);
+      // The next key is the list's own: k moves the cursor (a menu left open would have taken it).
+      await press(page, "k");
+      await expect.poll(() => cursor(page)).not.toBe(app.exact.root.id);
+    });
 });
 
+// In a thread, `o` opens and folds the replies to the message under the cursor. The thread of the message with 80 replies has one reply
+// that has a reply of its own (the 80th, to the 79th): the 79th has a branch, closed behind a pill at first.
 test.describe("o in a thread opens and folds the replies to a message", () => {
   test.use({ exactMessages: "nested" });
   // What the branch of a message looks like: its pill (the host's, only while the branch is closed), the host's state, the plugin's fold,
