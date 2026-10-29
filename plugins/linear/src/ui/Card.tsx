@@ -1,5 +1,6 @@
 import { React } from "../react";
 import type { Issue, PullRequest, WorkflowState } from "../linear/types";
+import { safeColor } from "./color";
 import { hue, initials, PRIORITY_LABEL, shortDate } from "./format";
 import { PriorityIcon, ProgressIcon, ProjectIcon, PullRequestIcon, StatusIcon, UserIcon } from "./icons";
 
@@ -51,7 +52,7 @@ export function Card({ issue, state, fraction, selected, dragging, moving, settl
   for (const label of issue.labels.slice(0, 2))
     chips.push(
       <span key={label.id} className="mtl-chip">
-        <span className="mtl-dot" style={{ background: label.color }} />
+        <span className="mtl-dot" style={{ background: safeColor(label.color) }} />
         {label.name}
       </span>,
     );
@@ -64,7 +65,7 @@ export function Card({ issue, state, fraction, selected, dragging, moving, settl
   if (issue.project)
     chips.push(
       <span key="project" className="mtl-chip" title={issue.project.name}>
-        <ProjectIcon color={issue.project.color ?? "currentColor"} />
+        <ProjectIcon color={issue.project.color} />
         <span className="mtl-chip-text">{issue.project.name}</span>
       </span>,
     );

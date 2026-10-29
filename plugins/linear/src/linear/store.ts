@@ -1,6 +1,6 @@
 import { LinearError, type LinearClient } from "./client";
 import type { KeyValue } from "./keys";
-import { sortStates, toDetail, toIssue } from "./model";
+import { acceptsMoves, sortStates, toDetail, toIssue } from "./model";
 import {
   CHANGED_SINCE,
   COLUMN_ISSUES,
@@ -389,7 +389,7 @@ export function createBoardStore(
       const issue = state.issues[issueId];
       const target = state.states.find((s) => s.id === stateId);
       if (!issue || !target || issue.stateId === stateId || state.moving.includes(issueId)) return;
-      if (target.type === "duplicate") {
+      if (!acceptsMoves(target.type)) {
         // Linear refuses this ("missing duplicate relation"): it puts an issue there only when it is marked a duplicate of another.
         set({ notice: `${issue.identifier} was not moved to ${target.name}: Linear only does that when the issue is marked a duplicate of another, which the board cannot do.` });
         return;

@@ -17,9 +17,10 @@ test.use({ pluginFixtures: true });
 
 const KEY_NAME = "megatech.linear.api-key.v1";
 
-/** A page wired to a fresh fake Linear, with the key already saved unless `key` is null. */
-async function arrange(page, app, { key = "good" } = {}) {
+/** A page wired to a fresh fake Linear (changed first by `prepare`), with the key already saved unless `key` is null. */
+async function arrange(page, app, { key = "good", prepare } = {}) {
   const fake = createFakeLinear();
+  prepare?.(fake);
   await page.exposeFunction("__linearRequest", (request) => fake.handle(request));
   if (key) {
     const value = fake.keys[key];
@@ -521,6 +522,145 @@ test("replacing the key keeps the old one unless Linear accepts the new one; rem
   await closeSettings(page);
   await openPage(page, "Linear");
   await expect(page.getByRole("heading", { name: "Connect Linear" })).toBeVisible();
+});
+
+const savedKey = (page) => page.evaluate((name) => localStorage.getItem(name), KEY_NAME);
+
+async function startReplacing(page, app) {
+  const fake = await openBoard(page, app);
+  await expect(card(page, "DSN-10")).toBeVisible();
+  await openSettings(page);
+  await selectSettingsSection(page, "Linear");
+  await page.getByRole("button", { name: "Replace key" }).click();
+  return fake;
+}
+
+for (const [fault, said] of [
+  ["network", "Couldn't reach Linear to check the new key. Your saved key is unchanged; try again."],
+  ["server", "Linear is having trouble right now, so the new key could not be checked. Your saved key is unchanged; try again."],
+  ["rate-limit", "Linear is rate limiting requests, so the new key could not be checked. Your saved key is unchanged; try again in a minute."],
+]) {
+  test(`${fault}: a replacement key that cannot be checked changes nothing, and can be tried again`, async ({ page, app }) => {
+    const fake = await startReplacing(page, app);
+    const field = page.getByLabel("Personal API key");
+    await field.fill("test-key-mistyped");
+    fake.control.fail(fault);
+    await page.getByRole("button", { name: "Save key" }).click();
+    await expect(page.getByRole("alert")).toHaveText(said);
+    expect(await savedKey(page)).toBe(fake.keys.good);
+    // The field stays open with what was typed, so it can be tried again, and Cancel leaves the saved key as it was.
+    await expect(field).toBeVisible();
+    await expect(field).toHaveValue("test-key-mistyped");
+    await shot(page, `13-replacement-${fault}`);
+    await page.getByRole("button", { name: "Save key" }).click();
+    await expect(page.getByRole("alert")).toHaveText("Linear did not accept the API key.");
+    expect(await savedKey(page)).toBe(fake.keys.good);
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await expect(page.getByText("Key saved.")).toBeVisible();
+    await page.getByRole("button", { name: "Test connection" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Connected as Avery Quill in Fixture Studio." })).toBeVisible();
+  });
+}
+
+test("with no key yet, a key saved while Linear cannot be reached is kept and says it was not checked", async ({ page, app }) => {
+  const fake = await openBoard(page, app, { key: null });
+  await page.getByRole("button", { name: "Open Linear settings" }).click();
+  await page.getByLabel("Personal API key").fill(fake.keys.good);
+  fake.control.fail("network");
+  await page.getByRole("button", { name: "Save key" }).click();
+  await expect(page.getByRole("alert")).toHaveText("Could not reach Linear. The key was saved without being checked; test it again in a moment.");
+  expect(await savedKey(page)).toBe(fake.keys.good);
+  await expect(page.getByText("Key saved.")).toBeVisible();
+  await expect(page.getByLabel("Personal API key")).toHaveCount(0);
+  await shot(page, "14-first-key-unchecked");
+  await page.getByRole("button", { name: "Test connection" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Connected as Avery Quill in Fixture Studio." })).toBeVisible();
+});
+
+test("Linear's own wording of a refusal never reaches the page, even when it repeats the key", async ({ page, app }) => {
+  const logs = [];
+  page.on("console", (message) => logs.push(message.text()));
+  const fake = await startReplacing(page, app);
+  const typed = "test-key-typed-for-echo";
+  await page.getByLabel("Personal API key").fill(typed);
+  fake.control.fail("echo");
+  await page.getByRole("button", { name: "Save key" }).click();
+  await expect(page.getByRole("alert")).toHaveText("Linear refused the request.");
+  expect(await savedKey(page)).toBe(fake.keys.good);
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await closeSettings(page);
+  await openPage(page, "Linear");
+  await page.getByLabel("Team").selectOption("team-plt");
+  await expect(card(page, "PLT-110")).toBeVisible();
+  await page.setViewportSize({ width: 1500, height: 900 });
+  fake.control.fail("echo", { operation: "MoveIssue" });
+  await dragCard(page, "PLT-110", "In Progress");
+  await expect(page.getByRole("alert")).toContainText("PLT-110 was not moved to In Progress: Linear refused the request.");
+  expect(stateOf(fake, "PLT-110")).toBe("todo");
+  const everything = await page.evaluate(() => document.documentElement.outerHTML + document.body.innerText);
+  for (const secret of [fake.keys.good, typed, "Argument Validation", "is not allowed here"]) {
+    expect(everything.includes(secret), secret).toBe(false);
+    expect(logs.some((line) => line.includes(secret)), `console: ${secret}`).toBe(false);
+  }
+});
+
+test("a colour from Linear that is not a plain hex colour never reaches the page, and makes no request", async ({ page, app }) => {
+  const remote = "https://tracker.invalid/pixel.png";
+  const asked = [];
+  page.on("request", (request) => asked.push(request.url()));
+  await page.setViewportSize({ width: 1500, height: 900 });
+  await arrange(page, app, {
+    prepare: (fake) => {
+      const world = fake.control.world;
+      world.states.find((s) => s.id === "team-plt:doing").color = `url(${remote})`;
+      world.projects.find((p) => p.id === "proj-launch").color = `url(${remote})`;
+      for (const record of world.records) for (const label of record.labels) if (label.name === "Feature") label.color = `url(${remote})`;
+    },
+  });
+  await openPage(page, "Linear");
+  await page.getByLabel("Team").selectOption("team-plt");
+  await expect(card(page, "PLT-121")).toBeVisible();
+  await card(page, "PLT-121").click(); // a card with a Feature label
+  const details = page.getByRole("dialog", { name: /PLT-121/ });
+  await expect(details).toBeVisible();
+  const neutral = "rgb(130, 144, 160)";
+  expect(await details.locator(".mtl-dot").evaluateAll((dots) => dots.map((d) => getComputedStyle(d).backgroundColor))).toEqual([neutral]);
+  const dot = await page.locator(".mtl-dot").evaluateAll((dots) => dots.map((d) => getComputedStyle(d).backgroundColor));
+  expect(dot.length).toBeGreaterThan(0);
+  expect(dot.every((c) => /^rgba?\(/.test(c))).toBe(true);
+  expect(dot).toContain(neutral);
+  expect(await page.evaluate(() => document.documentElement.outerHTML)).not.toContain("tracker.invalid");
+  await expect.poll(() => asked.filter((url) => url.includes("tracker.invalid"))).toEqual([]);
+  // The state's glyph and the project's icon are drawn, in the neutral colour (not left unpainted).
+  const head = column(page, "In Progress").locator("svg.mtl-status").first();
+  expect(await head.locator("circle").first().getAttribute("stroke")).toBe("#8290a0");
+});
+
+test("while a card is held, the Duplicate column is greyed out and is not a target; dropping there still says why", async ({ page, app }) => {
+  await page.setViewportSize({ width: 2600, height: 900 });
+  const fake = await openBoard(page, app);
+  await page.getByLabel("Team").selectOption("team-plt");
+  await expect(card(page, "PLT-110")).toBeVisible();
+  const dup = column(page, "Duplicate");
+  await expect(dup).not.toHaveAttribute("data-refuses");
+  await dragCard(page, "PLT-110", "Duplicate", { release: false });
+  await expect(dup).toHaveAttribute("data-refuses", "");
+  await expect(dup).not.toHaveAttribute("data-over");
+  const look = await dup.evaluate((el) => {
+    const style = getComputedStyle(el);
+    return { opacity: Number(style.opacity), filter: style.filter, cursor: getComputedStyle(el.querySelector(".mtl-cards")).cursor };
+  });
+  expect(look.opacity).toBeLessThan(1);
+  expect(look.filter).toContain("grayscale");
+  expect(look.cursor).toBe("not-allowed");
+  await expect(column(page, "Todo")).not.toHaveAttribute("data-refuses");
+  await expect(column(page, "Done")).not.toHaveAttribute("data-refuses");
+  await shot(page, "15-duplicate-greyed");
+  await page.mouse.up();
+  await expect(page.getByRole("alert")).toContainText("PLT-110 was not moved to Duplicate");
+  await expect(dup).not.toHaveAttribute("data-refuses");
+  expect(stateOf(fake, "PLT-110")).toBe("todo");
+  expect(fake.control.log.operations.MoveIssue ?? 0).toBe(0);
 });
 
 test("a saved view that was deleted in Linear does not break the board", async ({ page, app }) => {

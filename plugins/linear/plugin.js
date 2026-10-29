@@ -13,7 +13,7 @@ var LinearError = class extends Error {
 /**
 * One GraphQL call to Linear, through the host's declared-origin HTTP client. The key is
 * read when the call starts and goes nowhere but the Authorization header: it is not in
-* a URL, an error message, or a log line.
+* a URL, an error message, or a log line. Every error's text is fixed here, never taken from Linear's reply.
 */
 function createClient(transport, readKey, now = Date.now) {
 	return { async request(operationName, query, variables = {}, candidate) {
@@ -53,7 +53,7 @@ function parse(response, now) {
 	if (response.status === 429 || /rate.?limit/i.test(code)) throw new LinearError("rate-limited", "Linear is rate limiting this key.", retryAt(headers, now));
 	if (response.status === 401 || /authenticat|forbidden/i.test(code)) throw new LinearError("auth", /forbidden/i.test(code) ? "This key is not allowed to do that. It needs Read and Write access." : "Linear did not accept the API key.");
 	if (response.status >= 500) throw new LinearError("server", `Linear is having trouble right now (${response.status}).`);
-	if (first) throw new LinearError("rejected", first.message ?? "Linear refused the request.");
+	if (first) throw new LinearError("rejected", "Linear refused the request.");
 	if (response.status < 200 || response.status >= 300 || !body || body.data == null) throw new LinearError("server", `Linear answered with an unexpected response (${response.status}).`);
 	return body.data;
 }
@@ -103,6 +103,30 @@ function createKeyStore(storage) {
 		}
 	};
 }
+/**
+* What to do with a pasted key once Linear has been asked about it. A key Linear refuses is never saved. A key Linear
+* could not be asked about (unreachable, down, rate limiting) replaces nothing: when a key is already saved it stays and
+* the user is told to try again; only when there is no key yet is the new one saved, and the message says it was not checked.
+* `message` is the whole text to show, or null to show the client's own text for the refusal.
+*/
+function judgeKey(verdict, hadKey, clientText) {
+	if (verdict === "ok") return {
+		save: true,
+		message: null
+	};
+	if (verdict === "auth" || verdict === "rejected") return {
+		save: false,
+		message: null
+	};
+	if (!hadKey) return {
+		save: true,
+		message: `${clientText} The key was saved without being checked; test it again in a moment.`
+	};
+	return {
+		save: false,
+		message: `${verdict === "network" ? "Couldn't reach Linear to check the new key." : verdict === "rate-limited" ? "Linear is rate limiting requests, so the new key could not be checked." : "Linear is having trouble right now, so the new key could not be checked."} Your saved key is unchanged; try again${verdict === "rate-limited" ? " in a minute" : ""}.`
+	};
+}
 /** What was pasted, made safe to put in a header: no `Bearer`, no spaces or line breaks. */
 function checkKey(pasted) {
 	const key = pasted.trim().replace(/^bearer\s+/i, "");
@@ -132,6 +156,8 @@ var TYPE_ORDER = {
 };
 /** A state type this plugin does not know sorts after the ones it does, rather than breaking the order. */
 var rank = (type) => TYPE_ORDER[type] ?? Object.keys(TYPE_ORDER).length;
+/** Linear moves an issue into Duplicate only by marking it a duplicate of another, which the board cannot do. */
+var acceptsMoves = (type) => type !== "duplicate";
 function sortStates(states) {
 	return [...states].sort((a, b) => rank(a.type) - rank(b.type) || a.position - b.position);
 }
@@ -647,7 +673,7 @@ function createBoardStore(client, storage, now = Date.now) {
 			const issue = state.issues[issueId];
 			const target = state.states.find((s) => s.id === stateId);
 			if (!issue || !target || issue.stateId === stateId || state.moving.includes(issueId)) return;
-			if (target.type === "duplicate") {
+			if (!acceptsMoves(target.type)) {
 				set({ notice: `${issue.identifier} was not moved to ${target.name}: Linear only does that when the issue is marked a duplicate of another, which the board cannot do.` });
 				return;
 			}
@@ -743,6 +769,17 @@ var React;
 function provideReact(react) {
 	React = react;
 }
+// src/ui/color.ts
+/** Used for a colour from Linear that is not a plain hex colour. */
+var NEUTRAL_COLOR = "#8290a0";
+var HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+/**
+* Linear's label, project and state colours go into a `style` or an SVG attribute. Only `#rgb`, `#rrggbb` and `#rrggbbaa` get
+* through, so a `url(...)` (a remote image) or a `var(...)` can never come from the service; anything else is `fallback`.
+*/
+function safeColor(value, fallback = NEUTRAL_COLOR) {
+	return typeof value === "string" && HEX.test(value) ? value : fallback;
+}
 // src/ui/format.ts
 var MONTH_DAY = new Intl.DateTimeFormat(void 0, {
 	month: "short",
@@ -831,6 +868,7 @@ function BrandMark({ size = 20 }) {
 var PAGE_ICON = "data:image/svg+xml," + encodeURIComponent("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path d=\"M4 4h3.5a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM10.25 4h3.5a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM16.5 4H20a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z\"/></svg>");
 /** Linear's workflow-state glyphs: dashed backlog, open circle, part-filled started, tick, cross. */
 function StatusIcon({ type, color, fraction = .5, size = 14 }) {
+	const ink = safeColor(color);
 	const c = 7;
 	const common = {
 		width: size,
@@ -845,7 +883,7 @@ function StatusIcon({ type, color, fraction = .5, size = 14 }) {
 			cy: c,
 			r: "5.5",
 			fill: "none",
-			stroke: color,
+			stroke: ink,
 			strokeWidth: "1.5",
 			strokeDasharray: "1.9 1.9"
 		}));
@@ -854,7 +892,7 @@ function StatusIcon({ type, color, fraction = .5, size = 14 }) {
 			cy: c,
 			r: "5.5",
 			fill: "none",
-			stroke: color,
+			stroke: ink,
 			strokeWidth: "1.5"
 		}));
 		case "started": return /* @__PURE__ */ React.createElement("svg", common, /* @__PURE__ */ React.createElement("circle", {
@@ -862,17 +900,17 @@ function StatusIcon({ type, color, fraction = .5, size = 14 }) {
 			cy: c,
 			r: "5.5",
 			fill: "none",
-			stroke: color,
+			stroke: ink,
 			strokeWidth: "1.5"
 		}), /* @__PURE__ */ React.createElement("path", {
 			d: pie(c, c, 3, fraction),
-			fill: color
+			fill: ink
 		}));
 		case "completed": return /* @__PURE__ */ React.createElement("svg", common, /* @__PURE__ */ React.createElement("circle", {
 			cx: c,
 			cy: c,
 			r: "7",
-			fill: color
+			fill: ink
 		}), /* @__PURE__ */ React.createElement("path", {
 			d: "M4 7.2l2 2 4-4.2",
 			fill: "none",
@@ -886,7 +924,7 @@ function StatusIcon({ type, color, fraction = .5, size = 14 }) {
 			cx: c,
 			cy: c,
 			r: "7",
-			fill: color
+			fill: ink
 		}), /* @__PURE__ */ React.createElement("path", {
 			d: "M4.8 4.8l4.4 4.4M9.2 4.8l-4.4 4.4",
 			stroke: "#fff",
@@ -897,7 +935,7 @@ function StatusIcon({ type, color, fraction = .5, size = 14 }) {
 			cx: c,
 			cy: c,
 			r: "7",
-			fill: color
+			fill: ink
 		}), /* @__PURE__ */ React.createElement("path", {
 			d: "M3.8 7.5h2l.6 1.2h1.2l.6-1.2h2M4.4 5.4h5.2l.9 2.1v2.1H3.5V7.5z",
 			fill: "none",
@@ -1017,6 +1055,7 @@ function ProgressIcon({ done, total, size = 13 }) {
 	}));
 }
 function ProjectIcon({ color, size = 13 }) {
+	const ink = safeColor(color, "currentColor");
 	return /* @__PURE__ */ React.createElement("svg", {
 		width: size,
 		height: size,
@@ -1026,13 +1065,13 @@ function ProjectIcon({ color, size = 13 }) {
 	}, /* @__PURE__ */ React.createElement("path", {
 		d: "M7 1.4l5 2.8v5.6L7 12.6 2 9.8V4.2z",
 		fill: "none",
-		stroke: color,
+		stroke: ink,
 		strokeWidth: "1.4",
 		strokeLinejoin: "round"
 	}), /* @__PURE__ */ React.createElement("path", {
 		d: "M2.2 4.3L7 7l4.8-2.7M7 7v5.4",
 		fill: "none",
-		stroke: color,
+		stroke: ink,
 		strokeWidth: "1.2",
 		strokeLinejoin: "round"
 	}));
@@ -1151,7 +1190,7 @@ function Card({ issue, state, fraction, selected, dragging, moving, settled, onO
 		className: "mtl-chip"
 	}, /* @__PURE__ */ React.createElement("span", {
 		className: "mtl-dot",
-		style: { background: label.color }
+		style: { background: safeColor(label.color) }
 	}), label.name));
 	if (issue.labels.length > 2) chips.push(/* @__PURE__ */ React.createElement("span", {
 		key: "more-labels",
@@ -1162,7 +1201,7 @@ function Card({ issue, state, fraction, selected, dragging, moving, settled, onO
 		key: "project",
 		className: "mtl-chip",
 		title: issue.project.name
-	}, /* @__PURE__ */ React.createElement(ProjectIcon, { color: issue.project.color ?? "currentColor" }), /* @__PURE__ */ React.createElement("span", { className: "mtl-chip-text" }, issue.project.name)));
+	}, /* @__PURE__ */ React.createElement(ProjectIcon, { color: issue.project.color }), /* @__PURE__ */ React.createElement("span", { className: "mtl-chip-text" }, issue.project.name)));
 	if (issue.pullRequests.length) chips.push(/* @__PURE__ */ React.createElement("span", {
 		key: "prs",
 		className: "mtl-chip mtl-chip-pr",
@@ -1282,13 +1321,13 @@ function Details({ issue, snapshot, store, onClose }) {
 	}, snapshot.states.map((s) => /* @__PURE__ */ React.createElement("option", {
 		key: s.id,
 		value: s.id,
-		disabled: s.type === "duplicate"
+		disabled: !acceptsMoves(s.type)
 	}, s.name)))), /* @__PURE__ */ React.createElement("dt", null, "Priority"), /* @__PURE__ */ React.createElement("dd", null, /* @__PURE__ */ React.createElement(PriorityIcon, { priority: issue.priority }), PRIORITY_LABEL[issue.priority]), /* @__PURE__ */ React.createElement("dt", null, "Assignee"), /* @__PURE__ */ React.createElement("dd", null, /* @__PURE__ */ React.createElement(Avatar, { name: issue.assignee?.name ?? null }), issue.assignee?.name ?? "Unassigned"), issue.project && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("dt", null, "Project"), /* @__PURE__ */ React.createElement("dd", null, issue.project.name)), issue.parent && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("dt", null, "Parent"), /* @__PURE__ */ React.createElement("dd", null, issue.parent.identifier, " ", issue.parent.title)), issue.labels.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("dt", null, "Labels"), /* @__PURE__ */ React.createElement("dd", { className: "mtl-wrap" }, issue.labels.map((label) => /* @__PURE__ */ React.createElement("span", {
 		key: label.id,
 		className: "mtl-chip"
 	}, /* @__PURE__ */ React.createElement("span", {
 		className: "mtl-dot",
-		style: { background: label.color }
+		style: { background: safeColor(label.color) }
 	}), label.name)))), /* @__PURE__ */ React.createElement("dt", null, "Created"), /* @__PURE__ */ React.createElement("dd", null, fullDate(issue.createdAt)), /* @__PURE__ */ React.createElement("dt", null, "Updated"), /* @__PURE__ */ React.createElement("dd", null, fullDate(issue.updatedAt)), detail?.creator && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("dt", null, "Creator"), /* @__PURE__ */ React.createElement("dd", null, detail.creator)), detail?.dueDate && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("dt", null, "Due"), /* @__PURE__ */ React.createElement("dd", null, fullDate(detail.dueDate))), detail?.estimate != null && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("dt", null, "Estimate"), /* @__PURE__ */ React.createElement("dd", null, detail.estimate))), issue.pullRequests.length > 0 && /* @__PURE__ */ React.createElement("section", {
 		className: "mtl-section",
 		"aria-label": "Pull requests"
@@ -1589,7 +1628,8 @@ function createBoardPage({ store, keys, openSettings }) {
 				"aria-label": `${s.name}, ${count} issues`,
 				"data-column": s.id,
 				"data-state-type": s.type,
-				"data-over": drag?.over === s.id ? "" : void 0,
+				"data-over": drag?.over === s.id && acceptsMoves(s.type) ? "" : void 0,
+				"data-refuses": drag && !acceptsMoves(s.type) ? "" : void 0,
 				ref: (el) => {
 					if (el) columnRefs.current.set(s.id, el);
 					else columnRefs.current.delete(s.id);
@@ -1696,25 +1736,30 @@ function createSettingsCard({ keys, client }) {
 				alive.current = false;
 			};
 		}, []);
-		/** Asks Linear who the key belongs to. `candidate` checks a key that is not saved yet. */
-		const check = async (candidate) => {
+		/** Asks Linear who the key belongs to. `candidate` checks a key that is not saved yet. What to show is up to the caller. */
+		const ask = async (candidate) => {
 			setStatus({ kind: "checking" });
 			try {
 				const data = await client.request("Viewer", VIEWER, {}, candidate);
-				if (alive.current) setStatus({
+				return {
 					kind: "ok",
 					text: `Connected as ${data.viewer.name} in ${data.organization.name}.`
-				});
-				return "ok";
+				};
 			} catch (error) {
-				const kind = error instanceof LinearError ? error.kind : "server";
-				const text = error instanceof LinearError ? error.message : "Something went wrong talking to Linear.";
-				if (alive.current) setStatus({
-					kind: "error",
-					text: candidate && kind !== "auth" && kind !== "rejected" ? `${text} The key was saved without being checked; test it again in a moment.` : text
-				});
-				return kind;
+				return error instanceof LinearError ? {
+					kind: error.kind,
+					text: error.message
+				} : {
+					kind: "server",
+					text: "Something went wrong talking to Linear."
+				};
 			}
+		};
+		const show = (verdict, text = verdict.text) => {
+			if (alive.current) setStatus({
+				kind: verdict.kind === "ok" ? "ok" : "error",
+				text
+			});
 		};
 		const save = async (event) => {
 			event.preventDefault();
@@ -1726,8 +1771,10 @@ function createSettingsCard({ keys, client }) {
 				});
 				return;
 			}
-			const verdict = await check(checked.key);
-			if (verdict === "auth" || verdict === "rejected") return;
+			const verdict = await ask(checked.key);
+			const ruling = judgeKey(verdict.kind, keys.has(), verdict.text);
+			show(verdict, ruling.message ?? verdict.text);
+			if (!ruling.save) return;
 			try {
 				keys.save(checked.key);
 			} catch {
@@ -1776,7 +1823,7 @@ function createSettingsCard({ keys, client }) {
 			type: "button",
 			className: "mtl-button",
 			disabled: status.kind === "checking",
-			onClick: () => void check()
+			onClick: async () => show(await ask())
 		}, "Test connection"), /* @__PURE__ */ React.createElement("button", {
 			type: "button",
 			className: "mtl-button",
@@ -1883,6 +1930,9 @@ img[src="${PAGE_ICON}"] {
 .mtl-board { flex: 1; min-width: 0; display: flex; align-items: stretch; gap: 12px; padding: 12px 16px 0; overflow-x: auto; overflow-y: hidden; }
 .mtl-column { flex: 0 0 316px; width: 316px; min-height: 0; display: flex; flex-direction: column; border-radius: 2px; background: var(--mtl-col); }
 .mtl-column[data-over] { outline: 2px solid var(--mtl-cyan); outline-offset: -2px; background: color-mix(in srgb, var(--mtl-cyan) 8%, var(--mtl-col)); }
+/* A column that takes no drop (Duplicate) is greyed out while a card is held, and the pointer says so. */
+.mtl-column[data-refuses] { opacity: 0.5; filter: grayscale(1); }
+.mtl-root[data-dragging] .mtl-column[data-refuses], .mtl-root[data-dragging] .mtl-column[data-refuses] * { cursor: not-allowed !important; }
 .mtl-column-head { display: flex; align-items: center; gap: 8px; flex: none; padding: 10px 12px 8px; }
 .mtl-column-name { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
 .mtl-count { font-family: var(--mtl-mono); font-size: 12px; color: var(--mtl-muted); display: inline-flex; align-items: center; gap: 4px; }

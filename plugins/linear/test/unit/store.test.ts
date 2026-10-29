@@ -127,8 +127,21 @@ describe("board store", () => {
       expect(s.issues[id]!.stateId).toBe("team-plt:todo");
       expect(s.columns["team-plt:todo"]!.ids).toContain(id);
       expect(s.columns["team-plt:done"]!.ids).not.toContain(id);
-      expect(s.notice).toMatch(/PLT-110 was not moved to Done/);
+      expect(s.notice).toBe("PLT-110 was not moved to Done: Linear refused the request.");
       expect(fake.control.world.records.find((r: any) => r.id === id).stateId).toBe("team-plt:todo");
+    });
+
+    test("Linear's own wording of a refusal never reaches the board, even when it repeats the key", async () => {
+      const { store, fake } = setup();
+      await store.start();
+      await store.selectTeam("team-plt");
+      const id = Object.values(store.snapshot().issues).find((i) => i.identifier === "PLT-110")!.id;
+      fake.control.fail("echo", { operation: "MoveIssue" });
+      await store.move(id, "team-plt:done");
+      const s = store.snapshot();
+      expect(s.notice).toBe("PLT-110 was not moved to Done: Linear refused the request.");
+      expect(JSON.stringify(s)).not.toContain(fake.keys.good);
+      expect(JSON.stringify(s)).not.toContain("Argument Validation");
     });
 
     test("a revoked key blocks the board and puts the card back", async () => {
@@ -219,9 +232,14 @@ describe("board store", () => {
       expect(store.snapshot().problem?.kind).toBe("rate-limited");
       expect(Object.keys(store.snapshot().issues)).toHaveLength(cards);
       const requests = fake.control.log.requests.length;
-      await store.tick(); // still inside the window
-      expect(fake.control.log.requests.length).toBe(requests);
-      clock = Date.parse("2026-10-23T15:06:00Z");
+      // Linear's reset is 15:05:00. A tick inside the 2-second de-bounce would be held back anyway, so each step below is
+      // well past it: only the reset time can be what holds the next ones back.
+      for (const at of ["2026-10-23T15:00:30Z", "2026-10-23T15:03:00Z", "2026-10-23T15:04:59Z"]) {
+        clock = Date.parse(at);
+        await store.tick();
+        expect(fake.control.log.requests.length, at).toBe(requests);
+      }
+      clock = Date.parse("2026-10-23T15:05:00Z");
       await store.tick();
       expect(fake.control.log.requests.length).toBe(requests + 1);
       expect(store.snapshot().problem).toBeNull();

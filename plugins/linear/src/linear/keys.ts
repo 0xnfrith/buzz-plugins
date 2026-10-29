@@ -1,3 +1,5 @@
+import type { LinearErrorKind } from "./client";
+
 /** The part of `localStorage` the plugin uses, so tests can hand it a Map-backed one. */
 export type KeyValue = {
   getItem(name: string): string | null;
@@ -47,6 +49,29 @@ export function createKeyStore(storage: KeyValue) {
 }
 
 export type KeyStore = ReturnType<typeof createKeyStore>;
+
+/**
+ * What to do with a pasted key once Linear has been asked about it. A key Linear refuses is never saved. A key Linear
+ * could not be asked about (unreachable, down, rate limiting) replaces nothing: when a key is already saved it stays and
+ * the user is told to try again; only when there is no key yet is the new one saved, and the message says it was not checked.
+ * `message` is the whole text to show, or null to show the client's own text for the refusal.
+ */
+export function judgeKey(
+  verdict: LinearErrorKind | "ok",
+  hadKey: boolean,
+  clientText: string,
+): { save: boolean; message: string | null } {
+  if (verdict === "ok") return { save: true, message: null };
+  if (verdict === "auth" || verdict === "rejected") return { save: false, message: null };
+  if (!hadKey) return { save: true, message: `${clientText} The key was saved without being checked; test it again in a moment.` };
+  const why =
+    verdict === "network"
+      ? "Couldn't reach Linear to check the new key."
+      : verdict === "rate-limited"
+        ? "Linear is rate limiting requests, so the new key could not be checked."
+        : "Linear is having trouble right now, so the new key could not be checked.";
+  return { save: false, message: `${why} Your saved key is unchanged; try again${verdict === "rate-limited" ? " in a minute" : ""}.` };
+}
 
 export type KeyCheck = { ok: true; key: string } | { ok: false; message: string };
 

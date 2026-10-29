@@ -86,11 +86,35 @@ describe("client", () => {
   test("no error message or thrown value carries the key", async () => {
     const { fake } = setup();
     const key = fake.keys.good;
-    for (const kind of ["network", "server", "rate-limit", "forbidden", "reject"]) {
+    for (const kind of ["network", "server", "rate-limit", "forbidden", "reject", "echo"]) {
       const client = createClient((r) => fake.handle(r), () => key);
       fake.control.fail(kind);
       const error = await failure(client.request("Viewer", VIEWER));
       expect(JSON.stringify({ m: error.message, s: error.stack })).not.toContain(key);
     }
+  });
+
+  test("a GraphQL error's own wording is never shown, even when it repeats the key", async () => {
+    const { fake } = setup();
+    const key = fake.keys.good;
+    const client = createClient((r) => fake.handle(r), () => key);
+    fake.control.fail("echo");
+    const error = await failure(client.request("Viewer", VIEWER));
+    expect(error.kind).toBe("rejected");
+    expect(error.message).toBe("Linear refused the request.");
+    expect(JSON.stringify({ m: error.message, s: error.stack })).not.toContain(key);
+    expect(JSON.stringify({ m: error.message, s: error.stack })).not.toContain("Argument Validation");
+  });
+
+  test("every kind of error has fixed text, none taken from the reply", async () => {
+    const reply = (status: number, body: string) => createClient(async () => ({ status, headers: {}, body }), () => "test-key-abc").request("Viewer", VIEWER);
+    const wording = "Wording that must not appear: test-key-abc";
+    expect((await failure(reply(200, JSON.stringify({ errors: [{ message: wording, extensions: { code: "INVALID_INPUT" } }] })))).message).toBe("Linear refused the request.");
+    expect((await failure(reply(400, JSON.stringify({ errors: [{ message: wording, extensions: { code: "AUTHENTICATION_ERROR" } }] })))).message).toBe("Linear did not accept the API key.");
+    expect((await failure(reply(403, JSON.stringify({ errors: [{ message: wording, extensions: { code: "FORBIDDEN" } }] })))).message).toBe("This key is not allowed to do that. It needs Read and Write access.");
+    expect((await failure(reply(400, JSON.stringify({ errors: [{ message: wording, extensions: { code: "RATELIMITED" } }] })))).message).toBe("Linear is rate limiting this key.");
+    expect((await failure(reply(503, wording))).message).toBe("Linear is having trouble right now (503).");
+    expect((await failure(reply(400, wording))).message).toBe("Linear answered with an unexpected response (400).");
+    expect((await failure(reply(200, JSON.stringify({ data: null })))).message).toBe("Linear answered with an unexpected response (200).");
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { progress, sortColumn, sortStates } from "../../src/linear/model";
+import { acceptsMoves, progress, sortColumn, sortStates } from "../../src/linear/model";
 import type { Issue, StateType, WorkflowState } from "../../src/linear/types";
 
 const state = (id: string, type: string, position: number): WorkflowState => ({ id, name: id, type: type as StateType, color: "#999", position });
@@ -20,6 +20,13 @@ describe("the order of the columns", () => {
   test("a state type that is not known yet goes after the known ones and does not scramble them", () => {
     const sorted = sortStates([state("odd", "somethingnew", -5), state("canceled", "canceled", 3), state("dup", "duplicate", 0), state("todo", "unstarted", 1), state("odd2", "another", -9)]);
     expect(sorted.map((s) => s.id)).toEqual(["todo", "canceled", "dup", "odd2", "odd"]); // the unknown ones by position among themselves
+  });
+});
+
+describe("which columns take a card", () => {
+  test("every state type does except Duplicate, which Linear fills only by marking an issue a duplicate of another", () => {
+    for (const type of ["triage", "backlog", "unstarted", "started", "completed", "canceled"] as const) expect(acceptsMoves(type), type).toBe(true);
+    expect(acceptsMoves("duplicate")).toBe(false);
   });
 });
 
