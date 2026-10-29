@@ -283,15 +283,16 @@ test("a saved page whose id could not make a page id (a hand-edited list) has no
 
 // ---- Fonts and the stylesheet ----
 
-test("the stylesheet carries two embedded fonts, as data, and nothing is fetched for them", () => {
+test("the stylesheet carries one embedded font, as data, and nothing is fetched for it; addresses and labels use the system monospace", () => {
   const m = mount({ rows: ["1"] });
   const css = m.styles[0].textContent;
   assert.match(css, /@font-face\{font-family:"Chakra Petch";[^}]*src:url\(data:font\/woff2;base64,/);
-  assert.match(css, /@font-face\{font-family:"Share Tech Mono";[^}]*src:url\(data:font\/woff2;base64,/);
+  assert.equal(css.match(/@font-face/g).length, 1, "one embedded font, not two");
+  assert.doesNotMatch(css, /Share Tech/, "the font whose licence reserves a name is not named or embedded");
   assert.doesNotMatch(css, /url\((?!data:)/, "every url() is inline data");
   assert.doesNotMatch(css, /@import|https?:\/\//);
   assert.match(css, /--megatech-artifacts-display:"Chakra Petch",ui-sans-serif/, "system fonts follow in the stack");
-  assert.match(css, /--megatech-artifacts-mono:"Share Tech Mono",ui-monospace/);
+  assert.match(css, /--megatech-artifacts-mono:ui-monospace,/);
 });
 
 test("the card's colours: the brand accents are variables on its own root, never on the page's root, and the host's tokens come first", () => {
