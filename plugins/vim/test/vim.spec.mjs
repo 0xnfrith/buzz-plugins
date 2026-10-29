@@ -3000,6 +3000,33 @@ test.describe("the g page keys", () => {
     });
   }
 
+  // Two pages pinned to the bar. The second fixture (test/pins-fixture.tsx) is registered after the first and sorts before it by name,
+  // and both sort before Agents: the numbers follow the names, as the host draws the bar, not the order the pages were registered in
+  // or the order of their keys. The pinned pages are the third and fourth entries and Agents and Workflows move down by two.
+  test("two pinned pages are numbered by name among the bar's entries", async ({ page, app }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem(
+        "buzzodz.plugins.v1",
+        JSON.stringify({ version: 2, enabled: { "fixture.page-placement": true, "vim-test.pins": true } }),
+      );
+    });
+    await open(page, app);
+    const order = ["Messages", "Reminders", "A bar", "A deliberately long topbar destination", "Agents", "Workflows"];
+    await expect(tabs(page)).toHaveText(order);
+    for (const n of [3, 4, 5, 6, 2, 1]) {
+      await enter(page, "the channel's list");
+      await press(page, "g", String(n));
+      await expect(tabs(page).nth(n - 1), `g${n}`).toHaveAttribute("aria-selected", "true");
+      await expect(tabs(page).nth(n - 1)).toHaveText(order[n - 1]);
+    }
+    // There are six entries now: the seventh is nothing, and the page stays.
+    await press(page, "g", "6");
+    await expect(tabs(page).nth(5)).toHaveAttribute("aria-selected", "true");
+    await press(page, "g", "7");
+    await expect(tabs(page).nth(5)).toHaveAttribute("aria-selected", "true");
+    await expect(bar(page)).not.toContainText("g");
+  });
+
   test("a digit after g is the entry's number, not a count; a count before a motion still is one", async ({ page, app }) => {
     await page.addInitScript(() => {
       localStorage.setItem("buzzodz.plugins.v1", JSON.stringify({ version: 2, enabled: { "fixture.page-placement": true } }));
