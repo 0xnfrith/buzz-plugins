@@ -11,10 +11,6 @@
     "control": "control: open the thread (the page itself)",
     "why": "Opening a thread costs the app a render of its pane, even when the thread is already open and only its tab comes forward: some 75 ms of script on a two-core machine (the control row is the page asking the host to open the same thread itself). `o` adds the plugin's own work after the frames measured, landing at the thread's end."
   },
-  "list Enter": {
-    "control": "control: open the thread (the page itself)",
-    "why": "The same handler as `o`, and the same cost: opening a thread costs the app a render of its pane, even when the thread is already open and only its tab comes forward (the control row is the page asking the host to open the same thread itself)."
-  },
   "list q: close the thread": {
     "control": "control: close the thread (the page itself)",
     "why": "Closing a thread's pane costs the app a render and the layout of the channel's list in the room it gives back (the control row is the page sending the window event that `q` sends, the native Close Tab menu's)."
