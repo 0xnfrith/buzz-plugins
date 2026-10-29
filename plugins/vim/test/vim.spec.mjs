@@ -895,6 +895,17 @@ test("with threads placed in the main pane, o opens a tab over the channel and q
   await expect(mainScroller(page)).toHaveAttribute("data-channel-timeline", "alpha");
 });
 
+// The cursor on the message that has the long thread (exactMessages): the third, from the top of the channel's list.
+const toRoot = async (page, app) => {
+  const ids = await rowIds(page);
+  const at = ids.indexOf(app.exact.root.id);
+  expect(at).toBeGreaterThanOrEqual(0);
+  await press(page, "g", "g");
+  await expect.poll(() => cursor(page)).toBe(ids[0]);
+  for (let i = 0; i < at; i++) await press(page, "j");
+  await expect.poll(() => cursor(page)).toBe(app.exact.root.id);
+};
+
 test.describe("o opens a thread at its end", () => {
   // The channel's third message has 80 replies: a thread many screens long.
   test.use({ exactMessages: true });
@@ -909,17 +920,6 @@ test.describe("o opens a thread at its end", () => {
       const box = row.getBoundingClientRect();
       return box.bottom > list.top && box.top < list.bottom;
     }, pane);
-  // The cursor on the message that has the thread: the third, from the top of the channel's list.
-  const toRoot = async (page, app) => {
-    const ids = await rowIds(page);
-    const at = ids.indexOf(app.exact.root.id);
-    expect(at).toBeGreaterThanOrEqual(0);
-    await press(page, "g", "g");
-    await expect.poll(() => cursor(page)).toBe(ids[0]);
-    for (let i = 0; i < at; i++) await press(page, "j");
-    await expect.poll(() => cursor(page)).toBe(app.exact.root.id);
-  };
-
   test("beside the channel: the pane is at its end and the newest reply is under the cursor", async ({ page, app }) => {
     await open(page, app);
     await toRoot(page, app);
@@ -1215,6 +1215,135 @@ test.describe("o opens a thread at its end", () => {
     await expect(mainScroller(page)).toBeFocused();
     await expect.poll(() => cursor(page)).toBe(app.exact.root.id);
     await expect(mainScroller(page).locator(`[data-vim-cursor="main"]`)).toHaveAttribute("data-message-id", app.exact.root.id);
+  });
+});
+
+// In a thread, `o` opens and folds the replies to the message under the cursor. The thread of the message with 80 replies has one reply
+// that has a reply of its own (the 80th, to the 79th): the 79th has a branch, closed behind a pill at first.
+test.describe("o in a thread opens and folds the replies to a message", () => {
+  test.use({ exactMessages: "nested" });
+  // What the branch of a message looks like: its pill (the host's, only while the branch is closed), the host's state, the plugin's fold,
+  // and how many of the replies in it show.
+  const branchOf = (scroller, id) =>
+    scroller.evaluate((el, id) => {
+      const branch = el.querySelector(`[data-message-id="${id}"]`)?.closest("[data-depth]");
+      if (!branch) return undefined;
+      const replies = [...branch.querySelectorAll(":scope > :last-child [data-message-id]")];
+      return {
+        pill: !!branch.querySelector(":scope > * > button[data-thread-summary][aria-controls]"),
+        open: branch.getAttribute("data-open"),
+        fold: branch.getAttribute("data-vim-fold"),
+        shown: replies.filter((reply) => reply.getClientRects().length > 0).length,
+        count: getComputedStyle(branch, "::after").content,
+      };
+    }, id);
+  const folds = (page) => page.locator("[data-vim-fold]").count();
+
+  // The tests run once in each placement of the thread: beside the channel and over it (a tab).
+  for (const placement of ["side", "main"]) {
+    test.describe(`thread placed ${placement === "side" ? "beside the channel" : "over the channel"}`, () => {
+      const list = (page) => (placement === "side" ? sideScroller(page) : page.locator("[data-main-workspace] [data-message-scroller] >> visible=true"));
+      test.beforeEach(async ({ page }) => {
+        if (placement === "main") await page.addInitScript(() => localStorage.setItem("buzz-thread-placement.v1", "main"));
+      });
+
+      test("o opens the replies of the message under the cursor, and o again folds them, and again opens them", async ({ page, app }) => {
+        await open(page, app);
+        await toRoot(page, app);
+        await press(page, "o"); // in the channel's list: opens the thread, at its end
+        const parent = app.exact.replies.at(-2).id; // has the reply of its own
+        const child = app.exact.replies.at(-1).id;
+        await expect(bar(page)).toContainText(placement);
+        // The newest reply that shows is the 79th: its own reply is behind the pill.
+        await expect.poll(() => cursor(page)).toBe(parent);
+        expect(await branchOf(list(page), parent)).toMatchObject({ pill: true, shown: 0, fold: null });
+        // Opened: the reply shows under the message, the pill is gone, the cursor has not moved, the message list has the keys.
+        await press(page, "o");
+        await expect.poll(() => branchOf(list(page), parent)).toMatchObject({ pill: false, open: "true", shown: 1, fold: null });
+        expect(await cursor(page)).toBe(parent);
+        await expect(list(page)).toBeFocused();
+        await expect(bar(page)).toHaveText(`-- NORMAL --  ${placement}`);
+        // Folded: the replies are hidden, a count stands where the pill was, and the cursor has not moved.
+        await press(page, "o");
+        await expect.poll(() => branchOf(list(page), parent)).toMatchObject({ pill: false, open: "true", shown: 0, fold: "1 reply", count: '"1 reply"' });
+        expect(await cursor(page)).toBe(parent);
+        expect(await folds(page)).toBe(1);
+        // A folded branch is not walked into: j goes past the last message into the reply box, as with nothing below.
+        await press(page, "j");
+        await expect(replyBox(page)).toBeFocused();
+        await press(page, "k");
+        await expect.poll(() => cursor(page)).toBe(parent);
+        // Opened again: now j walks into the reply.
+        await press(page, "o");
+        await expect.poll(() => branchOf(list(page), parent)).toMatchObject({ shown: 1, fold: null });
+        await press(page, "j");
+        await expect.poll(() => cursor(page)).toBe(child);
+        // On the reply, which has none of its own, o does nothing.
+        await press(page, "o");
+        await page.waitForTimeout(300);
+        expect(await cursor(page)).toBe(child);
+        expect(await folds(page)).toBe(0);
+        expect(await branchOf(list(page), parent)).toMatchObject({ shown: 1, fold: null });
+      });
+
+      test("o on a message that has no replies, and on the thread's first message, does nothing", async ({ page, app }) => {
+        await open(page, app);
+        await toRoot(page, app);
+        await press(page, "o");
+        await expect.poll(() => cursor(page)).toBe(app.exact.replies.at(-2).id);
+        await press(page, "k");
+        const before = app.exact.replies.at(-3).id;
+        await expect.poll(() => cursor(page)).toBe(before);
+        await press(page, "o");
+        await page.waitForTimeout(300);
+        expect(await cursor(page)).toBe(before);
+        expect(await folds(page)).toBe(0);
+        expect(await branchOf(list(page), app.exact.replies.at(-2).id)).toMatchObject({ pill: true, shown: 0 });
+        await expect(bar(page)).toContainText(placement);
+        // The first message of the thread is in no branch.
+        await press(page, "g", "g");
+        await expect.poll(() => cursor(page)).toBe(app.exact.root.id);
+        await press(page, "o");
+        await page.waitForTimeout(300);
+        expect(await cursor(page)).toBe(app.exact.root.id);
+        expect(await folds(page)).toBe(0);
+        await expect(bar(page)).toContainText(placement);
+      });
+    });
+  }
+
+  // The fold leans on Buzz's markup. Where the stylesheet's rule meets nothing (a host that draws its branches differently), the replies
+  // would stay on show with a count under them: the plugin takes its mark off again, and o only ever opens, as before.
+  test("fail safe: where the replies do not hide, o leaves the branch open", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await press(page, "o");
+    const parent = app.exact.replies.at(-2).id;
+    await expect.poll(() => cursor(page)).toBe(parent);
+    await page.addStyleTag({ content: "[data-vim-fold] > :last-child { display: block !important; }" });
+    await press(page, "o"); // opens it, as the host does
+    await expect.poll(() => branchOf(sideScroller(page), parent)).toMatchObject({ pill: false, shown: 1, fold: null });
+    await press(page, "o"); // would fold it: the replies still show, so the mark comes off
+    await page.waitForTimeout(500);
+    expect(await branchOf(sideScroller(page), parent)).toMatchObject({ open: "true", shown: 1, fold: null });
+    expect(await folds(page)).toBe(0);
+    expect(await cursor(page)).toBe(parent);
+    await press(page, "j"); // the keys still work
+    await expect.poll(() => cursor(page)).toBe(app.exact.replies.at(-1).id);
+  });
+
+  test("in the channel's list o still opens the thread, also after a thread was closed", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await press(page, "o");
+    await expect(threadPane(page)).toBeVisible();
+    await press(page, "q");
+    await expect(threadPane(page)).toHaveCount(0);
+    await expect(bar(page)).toContainText("main");
+    await press(page, "o");
+    await expect(threadPane(page)).toBeVisible();
+    await expect(bar(page)).toContainText("side");
+    await expect.poll(() => cursor(page)).toBe(app.exact.replies.at(-2).id);
   });
 });
 

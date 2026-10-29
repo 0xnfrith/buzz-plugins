@@ -74,7 +74,7 @@ const BASELINE =
 
 test.use({
   pluginFixtures: true,
-  exactMessages: true,
+  exactMessages: "nested", // the 80-reply thread, whose 79th reply has a reply of its own (the 80th): the branch that `o` in a thread opens and folds
   markdownMessages: true,
   largeSidebar: true,
   historyCounts: { alpha: 3000, beta: 3 },
@@ -110,6 +110,7 @@ const probe = async (page) => {
       const selection = getSelection();
       let text = `${active?.tagName}|${active?.getAttribute?.("data-channel-id") ?? active?.getAttribute?.("aria-label") ?? active?.id}|${active?.tagName === "BUTTON" ? active.textContent?.slice(0, 40) : ""}|${document.querySelector("nav[aria-label='Settings sections'] [aria-current]")?.textContent?.slice(0, 40)}|${selection?.anchorOffset}|${selection?.focusOffset}|${selection?.anchorNode?.nodeValue?.length}|${document.querySelector("[data-vim-status]")?.textContent}`;
       for (const el of document.querySelectorAll("[data-vim-cursor]")) text += `|${el.dataset.messageId}${el.getAttribute("data-vim-cursor")}`;
+      text += `|${document.querySelectorAll("[data-vim-fold]").length}`;
       for (const el of document.querySelectorAll("[data-message-scroller], #settings-content, nav[aria-label='Settings sections'], [data-budget-scroller]")) text += `|${Math.round(el.scrollTop)}`;
       return text;
     };
@@ -525,6 +526,8 @@ surface("list", "message list (2,400 messages loaded)", async ({ page, app, rows
   ]);
 }, IN_MAIN_LIST);
 
+// The reply branch the thread's cursor is on, for the controls.
+const CURSOR_BRANCH = `document.querySelector('[data-panel-workspace] [data-vim-cursor="side"]').closest("[data-depth]")`;
 surface("thread", "thread pane (80 replies)", async ({ page, app, rows }) => {
   const opened = await page.evaluate(
     (target) => window.fixtureNavigation.open(target),
@@ -536,6 +539,33 @@ surface("thread", "thread pane (80 replies)", async ({ page, app, rows }) => {
   await rows([
     ...moves(100, SIDE_LIST, 40),
     { pair: [{ key: "h" }, { key: "l" }], crosses: true }, // to the channel's list and back
+    // o on the 79th reply, which has a reply of its own: the host opens the branch (once: it cannot close it again, so `before` does that
+    // by a press of o), and from then on o folds it and opens it again, which is what is measured.
+    {
+      pair: [{ key: "o: fold the replies", seq: ["o"] }, { key: "o: open them again", seq: ["o"] }],
+      before: async (page) => {
+        const branch = () =>
+          page.evaluate(() => {
+            const el = document.querySelector('[data-panel-workspace] [data-vim-cursor="side"]')?.closest("[data-depth]");
+            return el ? { pill: !!el.querySelector(":scope > * > button[data-thread-summary][aria-controls]"), open: el.getAttribute("data-open") === "true" } : undefined;
+          });
+        await page.evaluate(() => document.querySelectorAll("[data-vim-fold]").forEach((el) => el.removeAttribute("data-vim-fold")));
+        await press(page, "Shift+g");
+        await page.waitForTimeout(400);
+        const where = await branch();
+        if (!where?.pill && !where?.open) {
+          await press(page, "k"); // the newest row is the reply in the branch, which is shown now: up to the one that has it
+          await page.waitForTimeout(300);
+        }
+        if ((await branch())?.pill) {
+          await press(page, "o");
+          await page.waitForTimeout(500);
+        }
+      },
+    },
+    // The control for the fold: the page puts the mark on the branch and takes it off itself, as the plugin's `o` does. Showing the replies
+    // again costs the app a paint of the rows that come back, and that is the most of what `o: open them again` costs.
+    control("fold the replies (the page itself)", "open the replies (the page itself)", `${CURSOR_BRANCH}.setAttribute("data-vim-fold", "1 reply")`, `${CURSOR_BRANCH}.removeAttribute("data-vim-fold")`),
     control("focus the channel's list (the page itself)", "focus the thread's list (the page itself)", `${MAIN_LIST}.focus({ preventScroll: true })`, `${SIDE_LIST}.focus({ preventScroll: true })`),
   ]);
 }, `document.documentElement.dataset.vimRegion === "side" && !a.isContentEditable`); // the keys are in the thread's pane (the plugin's region), not in its reply box

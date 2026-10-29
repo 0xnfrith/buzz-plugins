@@ -1,7 +1,7 @@
 // ---- Theme: the plugin's stylesheet [DOM] -----------------------------------------------
 // Every colour is one of the host's own theme tokens (custom properties on <html>), so the marks follow the accent
 // colour and light or dark mode live. See "Theme" in plugins/vim/NOTES.md.
-import { ACCENT, COMMUNITY_POPUP, COMPOSER, FOCUS_RING, MAIN, mix, SIDE, SIDEBAR_ROW } from "./constants";
+import { ACCENT, COMMUNITY_POPUP, COMPOSER, FOCUS_RING, FOLD_ATTR, MAIN, mix, SIDE, SIDEBAR_ROW } from "./constants";
 
 // The channel list has real focus, so only a ring is needed; mark it while that region is active.
 // While the plugin drives the community switcher, its popover is hidden so it does not flash.
@@ -73,5 +73,17 @@ const CURSOR_CSS =
   `${ACTIVE_SIDE}${ROW}[${CURSOR_ATTR}="side"] ${BUBBLE}{${MARK_ACTIVE.bubble}}` +
   `${ACTIVE_SIDE}${ROW}[${CURSOR_ATTR}="side"]${BARE}{${MARK_ACTIVE.bare}}`;
 
+// A reply branch folded with `o` (threads.ts). The host's branch is a wrapper with the message first and the replies' panel last (its
+// own pill sits between them, and only while the branch is closed), so a folded branch hides its last child, ends the vertical line
+// the host draws down from the message, and shows the count (the attribute's value, "3 replies") where the pill would be, in the
+// size and the place of the host's own, under the message, in line with its bubble.
+const FOLD = `[${FOLD_ATTR}]`;
+const FOLD_CSS =
+  `${FOLD}>:last-child{display:none}` +
+  `${FOLD}>:first-child::after{display:none}` +
+  `${FOLD}::after{content:attr(${FOLD_ATTR});display:flex;align-items:center;min-height:var(--size-control-sm,2rem);` +
+  `margin-inline-start:calc(var(--size-control-sm,2rem) + var(--space-2,.5rem));padding-inline:var(--space-4,1rem);` +
+  `color:var(--text-standard,inherit);font-size:var(--text-body-sm,.875rem);line-height:var(--text-body-sm--line-height,1.43)}`;
+
 // The whole stylesheet, written once when the plugin is applied.
-export const STATIC_CSS = FOCUS_CSS + LINE_CSS + BOX_FOCUS_CSS + CURSOR_CSS;
+export const STATIC_CSS = FOCUS_CSS + LINE_CSS + BOX_FOCUS_CSS + CURSOR_CSS + FOLD_CSS;

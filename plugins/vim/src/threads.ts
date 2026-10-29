@@ -3,10 +3,10 @@
 // it, or Tab is pressed. A Tab keydown on window is the host's own "a keyboard user is here"
 // signal for every row at once. It moves no focus, so the plugin sends one, then clicks the
 // control the way a pointer would.
-import { MAIN, PANE_HANDLE, PANE_TOGGLE, SCROLLER } from "./constants";
+import { BRANCH, BRANCH_PILL, FOLD_ATTR, MAIN, PANE_HANDLE, PANE_TOGGLE, SCROLLER } from "./constants";
 import { ctx } from "./ctx";
 import { clearCursor, cursorRow, cursors, paintCursor, selectRow, stopFollow } from "./cursor";
-import { afterLayout, nextFrame, rowsOf, settle, timelineOf, visible } from "./dom";
+import { activeTimeline, afterLayout, focusEl, nextFrame, rowsOf, settle, timelineOf, visible } from "./dom";
 import { currentChannelId } from "./box";
 import { available, goRegion } from "./panes";
 import { clearPending, disposed, keyEpoch, state, takeCount } from "./state";
@@ -125,6 +125,55 @@ export const openThread = async () => {
     paintCursor();
   }
   goRegion(region, true); // the thread lands at its end
+};
+// ---- Reply branches in a thread [DOM] ---------------------------------------------------
+// A thread shows a message's own replies under it, behind a pill ("3 replies") that opens them. The host opens a branch once and gives
+// it no way to close again, so `o` there opens a closed branch by pressing the pill, as a pointer would, and folds an open one itself:
+// it marks the branch (FOLD_ATTR, the count the pill shows) and the stylesheet (theme.ts) hides its replies and draws the count where
+// the pill was. The host does not know: it has the branch open still, and `o` again takes the mark off. The fold is the plugin's own and
+// leans on the host's markup, so it is made to fail safe: where that markup is not found, or the mark does not hide the replies, `o`
+// does nothing to an open branch (it still opens a closed one), and it never throws. On a message with no replies of its own (and on
+// the thread's first message) `o` does nothing.
+const pillCount = (pill: Element) => Number(/\d+/.exec(pill.getAttribute("aria-label") ?? "")?.[0] ?? 0);
+const foldBranch = (branch: HTMLElement, row: HTMLElement) => {
+  const panel = branch.lastElementChild;
+  if (!panel || branch.getAttribute("data-open") !== "true") return;
+  // The replies, at every depth: the rows the host drew, and the replies that a branch inside this one still keeps behind its pill.
+  const count = rowsOf(panel).length + [...panel.querySelectorAll(BRANCH_PILL)].reduce((sum, pill) => sum + pillCount(pill), 0);
+  if (!count) return;
+  branch.setAttribute(FOLD_ATTR, `${count} ${count === 1 ? "reply" : "replies"}`);
+  // The stylesheet takes the replies out of the page. If it did not, the markup is not the one it was written for: leave the branch open.
+  if (visible(panel)) branch.removeAttribute(FOLD_ATTR);
+  else row.scrollIntoView({ block: "nearest" });
+};
+const toggleBranch = async () => {
+  clearPending();
+  try {
+    const scroller = activeTimeline();
+    const row = cursorRow();
+    const branch = row?.closest<HTMLElement>(BRANCH);
+    if (!scroller || !row || !branch) return;
+    if (branch.hasAttribute(FOLD_ATTR)) return branch.removeAttribute(FOLD_ATTR);
+    const pill = branch.querySelector<HTMLElement>(`:scope > * > ${BRANCH_PILL}`);
+    if (!pill) return foldBranch(branch, row);
+    const epoch = keyEpoch;
+    pill.click();
+    // The host moves the focus to the first reply it shows: back to the message list, with the cursor where it was.
+    await nextFrame();
+    if (keyEpoch === epoch && row.isConnected) {
+      focusEl(scroller);
+      row.scrollIntoView({ block: "nearest" });
+    }
+  } catch {
+    // Nothing the host draws is worth an error in a key handler: the key does nothing.
+  }
+};
+// `o`: in a thread it opens or folds the replies of the message under the cursor; in the channel it opens the message's thread. A
+// thread that replaces the channel's list is told from the channel by what the list is: only the channel's carries data-channel-timeline.
+export const openOrFold = () => {
+  const scroller = activeTimeline();
+  if (scroller && !scroller.hasAttribute("data-channel-timeline") && state.region !== "sidebar") void toggleBranch();
+  else void openThread();
 };
 // Enter is only ours while the message list itself has focus: on a button, a link or a tab it
 // keeps its native meaning.

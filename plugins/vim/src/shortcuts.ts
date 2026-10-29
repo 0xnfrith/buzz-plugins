@@ -14,7 +14,7 @@ import { openCommunityPicker, switchCommunity } from "./communities";
 import { afterG, goPage } from "./pages";
 import * as perf from "./perf";
 import { armPending, clearPending, set, setting, state } from "./state";
-import { closeThread, enterOpens, hidePane, openThread, resizePane, rowControl, showPane } from "./threads";
+import { closeThread, enterOpens, hidePane, openOrFold, openThread, resizePane, rowControl, showPane } from "./threads";
 
 const eligible = () => state.enabled && contextOk();
 const ctrl = (letter: string): Binding => (apple ? { key: letter, ctrl: true } : { key: letter, mod: true });
@@ -72,9 +72,9 @@ export const registerShortcuts = () => {
   key("communities", "Open the community switcher", { key: "C", shift: true }, () => void openCommunityPicker());
   key(
     "open-thread",
-    "Open the thread of the message under the cursor, at its end (after z: show the thread pane)",
+    "Open the thread of the message under the cursor, at its end; in a thread, open or fold the replies to it (after z: show the thread pane)",
     { key: "o" },
-    afterG("o", () => (state.operator === "z" ? showPane() : void openThread())),
+    afterG("o", () => (state.operator === "z" ? showPane() : openOrFold())),
   );
   key("open-thread-enter", "Open the thread of the message under the cursor", { key: "Enter" }, () => void openThread(), {
     when: () => eligible() && enterOpens(),
