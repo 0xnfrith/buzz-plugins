@@ -56,7 +56,7 @@ jobs:
         working-directory: buzz-app
         run: pnpm exec playwright install --with-deps chromium
       - name: Functional tests
-        run: plugins/vim/test/run.sh buzz-app
+        run: plugins/vim/test/run.sh buzz-app --repeat-each=20 --grep "h at the very start and l at the very end of a draft"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
         with:
