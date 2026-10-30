@@ -30,9 +30,18 @@ const draft = (page, name) => composer(page, name).evaluate((el) => el.textConte
 // when it runs, writes the editor's saved selection back if the DOM selection is not the one it last saw. On a busy page (CI types a draft and
 // goes straight on to Esc and 0) that timer has run 90 to 119 ms late: after the plugin had moved the caret and before the editor had read the
 // move, so it undid the first caret move after the click. Timers run in the order they are due, so the editor's timer has run by the time ours does.
+const editorFocusTimer = (page) => page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 25)));
 const clickBox = async (page, box) => {
   await box.click();
-  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 25)));
+  await editorFocusTimer(page);
+};
+// Presses a message's Reply button, waits until the thread's reply box has the focus (the host gives it) and then for the same timer.
+const clickReply = async (page, row) => {
+  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  const reply = page.getByRole("textbox", { name: "Reply to thread", exact: true });
+  await expect(reply).toBeFocused();
+  await editorFocusTimer(page);
+  return reply;
 };
 
 test("mode follows focus: Esc makes the message box normal, a second Esc stays, k leaves it, i comes back, plain keys type", async ({
@@ -179,9 +188,7 @@ test("l and h move between the message list and a thread pane; i writes the repl
   await open(page, app);
   const row = page.locator("[data-message-scroller] [data-message-id]").last();
   await hoverMessage(row);
-  await row.getByRole("button", { name: "Reply", exact: true }).click();
-  const reply = page.getByRole("textbox", { name: "Reply to thread", exact: true });
-  await expect(reply).toBeFocused(); // the host focuses the reply box: insert mode
+  const reply = await clickReply(page, row); // the host focuses the reply box: insert mode
   await expect(bar(page)).toContainText("INSERT");
   await expect(bar(page)).toContainText("side");
   // The host would close the thread on Esc; the plugin pre-empts it, and Esc only makes the box
@@ -2500,9 +2507,7 @@ test("visual mode works in a thread's reply box, and Esc there ends the mode wit
   await open(page, app);
   const row = page.locator("[data-message-scroller] [data-message-id]").last();
   await hoverMessage(row);
-  await row.getByRole("button", { name: "Reply", exact: true }).click();
-  const reply = page.getByRole("textbox", { name: "Reply to thread", exact: true });
-  await expect(reply).toBeFocused();
+  const reply = await clickReply(page, row);
   await page.keyboard.type("hello brave world");
   await press(page, "Escape", "0", "w", "v", "l", "l");
   await expect(bar(page)).toHaveText(/-- VISUAL --.*side/);
@@ -2867,9 +2872,7 @@ test.describe("the mode label", () => {
     // The thread pane says side in every mode.
     const row = page.locator("[data-message-scroller] [data-message-id]").last();
     await hoverMessage(row);
-    await row.getByRole("button", { name: "Reply", exact: true }).click();
-    const reply = page.getByRole("textbox", { name: "Reply to thread", exact: true });
-    await expect(reply).toBeFocused();
+    const reply = await clickReply(page, row);
     await label(page, "-- INSERT -- side");
     await page.keyboard.type("hi there");
     await press(page, "Escape");
