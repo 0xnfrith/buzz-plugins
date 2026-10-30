@@ -405,6 +405,12 @@ const surface = (id, title, body, on) =>
 // ---- Surfaces -----------------------------------------------------------------------------------------------------
 const bar = (page) => page.locator("[data-vim-status]");
 const composer = (page) => page.getByRole("textbox", { name: "Message #Alpha", exact: true });
+// Clicks into the box, then waits for a timer of its own: the editor starts a 20 ms timer when it gains focus that can run late on a busy page
+// and undo the first caret move after the click. Timers run in the order they are due (see clickBox in vim.spec.mjs and the vim NOTES).
+const clickBox = async (page, box) => {
+  await box.click();
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 25)));
+};
 const goPage = async (page, letter, name) => {
   await page.keyboard.press("g");
   await page.keyboard.press(letter);
@@ -819,7 +825,7 @@ const boxRows = (words) => [
 ];
 
 surface("box-text", "message box, NORMAL motions (600 words)", async ({ page, rows }) => {
-  await composer(page).click();
+  await clickBox(page, composer(page));
   const words = Array.from({ length: 600 }, (_, i) => ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"][i % 6] + (i % 11 === 0 ? "," : "")).join(" ");
   await page.keyboard.insertText(words);
   await page.keyboard.press("Escape");
@@ -829,7 +835,7 @@ surface("box-text", "message box, NORMAL motions (600 words)", async ({ page, ro
 }, "a.isContentEditable");
 
 surface("box-mentions", "message box, NORMAL motions (30 mentions)", async ({ page, rows }) => {
-  await composer(page).click();
+  await clickBox(page, composer(page));
   for (let i = 1; i <= 30; i++) {
     await page.keyboard.insertText("alpha beta ");
     await pickMention(page, i);
