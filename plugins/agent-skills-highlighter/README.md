@@ -67,74 +67,60 @@ Settings, **Agent Skills**:
 
 ## Why it runs `sh`
 
-Buzz lets a plugin run only the programs its manifest declares, with arguments fixed in the manifest, and gives a plugin no way to list a folder. Finding every `SKILL.md` under a few folders is a listing, so the manifest declares one program: `sh -c <script>`. The script is below, in full, and `manifest.json` carries exactly the same text (a test checks that). Buzz's own plugin documentation shows a `bash -c` declaration as an example of the same pattern.
+Buzz lets a plugin run only the programs its manifest declares, with arguments fixed in the manifest, and gives a plugin no way to list a folder. Finding every `SKILL.md` under a few folders is a listing, so the manifest declares one program: `sh -c <script> skills <awk program>`, and nothing else (no other program, no network origin). Both texts are printed below, whole, and `manifest.json` carries exactly them: `reader/build.mjs` writes the manifest from the two files, and a test fails when they differ. Buzz's own plugin documentation shows a `bash -c` declaration as an example of the same pattern.
 
-What the script is allowed to do, and what tests check about it:
+Buzz checks a declaration when a plugin is installed and refuses an argument longer than 1,024 bytes. So the script is short and has no comments of its own (this section is its commentary), and the one longer piece, the `awk` program, is a second argument: the script runs it from `$1`, and builds nothing from anything it reads.
 
-- **It only reads.** It writes no file, makes no network call, runs nothing that it reads, and builds no command from data. The only commands it runs are `read`, `printf`, `grep`, `sed`, `head` and `awk`.
+What the program is allowed to do, and what tests check about it (`test/script.test.mjs` runs the manifest's own program against real folders):
+
+- **It only reads.** It writes no file, makes no network call, runs nothing that it reads, and builds no command from data. The only programs it runs are `read`, `printf`, `grep`, `sed`, `head` and `awk`.
 - **The extra folder arrives on standard input**, as one line, and is used only as a path, always quoted. A path that is not absolute is ignored. Names with spaces, `*`, `$(…)` or a leading `-` are just names.
 - **It prints only each skill's `name` and `description` lines**, and for each skill where it came from (`user`, `extra` or `plugin`, and the plugin's name). Nothing else of a file leaves it: not the other lines of the frontmatter, not the body. A line of a file can never pose as the header of another skill.
-- **It is bounded.** 400 files; a file's output stops at 2,000 bytes (a line is printed whole or left out; it is never cut in the middle of a letter); the whole output stays under the 1 MiB Buzz allows a program to print.
+- **It is bounded.** 400 files; a file's output stops at 2,000 bytes (a line is printed whole or left out; it is never cut in the middle of a letter); the whole output stays under the 1 MiB Buzz allows a program to print. Buzz also stops it after 5 seconds.
 - **Unreadable files are skipped without a word**, and it always ends with exit code 0.
 
+How it reads: the first line of standard input is the extra folder (`~/` is expanded; anything that is not an absolute path is dropped). The base folder is `$CLAUDE_CONFIG_DIR`, or `~/.claude` when that is not set. The function `r KIND PLUGIN DIR` goes through `DIR/*/SKILL.md`: for each readable file (400 at most in all) it prints a header line, `@@@`, a tab, the kind, a tab, the plugin's name, a tab and the skill's folder name, then runs the `awk` program on the file. The `awk` program prints the `name:` and `description:` lines of the frontmatter, with their indented continuation lines, and stops at the closing `---`, at line 80, or at 2,000 bytes. The script reads your skills folder first, then the extra folder, then the install folders named in `installed_plugins.json` (`grep` and `sed` take the `installPath` values and `awk` drops repeats), taking a plugin's name from its `.claude-plugin/plugin.json` or, without one, from the folder above the version.
+
+`reader/main.sh`, the argument of `sh -c`:
+
 ```sh
-# Agent Skills Highlighter: reads the skill files on this computer. The manifest runs this text as `sh -c`; it is the one program the plugin declares.
-# It only reads: it writes no file, makes no network call and runs nothing that it reads. File and folder names are only ever used as paths.
-# Standard input: one line, the optional extra folder (a full path, or ~/...).
-# Standard output, for each SKILL.md: a line "@@@", a tab, the kind (user, extra or plugin), a tab, the plugin's name (plugin only), a tab and
-# the skill's folder name; then the `name` and `description` lines of its frontmatter, and nothing else of the file.
-# Limits: 400 files, and reading a file stops at the first line that would take its output past 2,000 bytes (a line is printed whole or not at all).
-# Anything unreadable is skipped without a word.
-IFS= read -r extra || :
-case $extra in "~/"*) extra=$HOME/${extra#"~/"} ;; esac
-case $extra in /*) ;; *) extra= ;; esac
-base=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
-case $base in /*) ;; *) exit 0 ;; esac
-count=0
-nl='
-'
-# read_dir KIND PLUGIN DIR: the SKILL.md of every folder in DIR
-read_dir() {
-  for file in "$3"/*/SKILL.md; do
-    [ -f "$file" ] && [ -r "$file" ] || continue
-    [ "$count" -lt 400 ] || return 0
-    count=$((count + 1))
-    folder=${file%/SKILL.md}
-    printf '@@@\t%s\t%s\t%s\n' "$1" "$2" "${folder##*/}"
-    LC_ALL=C awk '
-      function out(line) { total += length(line) + 1; if (total > 2000) exit; print line }
-      { sub(/\r$/, "") }
-      NR == 1 { if ($0 !~ /^---[ \t]*$/) exit; next }
-      NR > 80 || /^---[ \t]*$/ { exit }
-      /^[A-Za-z0-9_-]+:/ { keep = ($0 ~ /^(name|description):/); if (keep) out($0); next }
-      keep && (/^[ \t]/ || $0 == "") { out($0) }
-    ' "$file" 2>/dev/null
+A=$1 n=0
+IFS= read -r x || :
+case $x in "~/"*) x=$HOME/${x#??} ;; esac
+case $x in /*) ;; *) x= ;; esac
+b=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
+case $b in /*) ;; *) exit 0 ;; esac
+r() {
+  for f in "$3"/*/SKILL.md; do
+    [ "$n" -lt 400 ] && [ -f "$f" ] && [ -r "$f" ] || continue
+    n=$((n + 1)); g=${f%/SKILL.md}
+    printf '@@@\t%s\t%s\t%s\n' "$1" "$2" "${g##*/}"
+    LC_ALL=C awk "$A" "$f" 2>/dev/null
   done
 }
-read_dir user "" "$base/skills"
-if [ -n "$extra" ]; then read_dir extra "" "$extra"; fi
-# The installed Claude Code plugins: each install's folder is named in installed_plugins.json, and its skills are in skills/ there.
-list=$base/plugins/installed_plugins.json
-roots=
-if [ -r "$list" ]; then
-  roots=$(grep -o '"installPath"[[:space:]]*:[[:space:]]*"[^"]*"' "$list" 2>/dev/null | sed 's/^[^:]*:[[:space:]]*"//; s/"$//')
-fi
-seen=$nl
-while IFS= read -r root; do
-  case $root in /*) ;; *) continue ;; esac
-  case $seen in *"$nl$root$nl"*) continue ;; esac
-  seen=$seen$root$nl
-  plugin=$(grep -o '"name"[[:space:]]*:[[:space:]]*"[A-Za-z0-9._-]*"' "$root/.claude-plugin/plugin.json" 2>/dev/null | head -n 1 | sed 's/^[^:]*:[[:space:]]*"//; s/"$//')
-  if [ -z "$plugin" ]; then
-    plugin=${root%/}
-    plugin=${plugin%/*}
-    plugin=${plugin##*/}
-  fi
-  read_dir plugin "$plugin" "$root/skills"
-done <<EOF
-$roots
-EOF
+r user "" "$b/skills"
+[ -z "$x" ] || r extra "" "$x"
+grep -o '"installPath"[^"]*"[^"]*"' "$b/plugins/installed_plugins.json" 2>/dev/null |
+  sed 's/"installPath"[^"]*"//; s/"$//' | awk '!s[$0]++' |
+  while IFS= read -r d; do
+    case $d in /*) ;; *) continue ;; esac
+    d=${d%/}
+    p=$(grep -o '"name"[[:space:]]*:[[:space:]]*"[A-Za-z0-9._-]*"' "$d/.claude-plugin/plugin.json" 2>/dev/null | head -n 1 | sed 's/.*"\(.*\)"/\1/')
+    [ -n "$p" ] || { p=${d%/*}; p=${p##*/}; }
+    r plugin "$p" "$d/skills"
+  done
 exit 0
+```
+
+`reader/skill.awk`, the argument that follows it:
+
+```awk
+function out(line) { total += length(line) + 1; if (total > 2000) exit; print line }
+{ sub(/\r$/, "") }
+NR == 1 { if ($0 !~ /^---[ \t]*$/) exit; next }
+NR > 80 || /^---[ \t]*$/ { exit }
+/^[A-Za-z0-9_-]+:/ { keep = ($0 ~ /^(name|description):/); if (keep) out($0); next }
+keep && (/^[ \t]/ || $0 == "") { out($0) }
 ```
 
 The plugin's own code then reads those lines (`parseSkillOutput` in `plugin.js`).

@@ -1,4 +1,4 @@
-// The one declared program, `sh -c <skills.sh>`, run for real against made-up folders: what it prints, what it must not print, and that it only reads.
+// The one declared program, `sh -c <reader/main.sh> skills <reader/skill.awk>`, run for real against made-up folders: what it prints, what it must not print, and that it only reads.
 // Run from a directory that has no package.json above it: node --test plugins/agent-skills-highlighter/test/*.test.mjs
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -9,7 +9,8 @@ import { join } from "node:path";
 import { buildSkillIndex, parseSkillOutput } from "../plugin.js";
 
 const here = new URL("..", import.meta.url).pathname;
-const script = readFileSync(join(here, "skills.sh"), "utf8");
+const main = readFileSync(join(here, "reader", "main.sh"), "utf8");
+const awkProgram = readFileSync(join(here, "reader", "skill.awk"), "utf8");
 const manifest = JSON.parse(readFileSync(join(here, "manifest.json"), "utf8"));
 const command = manifest.host.commands[0];
 
@@ -33,32 +34,38 @@ const write = (path, text) => {
 };
 const names = (output) => parseSkillOutput(output).map(({ kind, label, name }) => `${kind}:${label}:${name}`);
 
-test("the manifest declares exactly this program: sh -c <skills.sh>, with input and output bounds", () => {
+test("the manifest declares exactly this program: sh -c <main.sh> skills <skill.awk>, within the limits the host checks", () => {
   assert.equal(manifest.host.commands.length, 1);
   assert.equal(command.id, "skills");
   assert.equal(command.program, "sh");
-  assert.deepEqual(command.args, ["-c", script, "skills"]);
+  assert.deepEqual(command.args, ["-c", main, "skills", awkProgram], "manifest.json is not what reader/build.mjs writes: run it");
+  // The rules of the app's manifest check (crates/plugin-manager, `valid_program` and the host command limits): the app refuses a
+  // declaration with more than 16 arguments, an argument over 1,024 bytes, or a NUL; browser builds do not check, so this does.
+  assert.ok(command.args.length <= 16);
+  for (const arg of command.args) assert.ok(Buffer.byteLength(arg) <= 1024 && !arg.includes("\0"), `an argument is ${Buffer.byteLength(arg)} bytes`);
+  assert.match(command.program, /^[A-Za-z0-9._-]{1,80}$/);
+  assert.match(command.id, /^[a-z][a-z0-9]*([.-][a-z0-9]+)*$/);
   assert.ok(command.maxInputBytes >= 1100 && command.maxInputBytes <= 65536);
   assert.ok(command.maxOutputBytes > 0 && command.maxOutputBytes <= 1048576);
   assert.equal(manifest.host.networkOrigins, undefined);
+  assert.equal(manifest.host.processes, undefined);
 });
 
-test("the script only reads: no network program, no eval, no redirection but to /dev/null, no tool that writes or runs files", () => {
-  const code = script
-    .split("\n")
-    .filter((line) => !line.trim().startsWith("#"))
-    .join("\n");
+test("the program only reads: no network program, no eval, no redirection but to /dev/null, no tool that writes or runs files", () => {
   for (const word of ["curl", "wget", "nc", "ssh", "eval", "source", "exec", "tee", "rm", "mv", "cp", "mkdir", "touch", "chmod", "sort", "xargs", "python", "node", "perl", "bash"]) {
-    assert.ok(!new RegExp(`(^|[\\s;|&(])${word}([\\s;|&)]|$)`).test(code), `the script uses ${word}`);
+    for (const [name, text] of [["main.sh", main], ["skill.awk", awkProgram]]) assert.ok(!new RegExp(`(^|[\\s;|&(])${word}([\\s;|&)]|$)`).test(text), `${name} uses ${word}`);
   }
-  const shell = code.replace(/awk '[^']*'/, "awk ''"); // the awk program compares with >; it is checked on its own below
-  const redirections = [...shell.matchAll(/(?<![<])(\d?>>?)\s*([^\s&|;)]*)/g)].map((m) => `${m[1]} ${m[2]}`);
-  assert.ok(redirections.every((r) => r.endsWith("/dev/null")), `redirections: ${redirections}`);
-  assert.ok(!code.includes("`"), "no backtick substitution");
-  assert.deepEqual([...new Set([...code.matchAll(/\$\((?!\()\s*(\w+)/g)].map((m) => m[1]))], ["grep"], "the only command substitutions run grep");
-  const awk = /awk '([^']*)'/.exec(code)[1];
-  assert.ok(!/system|getline|close\(|print\s*[>|]|printf/.test(awk), "the awk program runs nothing and writes no file");
-  assert.equal([...code.matchAll(/\bawk\b/g)].length, 1);
+  const redirections = [...main.matchAll(/(?<![<])(\d?>>?)\s*([^\s&|;)]*)/g)].map((m) => `${m[1]} ${m[2]}`);
+  assert.ok(redirections.length > 0 && redirections.every((r) => r.endsWith("/dev/null")), `redirections: ${redirections}`);
+  assert.ok(!main.includes("`"), "no backtick substitution");
+  assert.deepEqual([...new Set([...main.matchAll(/\$\((?!\()\s*(\w+)/g)].map((m) => m[1]))], ["grep"], "the only command substitutions run grep");
+  assert.deepEqual(
+    [...main.matchAll(/(?:^|[\s|;(])(awk|sed|grep|head|printf|read)\b/g)].map((m) => m[1]).filter((v, i, all) => all.indexOf(v) === i).sort(),
+    ["awk", "grep", "head", "printf", "read", "sed"],
+    "the only programs it runs",
+  );
+  assert.ok(!/system|getline|close\(|print\s*[>|]|printf|\|\s*"/.test(awkProgram), "the awk program runs nothing and writes no file");
+  assert.equal([...main.matchAll(/\bawk\b/g)].length, 2, "the skill program and the duplicate filter");
 });
 
 test("user skills: plain, quoted, folded, CRLF; the folder name stands in when there is no frontmatter; other keys never leave", () => {
@@ -231,7 +238,8 @@ test("it changes nothing: every file and folder it reads is as it was", () => {
   assert.equal(snapshot(home), before);
 });
 
-test("the README prints the whole script, and it is the text of skills.sh", () => {
+test("the README prints the whole program: both files, as they are", () => {
   const readme = readFileSync(join(here, "README.md"), "utf8");
-  assert.ok(readme.includes("```sh\n" + script.trimEnd() + "\n```"), "the README's script differs from skills.sh");
+  assert.ok(readme.includes("```sh\n" + main.trimEnd() + "\n```"), "the README's shell script differs from reader/main.sh");
+  assert.ok(readme.includes("```awk\n" + awkProgram.trimEnd() + "\n```"), "the README's awk program differs from reader/skill.awk");
 });
