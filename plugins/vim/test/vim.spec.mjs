@@ -3993,3 +3993,48 @@ test.describe("a mention chip in the draft", () => {
     await stays(page);
   });
 });
+
+// Diagnostic only, not for merging: the first half of the Esc-leaves-visual-mode test, repeated, with every selection write logged.
+test.describe("diag visual", () => {
+  for (let run = 1; run <= 80; run++) {
+    test(`diag visual run ${run}`, async ({ page, app }) => {
+      await open(page, app);
+      await page.evaluate(() => {
+        const log = (window.__log = []);
+        const t0 = performance.now();
+        const add = (what, extra = "") => log.push(`${(performance.now() - t0).toFixed(1)} ${what} ${extra}`);
+        const frames = () =>
+          new Error().stack
+            .split("\n")
+            .slice(2, 6)
+            .map((l) => l.replace(/^\s*at\s+/, "").replace(/\(?https?:\/\/[^/]+\/assets\//, "(").slice(0, 60))
+            .join(" < ");
+        for (const m of ["collapse", "extend", "modify", "setBaseAndExtent", "removeAllRanges", "addRange", "selectAllChildren", "collapseToEnd", "collapseToStart", "setPosition"]) {
+          const orig = Selection.prototype[m];
+          Selection.prototype[m] = function (...a) {
+            const r = orig.apply(this, a);
+            add("W:" + m, `${a.map((x) => (typeof x === "string" ? x : (x?.nodeName ?? x))).join(",")} -> ${this.anchorOffset}-${this.focusOffset} ${frames()}`);
+            return r;
+          };
+        }
+        for (const type of ["focusin", "focusout", "mousedown", "mouseup"])
+          document.addEventListener(type, (e) => add(type, e.target?.getAttribute?.("aria-label") ?? ""), true);
+        document.addEventListener("keydown", (e) => add("key", e.key), true);
+        document.addEventListener("selectionchange", () => {
+          const s = document.getSelection();
+          add("sel", `${s.anchorOffset}-${s.focusOffset}`);
+        });
+      });
+      await composer(page).click();
+      await page.keyboard.type("one two");
+      await press(page, "Escape", "0", "v", "l", "l", "Escape");
+      await expect(bar(page)).toContainText("NORMAL");
+      expect(await collapsed(page)).toBe(true);
+      await press(page, "x");
+      await page.waitForTimeout(300);
+      const got = await draft(page);
+      if (got !== "on two") console.log(`DIAGFAIL run=${run} got=${JSON.stringify(got)}\n` + (await page.evaluate(() => window.__log.join("\n"))));
+      else if (run === 3) console.log(`DIAGOK run=${run}\n` + (await page.evaluate(() => window.__log.join("\n"))));
+    });
+  }
+});
