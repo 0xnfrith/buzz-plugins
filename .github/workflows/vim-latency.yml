@@ -154,6 +154,7 @@ jobs:
           BUDGET_OUT: ${{ runner.temp }}/vim-budget
           SHARD_GREP: ${{ matrix.shard.grep }}
           SHARD_INVERT: ${{ matrix.shard.invert }}
+          BUDGET_BASELINE: ${{ matrix.shard.id == 'message-list' && '0' || '' }}
         run: |
           args=()
           [ -z "$SHARD_GREP" ] || args+=(--grep "$SHARD_GREP")
