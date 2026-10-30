@@ -1,0 +1,87 @@
+# The tests of the Agent Skills Highlighter plugin (plugins/agent-skills-highlighter/test): the node tests (detection, reading skill files,
+# the store and the settings; no dependencies, no build) and the browser spec (the highlight, the card, the keyboard, reduced motion,
+# contrast in both themes, the Settings card, disabling the plugin) in headless Chromium against block/buzz-app's own production web
+# build, the way plugins/agent-skills-highlighter/test/run.sh runs it by hand. The performance spec (SKILLS_PERF=1) is run by hand.
+name: Agent Skills Highlighter tests
+
+on:
+  pull_request:
+    paths:
+      - "plugins/agent-skills-highlighter/**"
+      - ".github/workflows/agent-skills-highlighter-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "plugins/agent-skills-highlighter/**"
+      - ".github/workflows/agent-skills-highlighter-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-skills-highlighter-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The block/buzz-app commit the plugin is tested against. The other workflows that build the app name the same commit: the first step
+  # of each of them fails when any two differ, so change them together.
+  BUZZ_APP_REF: d92bfb2c4dd89fc5ae6e7a1445f38ad1e8ab7060
+
+jobs:
+  unit:
+    name: Agent Skills Highlighter unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - run: node --test plugins/agent-skills-highlighter/test/*.test.mjs
+
+  browser:
+    name: Agent Skills Highlighter browser tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: BUZZ_APP_REF is the same in every workflow that builds the app
+        run: |
+          # Every workflow file that names a BUZZ_APP_REF must name the same 40-character commit.
+          lines=$(grep -h -E '^  BUZZ_APP_REF:' .github/workflows/*.yml)
+          [ "$(grep -c -E '^  BUZZ_APP_REF: [0-9a-f]{40}( .*)?$' <<<"$lines")" = "$(grep -c . <<<"$lines")" ] \
+            && [ "$(sed -E 's/^  BUZZ_APP_REF: ([0-9a-f]{40}).*/\1/' <<<"$lines" | sort -u | wc -l)" = 1 ] \
+            || { echo "::error::BUZZ_APP_REF is not the same 40-character commit in every workflow that names it: change them together"; exit 1; }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: block/buzz-app
+          ref: ${{ env.BUZZ_APP_REF }}
+          path: buzz-app
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: pnpm, as the app pins it
+        run: |
+          corepack enable
+          corepack prepare "$(node -p "require('./buzz-app/package.json').packageManager")" --activate
+      - name: Install the app's dependencies (frozen lockfile)
+        working-directory: buzz-app
+        run: pnpm install --frozen-lockfile
+      - name: Install Chromium
+        working-directory: buzz-app
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Browser tests
+        run: plugins/agent-skills-highlighter/test/run.sh buzz-app
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: agent-skills-highlighter-test-results
+          path: buzz-app/test-results
+          if-no-files-found: ignore
+          retention-days: 14

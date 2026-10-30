@@ -24,7 +24,7 @@ concurrency:
 
 env:
   # The block/buzz-app commit the plugin is tested against (plugins/vim/NOTES.md, "What was and was not verified").
-  # vim-latency.yml and artifacts-browser-tests.yml name the same commit: the first step of each of the three fails when they differ.
+  # The other workflows that build the app name the same commit: the first step of each of them fails when any two differ.
   BUZZ_APP_REF: d92bfb2c4dd89fc5ae6e7a1445f38ad1e8ab7060
 
 jobs:
@@ -36,12 +36,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: BUZZ_APP_REF is the same in the three workflows that build the app
+      - name: BUZZ_APP_REF is the same in every workflow that builds the app
         run: |
-          ref() { sed -n 's/^  BUZZ_APP_REF: \([0-9a-f]\{40\}\).*/\1/p' ".github/workflows/$1.yml"; }
-          want=$(ref vim-latency)
-          [ -n "$want" ] && [ "$(ref vim-tests)" = "$want" ] && [ "$(ref artifacts-browser-tests)" = "$want" ] \
-            || { echo "::error::BUZZ_APP_REF is not the same 40-character commit in vim-latency.yml, vim-tests.yml and artifacts-browser-tests.yml: change all three together"; exit 1; }
+          # Every workflow file that names a BUZZ_APP_REF must name the same 40-character commit.
+          lines=$(grep -h -E '^  BUZZ_APP_REF:' .github/workflows/*.yml)
+          [ "$(grep -c -E '^  BUZZ_APP_REF: [0-9a-f]{40}( .*)?$' <<<"$lines")" = "$(grep -c . <<<"$lines")" ] \
+            && [ "$(sed -E 's/^  BUZZ_APP_REF: ([0-9a-f]{40}).*/\1/' <<<"$lines" | sort -u | wc -l)" = 1 ] \
+            || { echo "::error::BUZZ_APP_REF is not the same 40-character commit in every workflow that names it: change them together"; exit 1; }
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: block/buzz-app

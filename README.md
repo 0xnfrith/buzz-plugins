@@ -14,6 +14,7 @@ plugins/              plugins you can install, one folder each
   beeper/             your Beeper inbox inside Buzz
   linear/             your Linear board inside Buzz
   artifacts/          your saved web pages in a sidebar page, opened in Buzz's browser
+  agent-skills-highlighter/  /skill names in messages, highlighted, with a card that says what each is
   key-probe/          a measuring tool used by the vim tests
 docs/
   building.md         how we build plugins
@@ -30,6 +31,7 @@ CONTRIBUTING.md       how to send a change (and the key-latency rule for vim mod
 | Beeper | Your Beeper chats inside Buzz: a list of chats with network, unread count and time, a chat with its recent messages, and a reply box, read and sent through Beeper Desktop's local API on the same computer. Each person pastes their own access token | [`plugins/beeper`](plugins/beeper) | Built and tested against a fake Beeper; not yet run against a real one |
 | Linear | Your Linear board inside Buzz: a column for each workflow state, in Linear's order, with cards like Linear's own. Drag a card to another column to change its state; click one for details and an Open in Linear link. Each person pastes their own personal API key | [`plugins/linear`](plugins/linear) | Tested against a fake Linear and by hand against a throwaway real workspace; see its notes for what is still unchecked |
 | Artifacts | A sidebar page with your saved web pages (for example Claude artifact links), opened in Buzz's built-in browser with the sign-in kept between restarts. You add, rename and remove the links in Settings; no address is built in. Needs the macOS desktop app, macOS 14 or later | [`plugins/artifacts`](plugins/artifacts) | Prototype; unit-tested, not yet run in a live Buzz |
+| Agent Skills Highlighter | A `/skill-name` in a message is highlighted when it matches a skill file on your computer (your Claude Code skills folder, installed Claude Code plugins, and one extra folder you may add); hover it or tab to it and a card says what the skill is. The message's text never changes or moves. Reads the skill files with one declared `sh` program that only reads; the script is printed in its README | [`plugins/agent-skills-highlighter`](plugins/agent-skills-highlighter) | Unit- and browser-tested, speed-checked on a 2,400-message channel, looked at in the Linux desktop app; not run on macOS or Windows |
 | Key probe | Times every key from press to paint, for measuring other plugins. Not needed to use anything | [`plugins/key-probe`](plugins/key-probe) | Tool for the vim tests |
 
 ## Install a plugin
