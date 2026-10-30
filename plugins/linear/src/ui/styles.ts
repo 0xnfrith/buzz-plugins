@@ -160,5 +160,7 @@ img[src="${PAGE_ICON}"] {
 .mtl-settings [data-tone="error"] { color: var(--red-11, #e5484d); }
 .mtl-key-form { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .mtl-key-form input { width: 100%; max-width: 420px; height: 32px; }
+.mtl-code { display: block; padding: 8px 10px; border: 1px solid var(--mtl-line); border-radius: 2px; background: var(--mtl-card); font-family: var(--mtl-mono); font-size: 12px; overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
+.mtl-muted code { font-family: var(--mtl-mono); font-size: 12px; }
 .mtl-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 `;

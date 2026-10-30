@@ -19,22 +19,34 @@ describe("checkKey", () => {
   });
 });
 
-describe("key store", () => {
-  test("saves, reads, clears, and tells subscribers each time", () => {
+describe("key store, where there is no Keychain", () => {
+  test("saves, reads, clears, and tells subscribers each time", async () => {
     const keys = createKeyStore(memoryStorage());
+    await keys.ready;
     const seen: number[] = [];
     const stop = keys.subscribe(() => seen.push(keys.version()));
     expect(keys.has()).toBe(false);
-    keys.save("test-key-good");
-    expect(keys.read()).toBe("test-key-good");
-    keys.clear();
+    expect(await keys.save("test-key-good")).toEqual({ kept: true, degraded: false });
+    expect([keys.read(), keys.place()]).toEqual(["test-key-good", "profile"]);
+    expect(await keys.clear()).toBe(true);
     expect(keys.has()).toBe(false);
     stop();
-    keys.save("test-key-other");
+    await keys.save("test-key-other");
     expect(seen).toEqual([1, 2]);
   });
 
-  test("a storage that throws reads as no key", () => {
+  test("finds a key the profile already holds, once, without calling anything else", async () => {
+    const storage = memoryStorage();
+    storage.setItem("megatech.linear.api-key.v1", "test-key-good");
+    const keys = createKeyStore(storage);
+    expect(keys.has()).toBe(false); // not before the first look has finished
+    await keys.ready;
+    expect([keys.read(), keys.place()]).toEqual(["test-key-good", "profile"]);
+    expect(keys.store()).toBeUndefined();
+    expect(keys.version()).toBe(0); // the first look restarts nothing
+  });
+
+  test("a storage that throws reads as no key", async () => {
     const keys = createKeyStore({
       getItem: () => {
         throw new Error("blocked");
@@ -42,8 +54,54 @@ describe("key store", () => {
       setItem: () => {},
       removeItem: () => {},
     });
+    await keys.ready;
     expect(keys.read()).toBeUndefined();
   });
+
+  test("a storage that will not take the key says so, and nothing is kept", async () => {
+    const keys = createKeyStore({
+      getItem: () => null,
+      setItem: () => {
+        throw new Error("full");
+      },
+      removeItem: () => {},
+    });
+    await keys.ready;
+    await expect(keys.save("test-key-good")).rejects.toThrow();
+    expect(keys.has()).toBe(false);
+  });
+});
+
+describe("the first look at the store", () => {
+  const recording = () => {
+    const seen: string[] = [];
+    const run = async (command: string) => {
+      seen.push(command);
+      return null;
+    };
+    return { seen, keys: createKeyStore(memoryStorage(), { store: "secret-service", run: run as never }) };
+  };
+
+  test("is not made when the store is made, nor by reading what is known, but when something asks for the key", async () => {
+    const { seen, keys } = recording();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(seen).toEqual([]);
+    expect([keys.has(), keys.read(), keys.place(), keys.store(), keys.version()]).toEqual([false, undefined, undefined, "secret-service", 0]);
+    expect(seen).toEqual([]);
+    await keys.ready;
+    expect(seen).toEqual(["secret-read"]);
+    await keys.ready;
+    expect(seen).toEqual(["secret-read"]); // once
+  });
+
+  for (const operation of ["save", "reload", "moveToStore", "clear"] as const) {
+    test(`${operation} makes it first, so it never decides on a key it has not looked for`, async () => {
+      const { seen, keys } = recording();
+      if (operation === "save") await keys.save("test-key-good");
+      else await keys[operation]();
+      expect(seen[0]).toBe("secret-read");
+    });
+  }
 });
 
 describe("what happens to a key once Linear has been asked about it", () => {

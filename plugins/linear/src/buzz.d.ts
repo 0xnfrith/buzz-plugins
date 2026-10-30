@@ -18,7 +18,11 @@ export type HostResponse = Readonly<{
   body: string;
 }>;
 
-export type Host = { request(input: HostRequest): Promise<HostResponse> };
+export type Host = {
+  request(input: HostRequest): Promise<HostResponse>;
+  /** Runs a command the manifest declares, with the program and arguments it fixes; `null` is any failure. */
+  runCommand(id: string, input?: string): Promise<string | null>;
+};
 
 export type PageProps = Readonly<Record<string, unknown>>;
 
