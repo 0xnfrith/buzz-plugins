@@ -26,7 +26,7 @@ const KEY_NAME = "megatech.linear.api-key.v1";
  * The stand-ins for `security` and `secret-tool` keep their stores in files and log every call they get; `keychainMode` and
  * `secretMode` make them misbehave (see test/fake-security and test/fake-secret-tool) and can be changed while the page runs.
  */
-async function arrange(page, app, { key = "good", prepare, mac = false, linux = false, inKeychain, keychainMode = "", secretMode = "", holdKeychain = false } = {}) {
+async function arrange(page, app, { key = "good", prepare, mac = false, linux = false, inKeychain, keychainMode = "", keychainDelay, secretMode = "", holdKeychain = false } = {}) {
   // Both of the fixture's keys are accepted, so that a replacement can be told from the key it replaces.
   const fake = createFakeLinear({ keys: Object.values(createFakeLinear().keys) });
   prepare?.(fake);
@@ -39,6 +39,7 @@ async function arrange(page, app, { key = "good", prepare, mac = false, linux = 
     LINEAR_FAKE_SECRET_LOG: join(dir, "secret-log.jsonl"),
     LINEAR_FAKE_SECRET_MODE: secretMode,
   };
+  if (keychainDelay) env.LINEAR_FAKE_KEYCHAIN_DELAY = String(keychainDelay);
   const logged = (file) => (existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)) : []);
   const stored = (file) => (existsSync(file) ? Object.values(JSON.parse(readFileSync(file, "utf8"))) : []);
   const keychain = {
@@ -1050,6 +1051,70 @@ test("on Linux Remove key deletes the store's item and any copy in the profile; 
   await closeSettings(page);
   await openPage(page, "Linear");
   await expect(page.getByRole("heading", { name: "Connect Linear" })).toBeVisible();
+});
+
+// ---- Cancel ----
+
+test("Cancel puts the card back as it was: the message from the last key check goes, and Cancel waits while a key is being checked", async ({ page, app }) => {
+  const fake = await startReplacing(page, app);
+  const linearCard = page.locator(".mtl-settings"); // the host has status regions of its own
+  // While Linear is being asked (a held answer, for a key it accepts) Cancel waits: a Cancel that did not stop the save would be a lie.
+  await page.getByLabel("Personal API key").fill(fake.keys.other);
+  const release = fake.control.hold("Viewer");
+  await page.getByRole("button", { name: "Save key" }).click();
+  await expect(linearCard.getByRole("status")).toHaveText("Checking with Linear…");
+  await expect(page.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Save key" })).toBeDisabled();
+  release();
+  await expect(linearCard.getByRole("status")).toHaveText("Connected as Avery Quill in Fixture Studio.");
+  await expect(page.getByText("Key saved.")).toBeVisible();
+  // A key Linear refuses leaves its message; Cancel takes it away, and the typed key with it.
+  await page.getByRole("button", { name: "Replace key" }).click();
+  await page.getByLabel("Personal API key").fill("test-key-unknown");
+  await page.getByRole("button", { name: "Save key" }).click();
+  await expect(page.getByRole("alert")).toHaveText("Linear did not accept the API key.");
+  await expect(page.getByRole("button", { name: "Cancel" })).toBeEnabled();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(linearCard.getByRole("status")).toHaveCount(0);
+  await expect(page.getByLabel("Personal API key")).toHaveCount(0);
+  await expect(page.getByText("Key saved.")).toBeVisible();
+  expect(await savedKey(page)).toBe(fake.keys.other);
+  // Replace key again: the field is empty and nothing from before is on the card.
+  await page.getByRole("button", { name: "Replace key" }).click();
+  await expect(page.getByLabel("Personal API key")).toHaveValue("");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  // A message that is not an error goes too: "Connected as ..." from Test connection.
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("button", { name: "Test connection" }).click();
+  await expect(linearCard.getByRole("status").filter({ hasText: "Connected as Avery Quill in Fixture Studio." })).toBeVisible();
+  await page.getByRole("button", { name: "Replace key" }).click();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(linearCard.getByRole("status")).toHaveCount(0);
+});
+
+test("on a Mac Cancel and Save wait while the key is being written to the Keychain, and the key is the new one when they come back", async ({ page, app }) => {
+  // Every call of the stand-in takes 1.2 seconds: after Linear has accepted the key, writing it and reading it back takes a while.
+  const fake = await startReplacing(page, app, { mac: true, inKeychain: "good", keychainMode: "slow", keychainDelay: 1200 });
+  await page.getByLabel("Personal API key").fill(fake.keys.other);
+  await page.getByRole("button", { name: "Save key" }).click();
+  await expect(page.locator(".mtl-settings").getByRole("status")).toHaveText("Connected as Avery Quill in Fixture Studio.");
+  await expect(page.getByRole("button", { name: "Cancel" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Save key" })).toBeDisabled();
+  await expect(page.getByText("It is kept in your Keychain. It is not shown again.")).toBeVisible({ timeout: 15_000 });
+  expect(fake.keychain.kept()).toEqual([fake.keys.other]);
+});
+
+test("on a Mac Cancel also takes away the command for Terminal and the message that went with it", async ({ page, app }) => {
+  const fake = await startReplacing(page, app, { mac: true, inKeychain: "good", keychainMode: "refuse-add" });
+  await page.getByLabel("Personal API key").fill(fake.keys.other);
+  await page.getByRole("button", { name: "Save key" }).click();
+  await expect(page.getByRole("group", { name: "Save the key in the Keychain by hand" })).toBeVisible();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("group", { name: "Save the key in the Keychain by hand" })).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  expect(fake.keychain.kept()).toEqual([fake.keys.good]);
 });
 
 test("a saved view that was deleted in Linear does not break the board", async ({ page, app }) => {

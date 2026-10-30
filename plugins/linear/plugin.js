@@ -1844,6 +1844,7 @@ function createSettingsCard({ keys, client }) {
 		const store = keys.store();
 		const [draft, setDraft] = React.useState("");
 		const [replacing, setReplacing] = React.useState(false);
+		const [saving, setSaving] = React.useState(false);
 		const [status, setStatus] = React.useState({ kind: "idle" });
 		const [byHand, setByHand] = React.useState(false);
 		const alive = React.useRef(true);
@@ -1878,25 +1879,17 @@ function createSettingsCard({ keys, client }) {
 				text
 			});
 		};
-		const save = async (event) => {
-			event.preventDefault();
-			const checked = checkKey(draft);
-			if (!checked.ok) {
-				setStatus({
-					kind: "error",
-					text: checked.message
-				});
-				return;
-			}
+		/** Asks Linear, then the store, about a key that was typed: see judgeKey and the store's own rules for what is kept. */
+		const keep = async (key) => {
 			await keys.ready;
 			setByHand(false);
-			const verdict = await ask(checked.key);
+			const verdict = await ask(key);
 			const ruling = judgeKey(verdict.kind, keys.has(), verdict.text);
 			show(verdict, ruling.message ?? verdict.text);
 			if (!ruling.save) return;
 			let result;
 			try {
-				result = await keys.save(checked.key);
+				result = await keys.save(key);
 			} catch {
 				if (alive.current) setStatus({
 					kind: "error",
@@ -1924,6 +1917,29 @@ function createSettingsCard({ keys, client }) {
 			});
 			setDraft("");
 			setReplacing(false);
+		};
+		const save = async (event) => {
+			event.preventDefault();
+			const checked = checkKey(draft);
+			if (!checked.ok) {
+				setStatus({
+					kind: "error",
+					text: checked.message
+				});
+				return;
+			}
+			setSaving(true);
+			try {
+				await keep(checked.key);
+			} finally {
+				if (alive.current) setSaving(false);
+			}
+		};
+		const cancel = () => {
+			setReplacing(false);
+			setDraft("");
+			setByHand(false);
+			setStatus({ kind: "idle" });
 		};
 		const checkKeychain = async () => {
 			await keys.reload();
@@ -1993,11 +2009,12 @@ function createSettingsCard({ keys, client }) {
 			type: "submit",
 			className: "mtl-button",
 			"data-primary": true,
-			disabled: status.kind === "checking"
+			disabled: status.kind === "checking" || saving
 		}, "Save key"), replacing && /* @__PURE__ */ React.createElement("button", {
 			type: "button",
 			className: "mtl-button",
-			onClick: () => (setReplacing(false), setDraft(""), setByHand(false))
+			disabled: saving,
+			onClick: cancel
 		}, "Cancel"))), byHand && /* @__PURE__ */ React.createElement("div", {
 			role: "group",
 			"aria-label": "Save the key in the Keychain by hand",

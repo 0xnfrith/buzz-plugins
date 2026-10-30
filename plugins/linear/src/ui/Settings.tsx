@@ -20,6 +20,8 @@ export function createSettingsCard({ keys, client }: { keys: KeyStore; client: L
     const store = keys.store();
     const [draft, setDraft] = React.useState("");
     const [replacing, setReplacing] = React.useState(false);
+    // A key is being checked with Linear or kept in the store.
+    const [saving, setSaving] = React.useState(false);
     const [status, setStatus] = React.useState<Status>({ kind: "idle" });
     // The Keychain would not take a key (on a Mac): nothing was kept, and the card says how to put it there by hand.
     const [byHand, setByHand] = React.useState(false);
@@ -48,24 +50,19 @@ export function createSettingsCard({ keys, client }: { keys: KeyStore; client: L
       if (alive.current) setStatus({ kind: verdict.kind === "ok" ? "ok" : "error", text });
     };
 
-    const save = async (event: React.FormEvent) => {
-      event.preventDefault();
-      const checked = checkKey(draft);
-      if (!checked.ok) {
-        setStatus({ kind: "error", text: checked.message });
-        return;
-      }
+    /** Asks Linear, then the store, about a key that was typed: see judgeKey and the store's own rules for what is kept. */
+    const keep = async (key: string) => {
       // The first look at where the key is kept comes first: whether a key is saved already decides what an unchecked key may do.
       await keys.ready;
       setByHand(false);
       // Linear is asked first, so a mistyped replacement never costs the key that works, even when Linear cannot answer.
-      const verdict = await ask(checked.key);
+      const verdict = await ask(key);
       const ruling = judgeKey(verdict.kind, keys.has(), verdict.text);
       show(verdict, ruling.message ?? verdict.text);
       if (!ruling.save) return;
       let result: { kept: boolean; degraded: boolean };
       try {
-        result = await keys.save(checked.key);
+        result = await keys.save(key);
       } catch {
         if (alive.current) setStatus({ kind: "error", text: "This app could not store the key." });
         return;
@@ -92,6 +89,30 @@ export function createSettingsCard({ keys, client }: { keys: KeyStore; client: L
       }
       setDraft("");
       setReplacing(false);
+    };
+
+    const save = async (event: React.FormEvent) => {
+      event.preventDefault();
+      const checked = checkKey(draft);
+      if (!checked.ok) {
+        setStatus({ kind: "error", text: checked.message });
+        return;
+      }
+      // Cancel waits while a key is being checked and kept: a Cancel that did not stop the save would be a lie.
+      setSaving(true);
+      try {
+        await keep(checked.key);
+      } finally {
+        if (alive.current) setSaving(false);
+      }
+    };
+
+    // Cancel puts the card back as it was before Replace key: the typed key, a Terminal command and the last check's message go.
+    const cancel = () => {
+      setReplacing(false);
+      setDraft("");
+      setByHand(false);
+      setStatus({ kind: "idle" });
     };
 
     const checkKeychain = async () => {
@@ -174,11 +195,11 @@ export function createSettingsCard({ keys, client }: { keys: KeyStore; client: L
               onChange={(event) => setDraft(event.target.value)}
             />
             <div className="mtl-actions">
-              <button type="submit" className="mtl-button" data-primary disabled={status.kind === "checking"}>
+              <button type="submit" className="mtl-button" data-primary disabled={status.kind === "checking" || saving}>
                 Save key
               </button>
               {replacing && (
-                <button type="button" className="mtl-button" onClick={() => (setReplacing(false), setDraft(""), setByHand(false))}>
+                <button type="button" className="mtl-button" disabled={saving} onClick={cancel}>
                   Cancel
                 </button>
               )}
