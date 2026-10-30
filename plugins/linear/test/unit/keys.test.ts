@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { checkKey, createKeyStore } from "../../src/linear/keys";
+import { checkKey, createKeyStore, judgeKey } from "../../src/linear/keys";
+import type { LinearErrorKind } from "../../src/linear/client";
 import { memoryStorage } from "./fake";
 
 describe("checkKey", () => {
@@ -42,5 +43,38 @@ describe("key store", () => {
       removeItem: () => {},
     });
     expect(keys.read()).toBeUndefined();
+  });
+});
+
+describe("what happens to a key once Linear has been asked about it", () => {
+  const cannotAsk: LinearErrorKind[] = ["network", "server", "rate-limited"];
+
+  test("a key Linear accepts is saved, whether or not one was saved before", () => {
+    expect(judgeKey("ok", true, "")).toEqual({ save: true, message: null });
+    expect(judgeKey("ok", false, "")).toEqual({ save: true, message: null });
+  });
+
+  test("a key Linear refuses is never saved, with or without a saved one", () => {
+    for (const kind of ["auth", "rejected"] as const)
+      for (const hadKey of [true, false]) expect(judgeKey(kind, hadKey, "Linear did not accept the API key."), `${kind} ${hadKey}`).toEqual({ save: false, message: null });
+  });
+
+  test("a replacement that cannot be checked (unreachable, 5xx, rate limited) keeps the saved key and says to try again", () => {
+    for (const kind of cannotAsk) {
+      const ruling = judgeKey(kind, true, "the client's text");
+      expect(ruling.save, kind).toBe(false);
+      expect(ruling.message, kind).toContain("Your saved key is unchanged; try again");
+      expect(ruling.message, kind).toContain("new key");
+    }
+    expect(judgeKey("network", true, "x").message).toBe("Couldn't reach Linear to check the new key. Your saved key is unchanged; try again.");
+    expect(judgeKey("rate-limited", true, "x").message).toContain("try again in a minute");
+  });
+
+  test("the first key is saved even when Linear cannot be asked, and the message says it was not checked", () => {
+    for (const kind of cannotAsk) {
+      const ruling = judgeKey(kind, false, "Could not reach Linear.");
+      expect(ruling.save, kind).toBe(true);
+      expect(ruling.message, kind).toBe("Could not reach Linear. The key was saved without being checked; test it again in a moment.");
+    }
   });
 });

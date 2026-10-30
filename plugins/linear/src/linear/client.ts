@@ -27,13 +27,14 @@ export class LinearError extends Error {
 
 type GraphQLBody = {
   data?: unknown;
-  errors?: { message?: string; extensions?: { code?: string; type?: string } }[];
+  // Only the codes are read; the message is Linear's wording and is never shown.
+  errors?: { extensions?: { code?: string; type?: string } }[];
 };
 
 /**
  * One GraphQL call to Linear, through the host's declared-origin HTTP client. The key is
  * read when the call starts and goes nowhere but the Authorization header: it is not in
- * a URL, an error message, or a log line.
+ * a URL, an error message, or a log line. Every error's text is fixed here, never taken from Linear's reply.
  */
 export function createClient(
   transport: Transport,
@@ -95,8 +96,8 @@ function parse<T>(response: HostResponse, now: number): T {
     );
   if (response.status >= 500)
     throw new LinearError("server", `Linear is having trouble right now (${response.status}).`);
-  if (first)
-    throw new LinearError("rejected", first.message ?? "Linear refused the request.");
+  // Linear's own wording is never shown: a service's error text can repeat what it was sent, the key among it.
+  if (first) throw new LinearError("rejected", "Linear refused the request.");
   if (response.status < 200 || response.status >= 300 || !body || body.data == null)
     throw new LinearError("server", `Linear answered with an unexpected response (${response.status}).`);
   return body.data as T;

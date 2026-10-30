@@ -6,7 +6,7 @@ Your Linear board inside Buzz: one column for each workflow state, in Linear's o
 
 1. Install it: Settings, Plugins, Manage plugins, Add, then load this folder or enter `https://github.com/0xnfrith/buzz-plugins` as the Git or GitHub repository and pick **Linear**. Review what it asks for (one network origin, `https://api.linear.app`) and install, then enable it.
 2. In Linear make a personal API key: Settings, Account, Security & access, Personal API keys. It needs the **Write** scope (Write is what lets a dragged card change state; it includes reading). If Linear lets you limit the key to certain teams, limit it to the teams you use.
-3. In Buzz open Settings, Plugins, **Linear**. Paste the key, press **Save key**. Linear is asked first: the card says who you are connected as, and a key Linear refuses is not saved (so a mistyped replacement never replaces a key that works).
+3. In Buzz open Settings, Plugins, **Linear**. Paste the key, press **Save key**. Linear is asked first: the card says who you are connected as. A key Linear refuses is not saved. If a key is already saved and Linear cannot be asked (it is unreachable, down or rate limiting), the saved key stays, nothing is saved, and the card says to try again, so a mistyped replacement never replaces a key that works. Only when there is no key yet is a key saved without being checked, and the card says so.
 4. Open **Linear** in the page navigation. Pick a team, and if you like a project or one of the team's saved views.
 5. Drag a card to another column, or open it and use its **Status** menu. Cards can also be opened from the keyboard (Tab to a card, Enter).
 
@@ -40,7 +40,7 @@ Taken in the Buzz desktop app on Linux (WebKitGTK), with the plugin's test doubl
 - Cards in a column follow Linear's manual order (`sortOrder`) among the issues loaded so far, so **Show more** can slot older cards in among them; Done, Canceled and Duplicate show the most recently changed first.
 - A card shows its first 6 labels, 10 attachments and 50 sub-issues; beyond that the label count, the PR chip and the sub-issue progress are short.
 - Drag changes the state only. It does not reorder inside a column, and it does not create issues or change anything else.
-- A card cannot be dragged into **Duplicate** (nor picked from the Status menu): Linear puts an issue there only when it is marked a duplicate of another, which the board cannot do, so the board says so and sends nothing.
+- A card cannot be dragged into **Duplicate** (nor picked from the Status menu): Linear puts an issue there only when it is marked a duplicate of another, which the board cannot do. While a card is held the Duplicate column is greyed out and is not a drop target; if the card is dropped there anyway the board says so and sends nothing.
 - Initials stand in for avatars: the plugin does not load remote images.
 
 ---

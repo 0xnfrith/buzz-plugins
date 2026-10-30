@@ -174,6 +174,9 @@ export function createFakeLinear({ keys = [KEYS.good] } = {}) {
         );
       if (kind === "forbidden")
         return respond(403, { errors: [{ message: "forbidden", extensions: { type: "forbidden", code: "FORBIDDEN" } }] });
+      // A GraphQL error whose wording repeats what it was sent, the key among it: the plugin must never show that text.
+      if (kind === "echo")
+        return respond(200, { errors: [{ message: `Argument Validation Error: authorization "${headers.authorization}" is not allowed here`, extensions: { code: "INVALID_INPUT" } }], data: null });
       if (kind === "reject")
         return respond(200, { errors: [{ message: "Argument Validation Error", extensions: { code: "INVALID_INPUT" } }], data: null });
     }

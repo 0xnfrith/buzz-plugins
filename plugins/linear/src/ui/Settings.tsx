@@ -1,6 +1,6 @@
 import { React } from "../react";
 import { LinearError, type LinearClient } from "../linear/client";
-import { checkKey, type KeyStore } from "../linear/keys";
+import { checkKey, judgeKey, type KeyStore } from "../linear/keys";
 import { VIEWER } from "../linear/queries";
 
 type Status =
@@ -8,6 +8,8 @@ type Status =
   | { kind: "checking" }
   | { kind: "ok"; text: string }
   | { kind: "error"; text: string };
+
+type Verdict = { kind: LinearError["kind"] | "ok"; text: string };
 
 type Viewer = { viewer: { name: string }; organization: { name: string } };
 
@@ -25,20 +27,21 @@ export function createSettingsCard({ keys, client }: { keys: KeyStore; client: L
       };
     }, []);
 
-    /** Asks Linear who the key belongs to. `candidate` checks a key that is not saved yet. */
-    const check = async (candidate?: string): Promise<LinearError["kind"] | "ok"> => {
+    /** Asks Linear who the key belongs to. `candidate` checks a key that is not saved yet. What to show is up to the caller. */
+    const ask = async (candidate?: string): Promise<Verdict> => {
       setStatus({ kind: "checking" });
       try {
         const data = await client.request<Viewer>("Viewer", VIEWER, {}, candidate);
-        if (alive.current) setStatus({ kind: "ok", text: `Connected as ${data.viewer.name} in ${data.organization.name}.` });
-        return "ok";
+        return { kind: "ok", text: `Connected as ${data.viewer.name} in ${data.organization.name}.` };
       } catch (error) {
-        const kind = error instanceof LinearError ? error.kind : "server";
-        const text = error instanceof LinearError ? error.message : "Something went wrong talking to Linear.";
-        if (alive.current)
-          setStatus({ kind: "error", text: candidate && kind !== "auth" && kind !== "rejected" ? `${text} The key was saved without being checked; test it again in a moment.` : text });
-        return kind;
+        return error instanceof LinearError
+          ? { kind: error.kind, text: error.message }
+          : { kind: "server", text: "Something went wrong talking to Linear." };
       }
+    };
+
+    const show = (verdict: Verdict, text: string = verdict.text) => {
+      if (alive.current) setStatus({ kind: verdict.kind === "ok" ? "ok" : "error", text });
     };
 
     const save = async (event: React.FormEvent) => {
@@ -48,9 +51,11 @@ export function createSettingsCard({ keys, client }: { keys: KeyStore; client: L
         setStatus({ kind: "error", text: checked.message });
         return;
       }
-      // Linear is asked first, so a mistyped replacement never costs the key that works.
-      const verdict = await check(checked.key);
-      if (verdict === "auth" || verdict === "rejected") return;
+      // Linear is asked first, so a mistyped replacement never costs the key that works, even when Linear cannot answer.
+      const verdict = await ask(checked.key);
+      const ruling = judgeKey(verdict.kind, keys.has(), verdict.text);
+      show(verdict, ruling.message ?? verdict.text);
+      if (!ruling.save) return;
       try {
         keys.save(checked.key);
       } catch {
@@ -108,7 +113,7 @@ export function createSettingsCard({ keys, client }: { keys: KeyStore; client: L
         )}
         {saved && !replacing && (
           <div className="mtl-actions">
-            <button type="button" className="mtl-button" disabled={status.kind === "checking"} onClick={() => void check()}>
+            <button type="button" className="mtl-button" disabled={status.kind === "checking"} onClick={async () => show(await ask())}>
               Test connection
             </button>
             <button type="button" className="mtl-button" onClick={() => setReplacing(true)}>

@@ -1,5 +1,6 @@
 import { React } from "../react";
 import type { Priority, PullRequest, StateType } from "../linear/types";
+import { safeColor } from "./color";
 
 type IconProps = { size?: number; className?: string };
 
@@ -33,32 +34,33 @@ export function StatusIcon({
   fraction = 0.5,
   size = 14,
 }: { type: StateType; color: string; fraction?: number } & IconProps) {
+  const ink = safeColor(color);
   const c = 7;
   const common = { width: size, height: size, viewBox: "0 0 14 14", "aria-hidden": true as const, className: "mtl-status" };
   switch (type) {
     case "backlog":
       return (
         <svg {...common}>
-          <circle cx={c} cy={c} r="5.5" fill="none" stroke={color} strokeWidth="1.5" strokeDasharray="1.9 1.9" />
+          <circle cx={c} cy={c} r="5.5" fill="none" stroke={ink} strokeWidth="1.5" strokeDasharray="1.9 1.9" />
         </svg>
       );
     case "unstarted":
       return (
         <svg {...common}>
-          <circle cx={c} cy={c} r="5.5" fill="none" stroke={color} strokeWidth="1.5" />
+          <circle cx={c} cy={c} r="5.5" fill="none" stroke={ink} strokeWidth="1.5" />
         </svg>
       );
     case "started":
       return (
         <svg {...common}>
-          <circle cx={c} cy={c} r="5.5" fill="none" stroke={color} strokeWidth="1.5" />
-          <path d={pie(c, c, 3, fraction)} fill={color} />
+          <circle cx={c} cy={c} r="5.5" fill="none" stroke={ink} strokeWidth="1.5" />
+          <path d={pie(c, c, 3, fraction)} fill={ink} />
         </svg>
       );
     case "completed":
       return (
         <svg {...common}>
-          <circle cx={c} cy={c} r="7" fill={color} />
+          <circle cx={c} cy={c} r="7" fill={ink} />
           <path d="M4 7.2l2 2 4-4.2" fill="none" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       );
@@ -66,14 +68,14 @@ export function StatusIcon({
     case "duplicate":
       return (
         <svg {...common}>
-          <circle cx={c} cy={c} r="7" fill={color} />
+          <circle cx={c} cy={c} r="7" fill={ink} />
           <path d="M4.8 4.8l4.4 4.4M9.2 4.8l-4.4 4.4" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
       );
     default:
       return (
         <svg {...common}>
-          <circle cx={c} cy={c} r="7" fill={color} />
+          <circle cx={c} cy={c} r="7" fill={ink} />
           <path d="M3.8 7.5h2l.6 1.2h1.2l.6-1.2h2M4.4 5.4h5.2l.9 2.1v2.1H3.5V7.5z" fill="none" stroke="#fff" strokeWidth="1" strokeLinejoin="round" />
         </svg>
       );
@@ -142,11 +144,12 @@ export function ProgressIcon({ done, total, size = 13 }: { done: number; total: 
   );
 }
 
-export function ProjectIcon({ color, size = 13 }: { color: string } & IconProps) {
+export function ProjectIcon({ color, size = 13 }: { color: string | null } & IconProps) {
+  const ink = safeColor(color, "currentColor");
   return (
     <svg width={size} height={size} viewBox="0 0 14 14" aria-hidden="true" className="mtl-project-icon">
-      <path d="M7 1.4l5 2.8v5.6L7 12.6 2 9.8V4.2z" fill="none" stroke={color} strokeWidth="1.4" strokeLinejoin="round" />
-      <path d="M2.2 4.3L7 7l4.8-2.7M7 7v5.4" fill="none" stroke={color} strokeWidth="1.2" strokeLinejoin="round" />
+      <path d="M7 1.4l5 2.8v5.6L7 12.6 2 9.8V4.2z" fill="none" stroke={ink} strokeWidth="1.4" strokeLinejoin="round" />
+      <path d="M2.2 4.3L7 7l4.8-2.7M7 7v5.4" fill="none" stroke={ink} strokeWidth="1.2" strokeLinejoin="round" />
     </svg>
   );
 }

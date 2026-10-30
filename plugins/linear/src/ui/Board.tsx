@@ -1,6 +1,6 @@
 import { React } from "../react";
 import type { KeyStore } from "../linear/keys";
-import { sortColumn } from "../linear/model";
+import { acceptsMoves, sortColumn } from "../linear/model";
 import type { BoardStore, Snapshot } from "../linear/store";
 import type { Issue, Scope, WorkflowState } from "../linear/types";
 import { Card as CardImpl } from "./Card";
@@ -341,7 +341,8 @@ export function createBoardPage({
                     aria-label={`${s.name}, ${count} issues`}
                     data-column={s.id}
                     data-state-type={s.type}
-                    data-over={drag?.over === s.id ? "" : undefined}
+                    data-over={drag?.over === s.id && acceptsMoves(s.type) ? "" : undefined}
+                    data-refuses={drag && !acceptsMoves(s.type) ? "" : undefined}
                     ref={(el) => {
                       if (el) columnRefs.current.set(s.id, el);
                       else columnRefs.current.delete(s.id);

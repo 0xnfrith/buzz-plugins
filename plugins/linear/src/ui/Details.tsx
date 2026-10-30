@@ -1,7 +1,9 @@
 import { React } from "../react";
+import { acceptsMoves } from "../linear/model";
 import type { BoardStore, Snapshot } from "../linear/store";
 import type { Issue, IssueDetail } from "../linear/types";
 import { Avatar, prLabel } from "./Card";
+import { safeColor } from "./color";
 import { fullDate, PRIORITY_LABEL } from "./format";
 import { CloseIcon, ExternalIcon, PriorityIcon, ProgressIcon, PullRequestIcon, StatusIcon } from "./icons";
 
@@ -92,7 +94,7 @@ export function Details({ issue, snapshot, store, onClose }: Props) {
             >
               {snapshot.states.map((s) => (
                 // Linear only moves an issue to Duplicate by marking it a duplicate of another, which the board cannot do.
-                <option key={s.id} value={s.id} disabled={s.type === "duplicate"}>
+                <option key={s.id} value={s.id} disabled={!acceptsMoves(s.type)}>
                   {s.name}
                 </option>
               ))}
@@ -128,7 +130,7 @@ export function Details({ issue, snapshot, store, onClose }: Props) {
               <dd className="mtl-wrap">
                 {issue.labels.map((label) => (
                   <span key={label.id} className="mtl-chip">
-                    <span className="mtl-dot" style={{ background: label.color }} />
+                    <span className="mtl-dot" style={{ background: safeColor(label.color) }} />
                     {label.name}
                   </span>
                 ))}

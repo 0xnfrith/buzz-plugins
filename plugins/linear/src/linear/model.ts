@@ -23,6 +23,9 @@ const TYPE_ORDER: Record<StateType, number> = {
 /** A state type this plugin does not know sorts after the ones it does, rather than breaking the order. */
 const rank = (type: string): number => (TYPE_ORDER as Record<string, number>)[type] ?? Object.keys(TYPE_ORDER).length;
 
+/** Linear moves an issue into Duplicate only by marking it a duplicate of another, which the board cannot do. */
+export const acceptsMoves = (type: StateType): boolean => type !== "duplicate";
+
 export function sortStates(states: readonly WorkflowState[]): WorkflowState[] {
   return [...states].sort(
     (a, b) => rank(a.type) - rank(b.type) || a.position - b.position,

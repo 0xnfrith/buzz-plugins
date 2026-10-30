@@ -92,6 +92,9 @@ img[src="${PAGE_ICON}"] {
 .mtl-board { flex: 1; min-width: 0; display: flex; align-items: stretch; gap: 12px; padding: 12px 16px 0; overflow-x: auto; overflow-y: hidden; }
 .mtl-column { flex: 0 0 316px; width: 316px; min-height: 0; display: flex; flex-direction: column; border-radius: 2px; background: var(--mtl-col); }
 .mtl-column[data-over] { outline: 2px solid var(--mtl-cyan); outline-offset: -2px; background: color-mix(in srgb, var(--mtl-cyan) 8%, var(--mtl-col)); }
+/* A column that takes no drop (Duplicate) is greyed out while a card is held, and the pointer says so. */
+.mtl-column[data-refuses] { opacity: 0.5; filter: grayscale(1); }
+.mtl-root[data-dragging] .mtl-column[data-refuses], .mtl-root[data-dragging] .mtl-column[data-refuses] * { cursor: not-allowed !important; }
 .mtl-column-head { display: flex; align-items: center; gap: 8px; flex: none; padding: 10px 12px 8px; }
 .mtl-column-name { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
 .mtl-count { font-family: var(--mtl-mono); font-size: 12px; color: var(--mtl-muted); display: inline-flex; align-items: center; gap: 4px; }
