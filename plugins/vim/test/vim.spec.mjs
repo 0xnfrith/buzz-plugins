@@ -3995,46 +3995,87 @@ test.describe("a mention chip in the draft", () => {
 });
 
 // Diagnostic only, not for merging: the first half of the Esc-leaves-visual-mode test, repeated, with every selection write logged.
-test.describe("diag visual", () => {
-  for (let run = 1; run <= 80; run++) {
-    test(`diag visual run ${run}`, async ({ page, app }) => {
-      await open(page, app);
-      await page.evaluate(() => {
-        const log = (window.__log = []);
-        const t0 = performance.now();
-        const add = (what, extra = "") => log.push(`${(performance.now() - t0).toFixed(1)} ${what} ${extra}`);
-        const frames = () =>
-          new Error().stack
-            .split("\n")
-            .slice(2, 6)
-            .map((l) => l.replace(/^\s*at\s+/, "").replace(/\(?https?:\/\/[^/]+\/assets\//, "(").slice(0, 60))
-            .join(" < ");
-        for (const m of ["collapse", "extend", "modify", "setBaseAndExtent", "removeAllRanges", "addRange", "selectAllChildren", "collapseToEnd", "collapseToStart", "setPosition"]) {
-          const orig = Selection.prototype[m];
-          Selection.prototype[m] = function (...a) {
-            const r = orig.apply(this, a);
-            add("W:" + m, `${a.map((x) => (typeof x === "string" ? x : (x?.nodeName ?? x))).join(",")} -> ${this.anchorOffset}-${this.focusOffset} ${frames()}`);
-            return r;
-          };
-        }
-        for (const type of ["focusin", "focusout", "mousedown", "mouseup"])
-          document.addEventListener(type, (e) => add(type, e.target?.getAttribute?.("aria-label") ?? ""), true);
-        document.addEventListener("keydown", (e) => add("key", e.key), true);
-        document.addEventListener("selectionchange", () => {
-          const s = document.getSelection();
-          add("sel", `${s.anchorOffset}-${s.focusOffset}`);
-        });
-      });
-      await composer(page).click();
-      await page.keyboard.type("one two");
-      await press(page, "Escape", "0", "v", "l", "l", "Escape");
-      await expect(bar(page)).toContainText("NORMAL");
-      expect(await collapsed(page)).toBe(true);
-      await press(page, "x");
-      await page.waitForTimeout(300);
-      const got = await draft(page);
-      if (got !== "on two") console.log(`DIAGFAIL run=${run} got=${JSON.stringify(got)}\n` + (await page.evaluate(() => window.__log.join("\n"))));
-      else if (run === 3) console.log(`DIAGOK run=${run}\n` + (await page.evaluate(() => window.__log.join("\n"))));
+const KEYS = {
+  Escape: { key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 },
+  " ": { key: " ", code: "Space", text: " ", windowsVirtualKeyCode: 32 },
+};
+const keyEvents = (k) => {
+  const d = KEYS[k] ?? { key: k, code: /^[0-9]$/.test(k) ? `Digit${k}` : `Key${k.toUpperCase()}`, text: k, windowsVirtualKeyCode: k.toUpperCase().charCodeAt(0) };
+  const { text, ...up } = d;
+  return [{ type: text ? "keyDown" : "rawKeyDown", ...d }, { type: "keyUp", ...up }];
+};
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+const sendKeys = async (cdp, keys, gap) => {
+  const pending = [];
+  for (const k of keys) {
+    for (const e of keyEvents(k)) pending.push(cdp.send("Input.dispatchKeyEvent", e));
+    if (gap) await sleepMs(gap);
+  }
+  await Promise.all(pending);
+};
+const instrument = (page) =>
+  page.evaluate(() => {
+    const log = (window.__log = []);
+    const t0 = performance.now();
+    const add = (what, extra = "") => log.push(`${(performance.now() - t0).toFixed(1)} ${what} ${extra}`);
+    Error.stackTraceLimit = 60;
+    const frames = (n) =>
+      new Error().stack
+        .split("\n")
+        .slice(3, 3 + n)
+        .map((l) => l.replace(/^\s*at\s+/, "").replace(/\(?https?:\/\/[^/]+\/assets\/index-[^.]*\.js:/, "(").replace(/\)$/, "").slice(0, 36))
+        .join(" < ");
+    for (const m of ["collapse", "extend", "modify", "setBaseAndExtent", "removeAllRanges", "addRange"]) {
+      const orig = Selection.prototype[m];
+      Selection.prototype[m] = function (...a) {
+        const r = orig.apply(this, a);
+        const pm = new Error().stack.includes("setSelection");
+        add("W:" + m, `${a.map((x) => (typeof x === "string" ? x : (x?.nodeName ?? x))).join(",")} -> ${this.anchorOffset}-${this.focusOffset} ${pm ? "PM " + frames(14) : frames(2)}`);
+        return r;
+      };
+    }
+    const focus = HTMLElement.prototype.focus;
+    HTMLElement.prototype.focus = function (...a) {
+      add("focus()", `${this.getAttribute("aria-label") ?? this.tagName} ${frames(8)}`);
+      return focus.apply(this, a);
+    };
+    const nativeFetch = window.fetch;
+    window.fetch = function (...a) {
+      const url = String(a[0]?.url ?? a[0]).replace(/^https?:\/\/[^/]+/, "");
+      add("fetch>", url);
+      return nativeFetch.apply(this, a).finally(() => add("fetch<", url));
+    };
+    for (const type of ["focusin", "focusout", "mousedown", "mouseup", "input", "beforeinput"])
+      document.addEventListener(type, (e) => add(type, e.target?.getAttribute?.("aria-label") ?? ""), true);
+    document.addEventListener("keydown", (e) => add("key", e.key), true);
+    document.addEventListener("selectionchange", () => {
+      const s = document.getSelection();
+      add("sel", `${s.anchorOffset}-${s.focusOffset}`);
     });
+  });
+test.describe("diag visual", () => {
+  for (const variant of ["steps", "cdp"]) {
+    for (let run = 1; run <= (variant === "steps" ? 100 : 160); run++) {
+      test(`diag visual ${variant} run ${run}`, async ({ page, app }) => {
+        await open(page, app);
+        await instrument(page);
+        await composer(page).click();
+        if (variant === "steps") {
+          await page.keyboard.type("one two");
+          await press(page, "Escape", "0", "v", "l", "l", "Escape");
+          await expect(bar(page)).toContainText("NORMAL");
+          expect(await collapsed(page)).toBe(true);
+          await press(page, "x");
+        } else {
+          const cdp = await page.context().newCDPSession(page);
+          const gap = [0, 1, 2, 3][run % 4];
+          await sendKeys(cdp, [..."one two"], gap);
+          await sendKeys(cdp, ["Escape", "0", "v", "l", "l", "Escape", "x"], gap);
+        }
+        await page.waitForTimeout(300);
+        const got = await draft(page);
+        if (got !== "on two") console.log(`DIAGFAIL ${variant} run=${run} got=${JSON.stringify(got)}\n` + (await page.evaluate(() => window.__log.join("\n"))));
+      });
+    }
   }
 });
