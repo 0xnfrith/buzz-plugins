@@ -74,6 +74,7 @@ jobs:
       - name: The key store against the real secret-tool
         env:
           LINEAR_REAL_SECRET_TOOL: "1"
+          NO_COLOR: "1" # so that the summary line below is plain text
         run: |
           set -o pipefail
           dbus-run-session -- bash -ec '
