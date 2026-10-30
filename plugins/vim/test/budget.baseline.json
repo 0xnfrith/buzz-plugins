@@ -47,6 +47,10 @@
     "control": "control: open the replies (the page itself)",
     "why": "Opening the replies again costs the app a paint of the rows that come back, and that is the most of what `o` costs there (the control row is the page taking the fold's mark off the branch itself). Folding costs less: the rows are left out of the page."
   },
+  "thread o: open the replies (the host's pill, the first press)": {
+    "control": "control: press the pill (the page itself)",
+    "why": "The first o on a branch presses the host's own pill, and the host mounts the replies of the branch it opens: that render is the app's (the control row is the page pressing the same pill itself). The branch cannot be closed again, so the row opens the thread anew between its presses (the second row of the pair, outside the measured frames)."
+  },
   "settings l: open the next section": {
     "control": "control: open the next section (the page itself)",
     "why": "The host renders a whole settings section anew when another is opened (the control row is the page clicking the next section itself). The row presses h, j and l, so it carries two more key presses."

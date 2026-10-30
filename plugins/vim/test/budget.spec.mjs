@@ -125,7 +125,7 @@ const probe = async (page) => {
       const selection = getSelection();
       let text = `${active?.tagName}|${active?.getAttribute?.("data-channel-id") ?? active?.getAttribute?.("aria-label") ?? active?.id}|${active?.tagName === "BUTTON" ? active.textContent?.slice(0, 40) : ""}|${document.querySelector("nav[aria-label='Settings sections'] [aria-current]")?.textContent?.slice(0, 40)}|${selection?.anchorOffset}|${selection?.focusOffset}|${selection?.anchorNode?.nodeValue?.length}|${document.querySelector("[data-vim-status]")?.textContent}`;
       for (const el of document.querySelectorAll("[data-vim-cursor]")) text += `|${el.dataset.messageId}${el.getAttribute("data-vim-cursor")}`;
-      text += `|${document.querySelectorAll("[data-vim-fold]").length}|${window.__copies}`;
+      text += `|${document.querySelectorAll("[data-vim-fold]").length}|${document.querySelectorAll("[data-thread-summary]").length}|${window.__copies}`;
       for (const el of document.querySelectorAll("[data-message-scroller], #settings-content, nav[aria-label='Settings sections'], [data-budget-scroller]")) text += `|${Math.round(el.scrollTop)}`;
       return text;
     };
@@ -555,6 +555,37 @@ const IN_MAIN_LIST = `a.id === "main-content" || a.closest("[data-main-workspace
 // the work, outside the measured time. The plugin has the keys in the pane and has marked a message there once the thread has opened and landed.
 const threadLanded = (page) =>
   page.waitForFunction(() => document.documentElement.dataset.vimRegion === "side" && !!document.querySelector('[data-panel-workspace] [data-message-scroller] [data-vim-cursor="side"]'), null, { timeout: 10_000 });
+// The pill of the branch that `o` opens, in the thread's pane, and what the rows that press it wait for (outside the measured time): the pill
+// gone, and the thread opened anew with the pill back, the keys in the pane and the cursor on the message that has the pill.
+const THREAD_PILL = '[data-panel-workspace] button[data-thread-summary][aria-controls]';
+const pillGone = (page) => page.waitForFunction((pill) => !document.querySelector(pill), THREAD_PILL, { timeout: 10_000 });
+// The thread's tab closed by the page (what a key of the row does), then the thread opened again: it waits for the pane to be gone (and sends
+// the close again if it has not taken: the host closes the tab the focus is in), opens the thread, and waits for the pill to be back with the
+// keys in the pane. A fixed wait between the two missed on a slower runner once, so nothing here is a timer.
+const THREAD_CLOSE = `window.dispatchEvent(new Event("buzz:close-active-tab", { cancelable: true }))`;
+const threadAnew = async (page, target) => {
+  for (let attempt = 1; ; attempt++) {
+    await page.waitForFunction(
+      () => {
+        if (!document.querySelector("[data-panel-workspace] [data-message-scroller]")) return true;
+        window.dispatchEvent(new Event("buzz:close-active-tab", { cancelable: true }));
+        return false;
+      },
+      null,
+      { polling: 800, timeout: 15_000 },
+    );
+    await page.evaluate((t) => window.fixtureNavigation.open(t), target);
+    const back = await page
+      .waitForFunction((pill) => !!document.querySelector(pill) && document.documentElement.dataset.vimRegion === "side", THREAD_PILL, { timeout: 6_000 })
+      .then(() => true, () => false);
+    if (back) break;
+    if (attempt === 4) throw new Error("the thread did not open anew with the pill of its branch");
+  }
+  await press(page, "Shift+g"); // the cursor goes to the newest message that shows: the one that has the pill
+  await page.waitForFunction(() => !!document.querySelector('[data-panel-workspace] [data-vim-cursor="side"]'), null, { timeout: 5_000 });
+  await page.waitForTimeout(300);
+};
+const FIRST_PILL_REPS = 20;
 // The cursor message's action bar is built the first time a key asks for it (a Tab on the window, the host's "keyboard user" signal); the
 // controls need it built. The buttons are the ones yy and yY press.
 const CURSOR_BAR = `document.querySelector('[data-vim-cursor="main"]').querySelector('[aria-label="Message actions"]')`;
@@ -667,10 +698,9 @@ surface("list", "message list (2,400 messages loaded)", async ({ page, app, rows
 // The reply branch the thread's cursor is on, for the controls.
 const CURSOR_BRANCH = `document.querySelector('[data-panel-workspace] [data-vim-cursor="side"]').closest("[data-depth]")`;
 surface("thread", "thread pane (80 replies)", async ({ page, app, rows }) => {
-  const opened = await page.evaluate(
-    (target) => window.fixtureNavigation.open(target),
-    { version: 1, kind: "conversation", channelId: "alpha", messageId: app.exact.root.id, threadRootId: app.exact.root.id, scope: { viewer: app.viewer, communityOrigin: "https://primary.example" } },
-  );
+  const ROOT_THREAD = { version: 1, kind: "conversation", channelId: "alpha", messageId: app.exact.root.id, threadRootId: app.exact.root.id, scope: { viewer: app.viewer, communityOrigin: "https://primary.example" } };
+  const anew = (page) => threadAnew(page, ROOT_THREAD);
+  const opened = await page.evaluate((target) => window.fixtureNavigation.open(target), ROOT_THREAD);
   expect(opened).toEqual({ status: "opened" });
   await expect(bar(page)).toHaveText("-- NORMAL --  side");
   await page.waitForTimeout(1000);
@@ -704,6 +734,31 @@ surface("thread", "thread pane (80 replies)", async ({ page, app, rows }) => {
     // The control for the fold: the page puts the mark on the branch and takes it off itself, as the plugin's `o` does. Showing the replies
     // again costs the app a paint of the rows that come back, and that is the most of what `o: open them again` costs.
     control("fold the replies (the page itself)", "open the replies (the page itself)", `${CURSOR_BRANCH}.setAttribute("data-vim-fold", "1 reply")`, `${CURSOR_BRANCH}.removeAttribute("data-vim-fold")`),
+    // The first o on a branch presses the host's pill, which opens it for good (it cannot be closed again), so this row sets itself back by
+    // opening the thread anew (the page closes its tab and opens it again, outside the measured frames): the branch comes back closed, the
+    // thread lands at its end and the cursor is on the 79th reply, which has the pill.
+    {
+      pair: [
+        { key: "o: open the replies (the host's pill, the first press)", seq: ["o"], after: pillGone },
+        { key: "control: close the thread and open it anew (the page itself)", seq: ["F9"], control: true, after: anew },
+      ],
+      reps: FIRST_PILL_REPS,
+      before: async (page) => {
+        await controls(THREAD_CLOSE, THREAD_CLOSE)(page);
+        await press(page, "F9");
+        await anew(page);
+      },
+    },
+    // The control for it: the page presses the pill itself (the click `o` makes), and the thread is opened anew the same way.
+    {
+      pair: [
+        { key: "control: press the pill (the page itself)", seq: ["F9"], control: true, after: pillGone },
+        { key: "control: close the thread and open it anew (the page itself, after the pill)", seq: ["F10"], control: true, after: anew },
+      ],
+      reps: FIRST_PILL_REPS,
+      // (the host moves the focus to a reply it shows, and the plugin gives it back to the list a frame later: so does the page)
+      before: controls(`document.querySelector(${JSON.stringify(THREAD_PILL)}).click(); requestAnimationFrame(() => ${SIDE_LIST}.focus({ preventScroll: true }))`, THREAD_CLOSE),
+    },
     control("focus the channel's list (the page itself)", "focus the thread's list (the page itself)", `${MAIN_LIST}.focus({ preventScroll: true })`, `${SIDE_LIST}.focus({ preventScroll: true })`),
   ]);
 }, `document.documentElement.dataset.vimRegion === "side" && !a.isContentEditable`); // the keys are in the thread's pane (the plugin's region), not in its reply box

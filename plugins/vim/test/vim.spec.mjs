@@ -1559,6 +1559,162 @@ test.describe("o in a thread opens and folds the replies to a message", () => {
     await expect.poll(() => cursor(page)).toBe(app.exact.replies.at(-1).id);
   });
 
+  // The host marks its branches with data-depth, and the plugin finds a branch by it. Where that mark is gone, a closed branch is still
+  // opened (its pill is found by its place: the message first, the pill after it), and an open one is left as it is.
+  test("fail safe: with the host's branch mark gone, o still presses the pill of a closed branch and leaves an open one be", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await press(page, "o");
+    const parent = app.exact.replies.at(-2).id;
+    const child = app.exact.replies.at(-1).id;
+    await expect.poll(() => cursor(page)).toBe(parent);
+    await page.evaluate(() => document.querySelectorAll("[data-depth]").forEach((el) => el.removeAttribute("data-depth")));
+    const pills = page.locator("[data-panel-workspace] button[data-thread-summary][aria-controls]");
+    const shown = () =>
+      sideScroller(page).evaluate((el, id) => (el.querySelector(`[data-message-id="${id}"]`)?.getClientRects().length ?? 0) > 0, child);
+    await expect(pills).toHaveCount(1);
+    expect(await shown()).toBe(false);
+    await press(page, "o"); // the pill is pressed: the replies show
+    await expect(pills).toHaveCount(0);
+    await expect.poll(shown).toBe(true);
+    expect(await cursor(page)).toBe(parent);
+    await expect(sideScroller(page)).toBeFocused();
+    // The branch is open and nothing in it says so: o does not fold it, and does not throw.
+    await press(page, "o");
+    await page.waitForTimeout(400);
+    expect(await folds(page)).toBe(0);
+    expect(await shown()).toBe(true);
+    await press(page, "j");
+    await expect.poll(() => cursor(page)).toBe(child);
+  });
+
+  // What the mark counts is every reply under the message: the rows that show, the replies behind the pill of a branch inside it, and the
+  // replies of a branch inside it that is folded already (its mark says how many, and has counted the pill inside it, so that one is not added).
+  // The branches inside are drawn into the page here, since the harness's thread has only the one level.
+  test("the count of a fold has the replies of the branches inside it: behind a pill, and folded", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await press(page, "o");
+    const parent = app.exact.replies.at(-2).id;
+    await expect.poll(() => cursor(page)).toBe(parent);
+    await press(page, "o"); // opens the branch: one reply shows
+    await expect.poll(() => branchOf(sideScroller(page), parent)).toMatchObject({ pill: false, open: "true", shown: 1 });
+    await sideScroller(page).evaluate((el, id) => {
+      const panel = el.querySelector(`[data-message-id="${id}"]`).closest("[data-depth]").lastElementChild;
+      panel.insertAdjacentHTML(
+        "beforeend",
+        '<div data-depth="2"><div></div><div><button data-thread-summary aria-controls="vim-test-a" aria-label="3 replies"></button></div></div>' +
+          '<div data-depth="2" data-vim-fold="5 replies"><div></div><div><button data-thread-summary aria-controls="vim-test-b" aria-label="9 replies"></button></div></div>',
+      );
+    }, parent);
+    await press(page, "o"); // folds: 1 shown + 3 behind a pill + 5 in a folded branch (not the 9 behind the pill inside that one)
+    await expect.poll(() => branchOf(sideScroller(page), parent).then((b) => b?.fold)).toBe("9 replies");
+  });
+
+  // Two more guards of the fold, each against a branch that the host does not draw the way the plugin was written for. (A third, the count
+  // behind a pill, is in the test above.)
+  for (const [what, how] of [
+    ["a branch with no reply showing and none behind a pill is not folded (a count of 0)", "empty"],
+    ["a branch that the host does not mark open is not folded", "closed"],
+  ])
+    test(`fail safe: ${what}`, async ({ page, app }) => {
+      await open(page, app);
+      await toRoot(page, app);
+      await press(page, "o");
+      const parent = app.exact.replies.at(-2).id;
+      await expect.poll(() => cursor(page)).toBe(parent);
+      await press(page, "o"); // opens the branch
+      await expect.poll(() => branchOf(sideScroller(page), parent)).toMatchObject({ pill: false, open: "true", shown: 1 });
+      await sideScroller(page).evaluate(
+        (el, [id, how]) => {
+          const branch = el.querySelector(`[data-message-id="${id}"]`).closest("[data-depth]");
+          if (how === "empty") branch.lastElementChild.querySelectorAll("[data-message-id]").forEach((row) => (row.style.display = "none"));
+          else branch.setAttribute("data-open", "false");
+        },
+        [parent, how],
+      );
+      await press(page, "o");
+      await page.waitForTimeout(500);
+      expect(await folds(page)).toBe(0);
+      expect(await cursor(page)).toBe(parent);
+    });
+
+  // The count of a folded branch is drawn by the stylesheet, so there is no element to press: a click on the branch itself, where the count
+  // is, opens it again; a click on its message does not.
+  test("a click on the count of a folded branch opens it again, a click on its message does not", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await press(page, "o");
+    const parent = app.exact.replies.at(-2).id;
+    await expect.poll(() => cursor(page)).toBe(parent);
+    await press(page, "o");
+    await press(page, "o");
+    await expect.poll(() => branchOf(sideScroller(page), parent)).toMatchObject({ fold: "1 reply", shown: 0 });
+    const spot = (where) =>
+      sideScroller(page).evaluate((el, [id, where]) => {
+        const branch = el.querySelector(`[data-message-id="${id}"]`).closest("[data-depth]");
+        const box = branch.getBoundingClientRect();
+        const band = parseFloat(getComputedStyle(branch, "::after").height);
+        const margin = parseFloat(getComputedStyle(branch, "::after").marginInlineStart);
+        // the count, or the message above it
+        return where === "count"
+          ? { x: box.left + margin + 24, y: box.bottom - band / 2 }
+          : { x: box.left + margin + 24, y: el.querySelector(`[data-message-id="${id}"]`).getBoundingClientRect().top + 12 };
+      }, [parent, where]);
+    const message = await spot("message");
+    await page.mouse.click(message.x, message.y);
+    await page.waitForTimeout(400);
+    expect(await branchOf(sideScroller(page), parent)).toMatchObject({ fold: "1 reply", shown: 0 });
+    const count = await spot("count");
+    await page.mouse.click(count.x, count.y);
+    await expect.poll(() => branchOf(sideScroller(page), parent)).toMatchObject({ fold: null, open: "true", shown: 1 });
+    expect(await folds(page)).toBe(0);
+    // o still folds it again.
+    await press(page, "o");
+    await expect.poll(() => branchOf(sideScroller(page), parent)).toMatchObject({ fold: "1 reply", shown: 0 });
+  });
+
+  // Only the band the count fills opens the fold. A click on the branch itself above it (the branch's own box, none of its children: the
+  // test sends the event to the branch) does not.
+  test("a click on the branch itself above the count does not open the fold, one on the count does", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await press(page, "o");
+    const parent = app.exact.replies.at(-2).id;
+    await expect.poll(() => cursor(page)).toBe(parent);
+    await press(page, "o");
+    await press(page, "o");
+    await expect.poll(() => branchOf(sideScroller(page), parent)).toMatchObject({ fold: "1 reply", shown: 0 });
+    const clickBranch = (where) =>
+      sideScroller(page).evaluate(
+        (el, [id, where]) => {
+          const branch = el.querySelector(`[data-message-id="${id}"]`).closest("[data-depth]");
+          const box = branch.getBoundingClientRect();
+          const band = parseFloat(getComputedStyle(branch, "::after").height);
+          const clientY = where === "above" ? box.top + 2 : box.bottom - band / 2;
+          branch.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX: box.left + 5, clientY }));
+        },
+        [parent, where],
+      );
+    await clickBranch("above");
+    await page.waitForTimeout(400);
+    expect(await branchOf(sideScroller(page), parent)).toMatchObject({ fold: "1 reply", shown: 0 });
+    await clickBranch("count");
+    await expect.poll(() => branchOf(sideScroller(page), parent)).toMatchObject({ fold: null, open: "true", shown: 1 });
+  });
+
+  // The thread of 80 replies, for a count that tells one step from three (the fixture of the g page keys has two messages).
+  test("Esc cancels a pending count in the thread's list: 3 Esc k moves one reply", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await press(page, "o");
+    await expect.poll(() => cursor(page)).toBe(app.exact.replies.at(-2).id);
+    await press(page, "3", "Escape", "k");
+    await expect.poll(() => cursor(page)).toBe(app.exact.replies.at(-3).id);
+    await page.waitForTimeout(400);
+    expect(await cursor(page)).toBe(app.exact.replies.at(-3).id); // and it stays there: not three steps a moment later
+  });
+
   test("in the channel's list o still opens the thread, also after a thread was closed", async ({ page, app }) => {
     await open(page, app);
     await toRoot(page, app);
@@ -3056,7 +3212,7 @@ test.describe("the g page keys", () => {
   const channelIndex = (page) =>
     page.evaluate(() => [...document.querySelectorAll("button[data-channel-id]")].indexOf(document.activeElement));
   for (const place of ["the channel's list", "the thread's list", "the channel list", "the channel's box", "the thread's box"]) {
-    test(`Esc cancels a pending g and a pending count in ${place}`, async ({ page, app }) => {
+    test(`Esc cancels a pending g${place === "the thread's list" ? "" : " and a pending count"} in ${place}`, async ({ page, app }) => {
       await page.addInitScript(() => {
         localStorage.setItem("buzzodz.plugins.v1", JSON.stringify({ version: 2, enabled: { "fixture.page-placement": true } }));
       });
@@ -3075,8 +3231,8 @@ test.describe("the g page keys", () => {
       // A count is cancelled the same way: 3 Esc k moves one, not three.
       await enter(page, place);
       if (place === "the thread's list") {
-        // The thread of the fixture has two messages: one step and three are the same there. The count is cancelled by the same code
-        // as in the channel's list; here the g is what the test says.
+        // Nothing to check here: the thread of this fixture has two messages, where one step and three are the same. The count in a
+        // thread's list is in the test of the 80-reply thread ("Esc cancels a pending count in the thread's list").
       } else if (place === "the channel's list") {
         const ids = await rowIds(page);
         await shifted(page, "G");
