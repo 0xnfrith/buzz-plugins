@@ -26,6 +26,14 @@ const press = async (page, ...keys) => {
   for (const key of keys) await page.keyboard.press(key);
 };
 const draft = (page, name) => composer(page, name).evaluate((el) => el.textContent);
+// Clicks into a message box, then waits for a timer of its own. When the editor (prosemirror-view) gains focus it starts a 20 ms timer that,
+// when it runs, writes the editor's saved selection back if the DOM selection is not the one it last saw. On a busy page (CI types a draft and
+// goes straight on to Esc and 0) that timer has run 90 to 119 ms late: after the plugin had moved the caret and before the editor had read the
+// move, so it undid the first caret move after the click. Timers run in the order they are due, so the editor's timer has run by the time ours does.
+const clickBox = async (page, box) => {
+  await box.click();
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 25)));
+};
 
 test("mode follows focus: Esc makes the message box normal, a second Esc stays, k leaves it, i comes back, plain keys type", async ({
   page,
@@ -33,7 +41,7 @@ test("mode follows focus: Esc makes the message box normal, a second Esc stays, 
 }) => {
   await open(page, app);
   await expect(bar(page)).toContainText("NORMAL");
-  await composer(page).click();
+  await clickBox(page, composer(page));
   await expect(bar(page)).toContainText("INSERT");
   // Plain letters bound in normal mode must still type in insert mode.
   await page.keyboard.type("hjkl gg 5");
@@ -1383,7 +1391,7 @@ test.describe("yy and yY copy the link and the text of the message under the cur
   test("y and Y in the message box are the box's own: nothing is copied, the draft is not touched", async ({ page, app }) => {
     await open(page, app);
     await emptyClipboard(page);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await page.keyboard.type("hello");
     await press(page, "Escape");
     await press(page, "y", "y");
@@ -1841,7 +1849,7 @@ test.describe("one NORMAL mode: a pane is its messages and, at the bottom, its m
     app,
   }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await typeLines(page, "one", "two");
     await press(page, "Escape");
     await press(page, "k");
@@ -1927,7 +1935,7 @@ test.describe("one NORMAL mode: a pane is its messages and, at the bottom, its m
       await expect(page.locator("button[data-channel-id]:focus")).toContainText("Alpha");
       await expect(replyBox(page)).not.toBeFocused();
       // Right: from the channel's box to the thread's (the tab that shows), and no further.
-      await composer(page).click();
+      await clickBox(page, composer(page));
       await press(page, "Escape");
       await expect(bar(page)).toHaveText("-- NORMAL --  main");
       await press(page, "l");
@@ -1944,7 +1952,7 @@ test.describe("one NORMAL mode: a pane is its messages and, at the bottom, its m
     app,
   }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await page.keyboard.type("abc");
     await press(page, "Escape");
     await expect(bar(page)).toHaveText("-- NORMAL --  main");
@@ -1982,7 +1990,7 @@ test.describe("Esc, and ? in a NORMAL box", () => {
   test("Esc in a NORMAL box stays in NORMAL and keeps the draft; with a thread open too", async ({ page, app }) => {
     await open(page, app);
     await openThreadBeside(page);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await page.keyboard.type("keep me");
     await press(page, "Escape", "Escape", "Escape");
     await expect(composer(page)).toBeFocused();
@@ -2109,7 +2117,7 @@ test.describe("the leader key", () => {
 
   test("a plain leader never fires while typing: Space types a space in INSERT", async ({ page, app }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await page.keyboard.type("a b");
     await expect.poll(() => draft(page)).toBe("a b");
     await expect(bar(page)).toHaveText("-- INSERT --  main");
@@ -2127,7 +2135,7 @@ test.describe("the leader key", () => {
     await openThreadBeside(page);
     await press(page, "Space"); // no longer the leader
     await expect(bar(page)).not.toContainText("leader");
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await page.keyboard.type("typing");
     await expect(bar(page)).toHaveText("-- INSERT --  main");
     await press(page, "Control+b");
@@ -2230,7 +2238,7 @@ const LINE = /-- VISUAL LINE --/;
 test.describe("normal mode inside the message box", () => {
   test("normal mode inside the message box moves the caret and edits", async ({ page, app }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await page.keyboard.type("hello world");
     await press(page, "Escape");
     await expect(composer(page)).toBeFocused(); // first Esc stays in the box
@@ -2260,7 +2268,7 @@ test.describe("normal mode inside the message box", () => {
 
   test("caret motions and the four ways back to insert", async ({ page, app }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await page.keyboard.type("one two three");
     await press(page, "Escape", "$", "b", "i");
     await page.keyboard.type("X");
@@ -2286,7 +2294,7 @@ test.describe("normal mode inside the message box", () => {
 test.describe("visual mode inside the message box", () => {
   test("v highlights the character under the cursor; motions grow it to the right", async ({ page, app }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await page.keyboard.type("one two three");
     await press(page, "Escape", "0", "v");
     await expect(bar(page)).toHaveText(PLAIN);
@@ -2310,7 +2318,7 @@ test.describe("visual mode inside the message box", () => {
 
   test("motions to the left keep the character the highlight started on, and it can cross over", async ({ page, app }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await page.keyboard.type("one two three");
     await press(page, "Escape", "$", "v");
     await expect.poll(() => selected(page)).toBe("e"); // $ rests on the last character, not past it
@@ -2333,7 +2341,7 @@ test.describe("visual mode inside the message box", () => {
     app,
   }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await page.keyboard.type("one two");
     await press(page, "Escape", "0", "v", "l", "l", "Escape");
     await expect(bar(page)).toContainText("NORMAL");
@@ -2354,7 +2362,7 @@ test.describe("visual mode inside the message box", () => {
     await press(page, "V", "V");
     await expect(bar(page)).toContainText("NORMAL");
     await press(page, "v");
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await expect(bar(page)).toContainText("NORMAL"); // the click ended it
     await press(page, "Escape");
     await expect(composer(page)).toBeFocused(); // Esc outside visual mode stays in NORMAL
@@ -2364,7 +2372,7 @@ test.describe("visual mode inside the message box", () => {
 
   test("keys that mean nothing here do not type; the draft is untouched until an operator acts", async ({ page, app }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await page.keyboard.type("one two three");
     await press(page, "Escape", "0", "v", "3", "l");
     await expect.poll(() => selected(page)).toBe("one ");
@@ -2377,7 +2385,7 @@ test.describe("visual mode inside the message box", () => {
   test("y copies the highlight to the clipboard and keeps the draft", async ({ page, app }) => {
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await page.keyboard.type("one two three");
     await press(page, "Escape", "0", "v", "w", "y");
     await expect(bar(page)).toContainText("NORMAL");
@@ -2390,7 +2398,7 @@ test.describe("visual mode inside the message box", () => {
 
   test("d and x delete the highlight, inclusive of both ends; u takes it back", async ({ page, app }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await page.keyboard.type("one two three");
     await press(page, "Escape", "0", "v", "l", "l", "d");
     await expect.poll(() => draft(page)).toBe(" two three");
@@ -2405,7 +2413,7 @@ test.describe("visual mode inside the message box", () => {
 
   test("c deletes the highlight and goes to insert mode", async ({ page, app }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await page.keyboard.type("one two three");
     await press(page, "Escape", "0", "v", "l", "l", "c");
     await expect(bar(page)).toContainText("INSERT");
@@ -2415,7 +2423,7 @@ test.describe("visual mode inside the message box", () => {
 
   test("V highlights whole lines; j and k grow it both ways", async ({ page, app }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await typeLines(page, "alpha", "beta", "gamma");
     await press(page, "Escape", "V");
     await expect(bar(page)).toHaveText(LINE);
@@ -2432,7 +2440,7 @@ test.describe("visual mode inside the message box", () => {
 
   test("a character highlight goes across lines too", async ({ page, app }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await typeLines(page, "alpha", "beta");
     await press(page, "Escape", "k", "0", "v", "j");
     await expect.poll(() => selected(page)).toBe("alpha\nb");
@@ -2440,7 +2448,7 @@ test.describe("visual mode inside the message box", () => {
 
   test("Vd takes the lines whole, with their newline; the caret lands on the next line", async ({ page, app }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await typeLines(page, "alpha", "beta", "gamma");
     await press(page, "Escape", "k", "V", "d");
     await expect.poll(() => draft(page)).toBe("alpha\ngamma");
@@ -2450,7 +2458,7 @@ test.describe("visual mode inside the message box", () => {
 
   test("Vd on the first line and on the last lines leaves no empty line behind", async ({ page, app }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await typeLines(page, "alpha", "beta", "gamma");
     await press(page, "Escape", "k", "k", "V", "d");
     await expect.poll(() => draft(page)).toBe("beta\ngamma");
@@ -2464,7 +2472,7 @@ test.describe("visual mode inside the message box", () => {
 
   test("Vd on the last two lines takes the newline before them", async ({ page, app }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await typeLines(page, "alpha", "beta", "gamma");
     await press(page, "Escape", "k", "V", "j", "d");
     await expect.poll(() => draft(page)).toBe("alpha");
@@ -2473,7 +2481,7 @@ test.describe("visual mode inside the message box", () => {
   test("Vc keeps one empty line and types into it; Vy copies the lines", async ({ page, app }) => {
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await typeLines(page, "alpha", "beta", "gamma");
     await press(page, "Escape", "k", "k", "V", "j", "y");
     expect(await clipboard(page)).toBe("alpha\nbeta");
@@ -2520,7 +2528,7 @@ test.describe("composer editing setting", () => {
       [SETTINGS],
     );
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await page.keyboard.type("v");
     await press(page, "Escape");
     await expect(composer(page)).not.toBeFocused();
@@ -2545,7 +2553,7 @@ test.describe("composer editing setting", () => {
     );
     await open(page, app);
     await expect(bar(page)).toBeHidden(); // statusLine=false was kept
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await page.keyboard.type("hi");
     await press(page, "Escape");
     await expect(composer(page)).toBeFocused(); // composerNormal=false was not: the default applies
@@ -2571,7 +2579,7 @@ const under = async (page) => {
 };
 const lines = (page) => composer(page).evaluate((el) => el.innerText);
 const normal = async (page, text) => {
-  await composer(page).click();
+  await clickBox(page, composer(page));
   await page.keyboard.type(text);
   await press(page, "Escape");
   await expect(bar(page)).toContainText("NORMAL");
@@ -2677,7 +2685,7 @@ test.describe("motions inside the message box", () => {
     app,
   }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await typeLines(page, "alpha", "  beta", "gamma", "delta");
     await press(page, "Escape");
     expect(await under(page)).not.toBe("");
@@ -2711,7 +2719,7 @@ test.describe("motions inside the message box", () => {
     app,
   }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await typeLines(page, "ab", "cd");
     await press(page, "Escape", "k", "0", "$", "x");
     await expect.poll(() => lines(page)).toBe("a\ncd");
@@ -2752,7 +2760,7 @@ test.describe("motions inside the message box", () => {
 
   test("V and G or gg select whole lines", async ({ page, app }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await typeLines(page, "one", "two", "three");
     await press(page, "Escape", "g", "g", "V", "G");
     await expect.poll(() => selected(page)).toBe("one\ntwo\nthree");
@@ -2767,7 +2775,7 @@ test.describe("motions inside the message box", () => {
     await open(page, app);
     // A clean, empty draft in insert mode: i if the box was left in normal mode.
     const clear = async () => {
-      await composer(page).click();
+      await clickBox(page, composer(page));
       if (/NORMAL/.test(await bar(page).textContent())) await press(page, "i");
       await press(page, "Control+a", "Backspace");
     };
@@ -2820,7 +2828,7 @@ test.describe("the mode label", () => {
   };
   const everyMode = async (page, box) => {
     await corner(page); // NORMAL, in the list
-    await box.click();
+    await clickBox(page, box);
     await page.keyboard.type("one two");
     await corner(page); // INSERT
     await press(page, "Escape");
@@ -2845,7 +2853,7 @@ test.describe("the mode label", () => {
     await label(page, "-- NORMAL -- sidebar");
     await press(page, "l");
     await label(page, "-- NORMAL -- main");
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await label(page, "-- INSERT -- main");
     await page.keyboard.type("one two");
     await press(page, "Escape");
@@ -2923,7 +2931,7 @@ test.describe("the mode label", () => {
     await everyMode(page, replyBox(page));
     // The channel's box to the thread's: l at the end of a draft.
     await press(page, "h");
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await page.keyboard.type("a");
     await press(page, "Escape", "l");
     await expect(replyBox(page)).toBeFocused();
@@ -3042,7 +3050,7 @@ test.describe("the help dialog", () => {
 
   test("? types a question mark in the message box instead", async ({ page, app }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await question(page);
     await expect(help(page)).toHaveCount(0);
     await expect.poll(() => draft(page)).toBe("?");
@@ -3072,11 +3080,11 @@ test.describe("the g page keys", () => {
     if (place === "the thread's list") await visibleList.focus();
     if (place === "the channel list") await page.locator('button[data-channel-id][aria-current="page"]').focus();
     if (place === "the channel's box") {
-      await composer(page).click();
+      await clickBox(page, composer(page));
       await press(page, "Escape");
     }
     if (place === "the thread's box") {
-      await replyBox(page).click();
+      await clickBox(page, replyBox(page));
       await press(page, "Escape");
     }
     await expect(bar(page)).toContainText(/NORMAL/);
@@ -3318,11 +3326,11 @@ test.describe("the g page keys on a Mac", () => {
     await expect.poll(where).toBe("buzz.inbox/inbox");
     await press(page, "g", "m");
     await expect.poll(where).toBe("conversation");
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await press(page, "Escape", "g", "s");
     await expect(page.getByRole("dialog", { name: "Settings", exact: true })).toBeVisible();
     await closeSettings(page);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await press(page, "Escape", "g", "i");
     await expect.poll(where).toBe("buzz.inbox/inbox");
   });
@@ -3587,7 +3595,7 @@ test.describe("found in the real app and by the first test report", () => {
 
   test("V d on a paragraph removes just that paragraph (a guard: it already did, in the real app too)", async ({ page, app }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     // Real paragraphs: a paste with blank lines makes them in the app; Enter would send, so ask the
     // editor for them the way its own Enter does.
     const paragraph = () => page.evaluate(() => document.execCommand("insertParagraph"));
@@ -3597,7 +3605,7 @@ test.describe("found in the real app and by the first test report", () => {
     await paragraph();
     await page.keyboard.type("para three");
     await expect(composer(page).locator("p")).toHaveCount(3);
-    await composer(page).locator("p").nth(1).click();
+    await clickBox(page, composer(page).locator("p").nth(1));
     await press(page, "Escape", "V", "d");
     await expect(composer(page).locator("p")).toHaveCount(2);
     await expect.poll(() => composer(page).locator("p").allInnerTexts()).toEqual(["para one", "para three"]);
@@ -3882,7 +3890,7 @@ test.describe("Ctrl-e and Ctrl-y scroll the view a line at a time", () => {
     await open(page, app);
     const list = mainScroller(page);
     const line = await lineOf(list);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await page.keyboard.type("ab cd ef");
     const start = await top(list);
     await expect(bar(page)).toContainText("INSERT");
@@ -3957,7 +3965,7 @@ test.describe("a mention chip in the draft", () => {
   const chip = (page, box = composer(page)) => box.locator('[contenteditable="false"]');
   // Types `before`, picks "Fixture Reader" from the @ list (a chip, then a space), then drops that space unless `keepSpace`.
   const mentionIn = async (page, before = "", { keepSpace = false } = {}) => {
-    await composer(page).click();
+    await clickBox(page, composer(page));
     if (before) await page.keyboard.type(before);
     await page.keyboard.type("@");
     const option = page.getByRole("option", { name: /Fixture Reader/ });
@@ -4054,7 +4062,7 @@ test.describe("a mention chip in the draft", () => {
 
   test("a chip in the middle: motions walk over it, the caret is never inside it, and i types beside it", async ({ page, app }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await page.keyboard.type("ab ");
     await mentionIn(page, "", { keepSpace: true }); // clicking the box again keeps the caret where it is
     await page.keyboard.type("cd");
@@ -4084,7 +4092,7 @@ test.describe("a mention chip in the draft", () => {
 
   test("x on a chip takes it whole, and the caret stays beside what is left", async ({ page, app }) => {
     await open(page, app);
-    await composer(page).click();
+    await clickBox(page, composer(page));
     await page.keyboard.type("ab ");
     await mentionIn(page, "", { keepSpace: true });
     await page.keyboard.type("cd");
@@ -4102,7 +4110,7 @@ test.describe("a mention chip in the draft", () => {
   // leaves the box as h at the start does (no stop on the chips); l does the same for a trailing run when a pane lies to
   // the right; a chip with text before it (leading) or after it (trailing) keeps the one-character steps.
   const mentionsIn = async (page, count, { before = "", after = "" } = {}) => {
-    await composer(page).click();
+    await clickBox(page, composer(page));
     if (before) await page.keyboard.type(before);
     for (let i = 1; i <= count; i++) {
       await page.keyboard.type("@");
