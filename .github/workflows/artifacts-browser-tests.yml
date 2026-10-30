@@ -1,0 +1,72 @@
+# The browser-level test of the Artifacts plugin's Settings card (plugins/artifacts/test/web/artifacts.spec.mjs): real focus, `autoFocus`
+# and whether Esc reaches the Settings dialog, in headless Chromium against block/buzz-app's own production web build, the way
+# plugins/artifacts/test/run.sh runs it by hand. The node tests are a separate workflow (artifacts-tests.yml).
+name: Artifacts browser tests
+
+on:
+  pull_request:
+    paths:
+      - "plugins/artifacts/**"
+      - ".github/workflows/artifacts-browser-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "plugins/artifacts/**"
+      - ".github/workflows/artifacts-browser-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: artifacts-browser-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The block/buzz-app commit the plugin is tested against. vim-latency.yml and vim-tests.yml name the same commit: the first step of
+  # each of the three workflows fails when they differ, so change all three together.
+  BUZZ_APP_REF: d92bfb2c4dd89fc5ae6e7a1445f38ad1e8ab7060
+
+jobs:
+  browser:
+    name: Artifacts browser tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20 # the two tests take under a minute; the set-up is most of it
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: BUZZ_APP_REF is the same in the three workflows that build the app
+        run: |
+          ref() { sed -n 's/^  BUZZ_APP_REF: \([0-9a-f]\{40\}\).*/\1/p' ".github/workflows/$1.yml"; }
+          want=$(ref vim-latency)
+          [ -n "$want" ] && [ "$(ref vim-tests)" = "$want" ] && [ "$(ref artifacts-browser-tests)" = "$want" ] \
+            || { echo "::error::BUZZ_APP_REF is not the same 40-character commit in vim-latency.yml, vim-tests.yml and artifacts-browser-tests.yml: change all three together"; exit 1; }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: block/buzz-app
+          ref: ${{ env.BUZZ_APP_REF }}
+          path: buzz-app
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: pnpm, as the app pins it
+        run: |
+          corepack enable
+          corepack prepare "$(node -p "require('./buzz-app/package.json').packageManager")" --activate
+      - name: Install the app's dependencies (frozen lockfile)
+        working-directory: buzz-app
+        run: pnpm install --frozen-lockfile
+      - name: Install Chromium
+        working-directory: buzz-app
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Browser tests
+        run: plugins/artifacts/test/run.sh buzz-app
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: artifacts-browser-test-results
+          path: buzz-app/test-results
+          if-no-files-found: ignore
+          retention-days: 14

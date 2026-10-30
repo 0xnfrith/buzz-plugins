@@ -184,7 +184,7 @@ test("Rename turns the name into a field in place; Save keeps the new name and p
   const before = cardsOf(m.settings())[0];
   const renameButton = buttonNamed(before, "Rename");
   let focused = 0;
-  renameButton.props.ref.current = { focus: () => focused++ };
+  renameButton.props.ref({ focus: () => focused++ });
   press(before, "Rename");
   const editing = cardsOf(m.settings())[0];
   const field = flat(editing).find((n) => n.type === "input");
@@ -207,7 +207,7 @@ test("Cancel and Esc leave the rename as it was; Esc does not reach Settings, wh
   const m = mount({ rows: ["1"] });
   const rename = buttonNamed(cardsOf(m.settings())[0], "Rename");
   let focused = 0;
-  rename.props.ref.current = { focus: () => focused++ };
+  rename.props.ref({ focus: () => focused++ });
   press(cardsOf(m.settings())[0], "Rename");
   typeInto(cardsOf(m.settings())[0], "Name for https://example.org/1", "Changed");
   press(cardsOf(m.settings())[0], "Cancel");
@@ -260,6 +260,37 @@ test("Remove asks once: Keep leaves the page and the focus on Remove; only the s
   press(cardsOf(m.settings())[0], "Remove");
   assert.deepEqual(JSON.parse(m.storage.raw()).map((l) => l.id), ["2"]);
   assert.deepEqual(JSON.parse(m.storage.rawPinned()), [], "a removed page is unpinned");
+});
+
+test("Remove moves the focus before the card goes: to the next card's Rename, else the one before, else the add form", async () => {
+  const m = mount({ rows: ["1", "2", "3"] });
+  const seen = []; // where each focus went, and how many pages were still saved when it did
+  const fake = (where) => ({ focus: () => seen.push(`${where}/${JSON.parse(m.storage.raw()).length}`) });
+  cardsOf(m.settings()).forEach((card, at) => buttonNamed(card, "Rename").props.ref(fake(`rename ${at + 1}`)));
+  const ask = (at) => {
+    press(cardsOf(m.settings())[at], "Remove");
+    press(cardsOf(m.settings())[at], "Remove");
+  };
+  ask(1);
+  assert.deepEqual(seen, ["rename 3/3"], "the next card's Rename, with the page still saved");
+  assert.deepEqual(JSON.parse(m.storage.raw()).map((l) => l.id), ["1", "3"]);
+  ask(1);
+  assert.deepEqual(seen.slice(1), ["rename 1/2"], "no card after it: the one before");
+  const field = flat(m.settings()).find((n) => n.type === "input" && n.props.placeholder === "Quarterly report");
+  field.props.ref.current = fake("name field");
+  ask(0);
+  assert.deepEqual(seen.slice(2), ["name field/1"], "no card left: the first field of the add form");
+  assert.deepEqual(JSON.parse(m.storage.raw()), []);
+});
+
+test("Remove skips a card that has no Rename button on screen (it is being renamed or asked about)", () => {
+  const m = mount({ rows: ["1", "2", "3"] });
+  const seen = [];
+  cardsOf(m.settings()).forEach((card, at) => buttonNamed(card, "Rename").props.ref({ focus: () => seen.push(at + 1) }));
+  buttonNamed(cardsOf(m.settings())[2], "Rename").props.ref(null); // card 3 is in the middle of a rename: its button is gone
+  press(cardsOf(m.settings())[1], "Remove");
+  press(cardsOf(m.settings())[1], "Remove");
+  assert.deepEqual(seen, [1], "the card before takes the focus, not the one that cannot");
 });
 
 test("the card's buttons say which page they act on, for a screen reader", () => {
