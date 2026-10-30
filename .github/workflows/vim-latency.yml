@@ -72,7 +72,7 @@ jobs:
             {"id": "channel-list", "name": "channel list", "grep": "budget: (channel list|the table$)", "invert": "", "timeout": 30},
             {"id": "message-list", "name": "message list", "grep": "budget: (message list \\(|the table$)", "invert": "", "timeout": 30},
             {"id": "thread-pane", "name": "thread pane", "grep": "budget: (thread pane|the table$)", "invert": "", "timeout": 30},
-            {"id": "settings", "name": "Settings", "grep": "budget: (Settings dialog|the table$)", "invert": "", "timeout": 30},
+            {"id": "settings", "name": "Settings", "grep": "budget: (the table$)", "invert": "", "timeout": 30},
             {"id": "rest", "name": "rest", "grep": "", "invert": "budget: (channel list|message list \\(|thread pane|Settings dialog)", "timeout": 30}
           ]
           JSON
