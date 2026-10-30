@@ -1885,6 +1885,11 @@ var groups = () => {
 					"API"
 				],
 				[
+					"g1  ...  g9",
+					"Open the nth entry of the top bar, counted from the left as the bar shows them: Messages, Reminders, then the others by name (Agents and Workflows, and the pages plugins pin to the bar, such as Artifacts' pins, among them). A digit after g is the entry's number, not a count. The pages of the sidebar (Inbox, the Vim mode page) keep their letters and gt",
+					"API"
+				],
+				[
 					"i  a  A",
 					"Go to INSERT: focus the message box (a: after the character under the caret; A: at the end of the draft)",
 					"API + DOM"
@@ -2222,10 +2227,11 @@ var pageRank = (page) => {
 	return slot < 0 ? BUNDLED_ORDER.length : slot;
 };
 var byShell = (a, b) => pageRank(a) - pageRank(b) || pageName(a).localeCompare(pageName(b), "en") || a.key.localeCompare(b.key, "en");
+var onTopBar = (page) => TOPBAR.includes(page.key) || page.placement === "topbar";
+var topBar = () => ctx.pages.snapshot().filter((page) => page.primary && onTopBar(page)).sort(byShell);
 var pageList = () => {
 	const pages = ctx.pages.snapshot().filter((page) => page.primary);
-	const top = (page) => TOPBAR.includes(page.key) || page.placement === "topbar";
-	return [...pages.filter(top).sort(byShell), ...pages.filter((page) => !top(page)).sort(byShell)];
+	return [...pages.filter(onTopBar).sort(byShell), ...pages.filter((page) => !onTopBar(page)).sort(byShell)];
 };
 var openPage = (page) => void ctx.navigation.open({
 	version: 1,
@@ -2265,6 +2271,10 @@ var openSettings = (section) => {
 };
 var goPage = (letter) => {
 	clearPending();
+	if (/^[1-9]$/.test(letter)) {
+		const page = topBar()[Number(letter) - 1];
+		return page ? openPage(page) : void 0;
+	}
 	if (letter === "t" || letter === "T") return cyclePage(letter === "t" ? 1 : -1);
 	if (letter === "s") return openSettings();
 	if (letter === "p") return openSettings("plugins");
@@ -2280,7 +2290,7 @@ var textKey = timed("textKey", (key) => {
 		return armPending();
 	}
 	if (state.visual) return visualKey(key);
-	if (state.prefix === "g" && !state.operator && "imarwvtTsp".includes(key)) return goPage(key);
+	if (state.prefix === "g" && !state.operator && "imarwvtTsp123456789".includes(key)) return goPage(key);
 	const operator = state.operator;
 	const typed = state.count;
 	const motion = resolveMotion(key);
@@ -2797,10 +2807,10 @@ var registerShortcuts = () => {
 		allowInEditable: true,
 		when: () => state.enabled && !!timelineOf("main")
 	});
-	for (const digit of "1234567890") key(`count-${digit}`, `Count prefix ${digit}`, { key: digit }, () => {
+	for (const digit of "1234567890") key(`count-${digit}`, `Count prefix ${digit}`, { key: digit }, afterG(digit, () => {
 		set({ count: Math.min(state.count * 10 + Number(digit), 999) });
 		armPending();
-	}, { when: () => eligible() && (digit !== "0" || state.count > 0) });
+	}), { when: () => eligible() && (digit !== "0" || state.count > 0) });
 	key("toggle", "Turn Vim keys on or off", {
 		key: "e",
 		mod: true,
