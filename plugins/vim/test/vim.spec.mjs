@@ -1805,6 +1805,13 @@ const openThreadBeside = async (page) => {
   await expect(sideScroller(page)).toBeFocused();
 };
 
+// ProseMirror (prosemirror-view, DOMObserver.flush) reads a caret that lands on the very start of the draft within 200 ms of the editor gaining
+// focus, with no click in the last 300 ms, as the browser's own reset after focus, and puts its own selection back: a 0 (or gg) pressed that soon
+// after a key focused the box is undone a moment later, and the h after it finds the caret where it was. A fast typist can reach it too (a cross
+// key rolled straight into 0 h, or i, Esc, 0, h, 50 to 120 ms between keys; see NOTES.md), and CI does: it types a draft and reaches the 0 in about 180 ms,
+// so a test that moves to the start of a draft the box was focused for by a key waits the window out first.
+const pastEditorFocusWindow = (page) => page.waitForTimeout(250);
+
 test.describe("one NORMAL mode: a pane is its messages and, at the bottom, its message box", () => {
   test("j past the newest message drops into the box in NORMAL; k on its first row goes up to the newest message", async ({
     page,
@@ -1863,6 +1870,7 @@ test.describe("one NORMAL mode: a pane is its messages and, at the bottom, its m
     await page.keyboard.type("reply text");
     await press(page, "Escape");
     await expect(bar(page)).toHaveText("-- NORMAL --  side");
+    await pastEditorFocusWindow(page);
     await press(page, "0", "h"); // the very start of the thread's draft: the channel's box, to its left
     await expect(composer(page)).toBeFocused();
     await expect(bar(page)).toHaveText("-- NORMAL --  main");
@@ -1879,14 +1887,13 @@ test.describe("one NORMAL mode: a pane is its messages and, at the bottom, its m
     await press(page, "$", "l");
     await expect(replyBox(page)).toBeFocused();
     await expect(bar(page)).toHaveText("-- NORMAL --  side");
-    // The editor puts its own selection back a moment after one moves (see the note above): a 0 sent at once can be undone.
-    await page.waitForTimeout(250);
+    await pastEditorFocusWindow(page); // the thread's box has just had the focus again: a 0 sent at once can be undone
     await press(page, "0", "h"); // left again: the channel's box, at the end of its draft
     await expect(composer(page)).toBeFocused();
     await expect(bar(page)).toHaveText("-- NORMAL --  main");
     await press(page, "x"); // the caret really is on the last character
     await expect.poll(() => draft(page, "Alpha")).toBe("hell");
-    await page.waitForTimeout(250); // as above: the editor restores its selection after an edit
+    await pastEditorFocusWindow(page); // as above, and the editor restores its selection after an edit too
     // Left once more: the channel list, as h does from the message list. It used to go back to the thread's box.
     await press(page, "0", "h");
     await expect(bar(page)).toHaveText("-- NORMAL --  sidebar");
@@ -3247,7 +3254,9 @@ test.describe("the g page keys", () => {
         const box = place === "the channel's box" ? composer(page) : replyBox(page);
         await press(page, "i");
         await page.keyboard.type("abcdef");
-        await press(page, "Escape", "0", "3", "Escape", "x"); // x with a count of 3 would take three letters
+        await press(page, "Escape");
+        await pastEditorFocusWindow(page); // the 0 must not come within 200 ms of the box gaining focus (see the helper)
+        await press(page, "0", "3", "Escape", "x"); // x with a count of 3 would take three letters
         await expect.poll(() => box.evaluate((el) => el.textContent)).toBe("bcdef");
       }
     });
