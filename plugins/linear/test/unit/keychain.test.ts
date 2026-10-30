@@ -307,26 +307,42 @@ describe("a key already in the profile (saved by an earlier version)", () => {
     expect(later.place()).toBe("keychain");
   });
 
-  it("gives way to a key already in the Keychain: the Keychain's is the one that counts, and the stale copy goes", async () => {
+  it("takes the profile's key as the newer one when it differs from the Keychain's: moved over it, read back, and only then is the plain copy removed", async () => {
     const box = sandbox();
     await box.byHand(OLD);
     box.storage.set(PROFILE_KEY, KEY);
-    const before = adds(box.calls());
     const keys = box.store();
     await keys.ready;
-    expect([keys.read(), keys.place()]).toEqual([OLD, "keychain"]);
+    expect([keys.read(), keys.place()]).toEqual([KEY, "keychain"]);
+    expect(Object.values(box.kept())).toEqual([KEY]);
     expect(box.storage.size).toBe(0);
-    expect(adds(box.calls())).toBe(before); // nothing was written over it
+    for (const call of box.calls()) expect(call.join(" ")).not.toContain(KEY);
+  });
+
+  it("keeps both and uses the profile's key when the Keychain will not take it over the older one", async () => {
+    const box = sandbox();
+    await box.byHand(OLD);
+    box.storage.set(PROFILE_KEY, KEY);
+    const keys = box.store({ mode: "refuse-add" });
+    await keys.ready;
+    expect([keys.read(), keys.place(), box.storage.get(PROFILE_KEY)]).toEqual([KEY, "profile", KEY]);
+    expect(Object.values(box.kept())).toEqual([OLD]);
+    // The next start has a Keychain that works: the newer key goes in.
+    const later = box.store();
+    await later.ready;
+    expect([later.read(), later.place(), box.storage.size, Object.values(box.kept())]).toEqual([KEY, "keychain", 0, [KEY]]);
   });
 
   it("drops the plain copy that a crash between the two steps left beside the same key", async () => {
     const box = sandbox();
     await box.byHand(KEY);
     box.storage.set(PROFILE_KEY, KEY);
+    const written = adds(box.calls());
     const keys = box.store();
     await keys.ready;
     expect([keys.read(), keys.place()]).toEqual([KEY, "keychain"]);
     expect(box.storage.size).toBe(0);
+    expect(adds(box.calls())).toBe(written); // the same key is not written again
   });
 });
 

@@ -136,12 +136,17 @@ function createKeyStore(storage, { run, store } = {}) {
 		dropProfileCopy();
 		return true;
 	}
-	/** Looks for the key: the store first, then the profile. A key found in the profile where there is a store is moved to it. */
+	/**
+	* Looks for the key: the store first, then the profile. A key in the profile where there is a store is moved to it. When both
+	* hold a key and they differ, the profile's is the newer one: a key reaches the profile only when the store could not be
+	* reached (or, in an earlier version, always), so the store holds an older key. It is moved the same way, and the store keeps
+	* the older key until the read-back says the newer one is there.
+	*/
 	async function load(initial) {
 		const [before, placeBefore] = [key, place];
 		const kept = await readStore();
 		const plain = profileCopy();
-		if (kept) {
+		if (kept && (plain === void 0 || plain === kept)) {
 			[key, place] = [kept, kind];
 			if (plain !== void 0) dropProfileCopy();
 		} else if (plain !== void 0) {
@@ -150,13 +155,20 @@ function createKeyStore(storage, { run, store } = {}) {
 		} else [key, place] = [void 0, void 0];
 		if (initial || key !== before || place !== placeBefore) notify(!initial && key !== before);
 	}
+	let started;
+	const begin = () => started ??= serial(() => load(true));
 	return {
 		/** Changes whenever the key is another one, for effects that must start over. */
 		version: () => version,
-		/** Settles when the first look for the key (and the move out of the profile) is over. */
-		ready: serial(() => load(true)),
+		/** Settles when the first look for the key (and the move out of the profile) is over; asking for it makes the look. */
+		get ready() {
+			return begin();
+		},
 		/** Looks again (the store may have been given the key from outside). */
-		reload: () => serial(() => load(false)),
+		reload: () => {
+			begin();
+			return serial(() => load(false));
+		},
 		/** The saved key, for the client only. Nothing else should hold on to it. */
 		read: () => key,
 		has: () => key !== void 0,
@@ -168,49 +180,58 @@ function createKeyStore(storage, { run, store } = {}) {
 		* on a Mac nothing is kept (`kept: false`, a saved key unchanged); on Linux the key goes to the profile, labelled
 		* (`degraded: true`), unless the store already holds a key, which a plain copy would only shadow (`kept: false`).
 		*/
-		save: (value) => serial(async () => {
-			let degraded = false;
-			if (driver) {
-				if (await toStore(value)) [key, place] = [value, kind];
-				else if (driver.plainFallback && place !== kind) {
+		save: (value) => {
+			begin();
+			return serial(async () => {
+				let degraded = false;
+				if (driver) {
+					if (await toStore(value)) [key, place] = [value, kind];
+					else if (driver.plainFallback && place !== kind) {
+						storage.setItem(KEY, value);
+						[key, place] = [value, "profile"];
+						degraded = true;
+					} else return {
+						kept: false,
+						degraded: false
+					};
+				} else {
 					storage.setItem(KEY, value);
 					[key, place] = [value, "profile"];
-					degraded = true;
-				} else return {
-					kept: false,
-					degraded: false
+				}
+				notify(true);
+				return {
+					kept: true,
+					degraded
 				};
-			} else {
-				storage.setItem(KEY, value);
-				[key, place] = [value, "profile"];
-			}
-			notify(true);
-			return {
-				kept: true,
-				degraded
-			};
-		}),
+			});
+		},
 		/** Moves a key kept in the profile to the store; false when it would not take it and the key stays where it was. */
-		moveToStore: () => serial(async () => {
-			if (key === void 0 || place !== "profile" || !await toStore(key)) return false;
-			place = kind;
-			notify(false);
-			return true;
-		}),
+		moveToStore: () => {
+			begin();
+			return serial(async () => {
+				if (key === void 0 || place !== "profile" || !await toStore(key)) return false;
+				place = kind;
+				notify(false);
+				return true;
+			});
+		},
 		/** Removes the key from the store and the profile. False when one still has it afterwards (it then stays in use). */
-		clear: () => serial(async () => {
-			dropProfileCopy();
-			let left = profileCopy();
-			let where = left === void 0 ? void 0 : "profile";
-			if (driver) {
-				await secret(driver.delete);
-				const kept = await readStore();
-				if (kept) [left, where] = [kept, kind];
-			}
-			[key, place] = [left, where];
-			notify(true);
-			return left === void 0;
-		}),
+		clear: () => {
+			begin();
+			return serial(async () => {
+				dropProfileCopy();
+				let left = profileCopy();
+				let where = left === void 0 ? void 0 : "profile";
+				if (driver) {
+					await secret(driver.delete);
+					const kept = await readStore();
+					if (kept) [left, where] = [kept, kind];
+				}
+				[key, place] = [left, where];
+				notify(true);
+				return left === void 0;
+			});
+		},
 		subscribe(listener) {
 			listeners.add(listener);
 			return () => listeners.delete(listener);
@@ -1848,6 +1869,9 @@ function createSettingsCard({ keys, client }) {
 		const [status, setStatus] = React.useState({ kind: "idle" });
 		const [byHand, setByHand] = React.useState(false);
 		const alive = React.useRef(true);
+		React.useEffect(() => {
+			keys.ready;
+		}, []);
 		React.useEffect(() => {
 			alive.current = true;
 			return () => {

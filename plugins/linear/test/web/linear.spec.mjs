@@ -1093,6 +1093,57 @@ test("Cancel puts the card back as it was: the message from the last key check g
   await expect(linearCard.getByRole("status")).toHaveCount(0);
 });
 
+// ---- When the store is first looked at, and a newer key in the profile ----
+
+for (const [system, calls, options] of [
+  ["a Mac", (fake) => fake.keychain.calls(), { mac: true }],
+  ["Linux", (fake) => fake.secret.calls(), { linux: true }],
+]) {
+  test(`on ${system} the store is not touched when Buzz starts: only when the Linear page opens, and the key from the profile moves then`, async ({ page, app }) => {
+    const fake = await arrange(page, app, options); // a key from an earlier version is in the profile
+    await page.waitForTimeout(2500); // time enough for anything the plugin would do at start
+    expect(calls(fake)).toEqual([]);
+    expect(await savedKey(page)).toBe(fake.keys.good);
+    await openPage(page, "Linear");
+    await expect(card(page, "DSN-10")).toBeVisible();
+    expect(calls(fake).length).toBeGreaterThan(0);
+    expect(await savedKey(page)).toBeNull();
+  });
+
+  test(`on ${system} the store is not touched until the card opens either, and opening it looks`, async ({ page, app }) => {
+    const fake = await arrange(page, app, options);
+    await openSettings(page);
+    await page.waitForTimeout(1500);
+    expect(calls(fake)).toEqual([]); // Settings is open, the Linear card is not
+    await selectSettingsSection(page, "Linear");
+    await expect.poll(() => calls(fake).length).toBeGreaterThan(0);
+    await expect(page.getByText("Key saved.")).toBeVisible();
+  });
+}
+
+test("on Linux a newer key kept in the profile while the store was down replaces the older key in the store when the store is back, and nothing is lost", async ({ page, app }) => {
+  // The store holds an older key; for this start it is down, so the card sees no key and a newer one is pasted.
+  const fake = await arrange(page, app, { key: null, linux: true, inKeychain: "good", secretMode: "unreachable" });
+  await openSettings(page);
+  await selectSettingsSection(page, "Linear");
+  await page.getByLabel("Personal API key").fill(fake.keys.other);
+  await page.getByRole("button", { name: "Save key" }).click();
+  await expect(page.getByRole("alert")).toContainText("it is kept in this app's profile, as plain text");
+  expect(await savedKey(page)).toBe(fake.keys.other);
+  expect(fake.secret.kept()).toEqual([fake.keys.good]);
+  // The store is back, and Buzz is started again.
+  fake.secret.mode("");
+  await closeSettings(page);
+  await page.reload();
+  await openPage(page, "Linear");
+  await expect(card(page, "DSN-10")).toBeVisible();
+  expect(fake.secret.kept()).toEqual([fake.keys.other]);
+  expect(await savedKey(page)).toBeNull();
+  await openSettings(page);
+  await selectSettingsSection(page, "Linear");
+  await expect(page.getByText("It is kept in the system secret store (Secret Service). It is not shown again.")).toBeVisible();
+});
+
 test("on a Mac Cancel and Save wait while the key is being written to the Keychain, and the key is the new one when they come back", async ({ page, app }) => {
   // Every call of the stand-in takes 1.2 seconds: after Linear has accepted the key, writing it and reading it back takes a while.
   const fake = await startReplacing(page, app, { mac: true, inKeychain: "good", keychainMode: "slow", keychainDelay: 1200 });

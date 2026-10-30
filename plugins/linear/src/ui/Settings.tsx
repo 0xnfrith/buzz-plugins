@@ -26,6 +26,10 @@ export function createSettingsCard({ keys, client }: { keys: KeyStore; client: L
     // The Keychain would not take a key (on a Mac): nothing was kept, and the card says how to put it there by hand.
     const [byHand, setByHand] = React.useState(false);
     const alive = React.useRef(true);
+    // Opening the card is what makes the first look at where the key is kept (the board's first request, when the page opens, does the same).
+    React.useEffect(() => {
+      void keys.ready;
+    }, []);
     React.useEffect(() => {
       alive.current = true;
       return () => {

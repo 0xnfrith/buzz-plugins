@@ -287,14 +287,63 @@ describe("a key already in the profile (saved by an earlier version)", () => {
     expect([later.read(), later.place(), box.storage.size]).toEqual([KEY, "secret-service", 0]);
   });
 
-  it("gives way to a key already in the store", async () => {
+  it("drops the plain copy that a crash between the two steps left beside the same key, without writing it again", async () => {
+    const box = sandbox();
+    await box.direct(KEY);
+    box.storage.set(PROFILE_KEY, KEY);
+    const written = stores(box.calls());
+    const keys = box.store();
+    await keys.ready;
+    expect([keys.read(), keys.place(), box.storage.size]).toEqual([KEY, "secret-service", 0]);
+    expect(stores(box.calls())).toBe(written);
+  });
+
+  it("a look again that comes first is still the first look: it restarts nothing", async () => {
+    const box = sandbox();
+    await box.direct(KEY);
+    const keys = box.store();
+    await keys.reload(); // nothing asked for the key before this
+    expect([keys.read(), keys.place(), keys.version()]).toEqual([KEY, "secret-service", 0]);
+  });
+
+  it("takes the profile's key as the newer one when it differs from the store's: moved over it, read back, and only then is the plain copy removed", async () => {
     const box = sandbox();
     await box.direct(OLD);
     box.storage.set(PROFILE_KEY, KEY);
-    const before = stores(box.calls());
     const keys = box.store();
     await keys.ready;
-    expect([keys.read(), keys.place(), box.storage.size]).toEqual([OLD, "secret-service", 0]);
+    expect([keys.read(), keys.place(), box.storage.size, box.kept()]).toEqual([KEY, "secret-service", 0, [KEY]]);
+    for (const call of box.calls()) expect(call.join(" ")).not.toContain(KEY);
+  });
+
+  it("keeps both and uses the profile's key when the store will not take it over the older one", async () => {
+    const box = sandbox();
+    await box.direct(OLD);
+    box.storage.set(PROFILE_KEY, KEY);
+    const keys = box.store({ LINEAR_FAKE_SECRET_MODE: "refuse-store" });
+    await keys.ready;
+    expect([keys.read(), keys.place(), box.storage.get(PROFILE_KEY), box.kept()]).toEqual([KEY, "profile", KEY, [OLD]]);
+  });
+
+  it("loses no key when the store is down for a start, a newer key is pasted, and the store comes back: the newer key is in use and in the store", async () => {
+    const box = sandbox();
+    await box.direct(OLD); // key 1 is in the store
+    // A start with the store down: it cannot be read, so the card sees no key, and key 2 is pasted and kept in the profile, labelled.
+    const down = box.store({ LINEAR_FAKE_SECRET_MODE: "unreachable" });
+    await down.ready;
+    expect(down.has()).toBe(false);
+    expect(await down.save(KEY)).toEqual({ kept: true, degraded: true });
+    expect([down.read(), down.place(), box.storage.get(PROFILE_KEY), box.kept()]).toEqual([KEY, "profile", KEY, [OLD]]);
+    // The store comes back, and Buzz is started again.
+    const back = box.store({ LINEAR_FAKE_SECRET_MODE: "" });
+    await back.ready;
+    expect([back.read(), back.place(), box.storage.size, box.kept()]).toEqual([KEY, "secret-service", 0, [KEY]]);
+    // And once more: nothing is repeated, nothing changes.
+    const stores = (calls: string[][]) => calls.filter((call) => call[0] === "store").length;
+    const before = stores(box.calls());
+    const again = box.store();
+    await again.ready;
+    expect([again.read(), again.place(), box.kept()]).toEqual([KEY, "secret-service", [KEY]]);
     expect(stores(box.calls())).toBe(before);
   });
 });

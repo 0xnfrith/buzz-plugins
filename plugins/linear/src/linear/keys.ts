@@ -127,14 +127,19 @@ export function createKeyStore(storage: KeyValue, { run, store }: KeyStoreOption
     return true;
   }
 
-  /** Looks for the key: the store first, then the profile. A key found in the profile where there is a store is moved to it. */
+  /**
+   * Looks for the key: the store first, then the profile. A key in the profile where there is a store is moved to it. When both
+   * hold a key and they differ, the profile's is the newer one: a key reaches the profile only when the store could not be
+   * reached (or, in an earlier version, always), so the store holds an older key. It is moved the same way, and the store keeps
+   * the older key until the read-back says the newer one is there.
+   */
   async function load(initial: boolean): Promise<void> {
     const [before, placeBefore] = [key, place];
     const kept = await readStore();
     const plain = profileCopy();
-    if (kept) {
+    if (kept && (plain === undefined || plain === kept)) {
       [key, place] = [kept, kind];
-      // The store is the one that counts; a copy left in the profile is the same key or an older one.
+      // The same key twice (a crash between "saved" and "deleted"): the copy in the profile goes.
       if (plain !== undefined) dropProfileCopy();
     } else if (plain !== undefined) {
       [key, place] = [plain, "profile"];
@@ -146,15 +151,23 @@ export function createKeyStore(storage: KeyValue, { run, store }: KeyStoreOption
     if (initial || key !== before || place !== placeBefore) notify(!initial && key !== before);
   }
 
-  const ready = serial(() => load(true));
+  // The first look is not made when the plugin loads but the first time something asks for the key (the Linear page or its
+  // card opening, a request, a save), so a locked keyring or a Keychain that asks does not ask at every start of Buzz.
+  let started: Promise<void> | undefined;
+  const begin = (): Promise<void> => (started ??= serial(() => load(true)));
 
   return {
     /** Changes whenever the key is another one, for effects that must start over. */
     version: () => version,
-    /** Settles when the first look for the key (and the move out of the profile) is over. */
-    ready,
+    /** Settles when the first look for the key (and the move out of the profile) is over; asking for it makes the look. */
+    get ready(): Promise<void> {
+      return begin();
+    },
     /** Looks again (the store may have been given the key from outside). */
-    reload: () => serial(() => load(false)),
+    reload: () => {
+      begin();
+      return serial(() => load(false));
+    },
     /** The saved key, for the client only. Nothing else should hold on to it. */
     read: () => key,
     has: () => key !== undefined,
@@ -166,8 +179,9 @@ export function createKeyStore(storage: KeyValue, { run, store }: KeyStoreOption
      * on a Mac nothing is kept (`kept: false`, a saved key unchanged); on Linux the key goes to the profile, labelled
      * (`degraded: true`), unless the store already holds a key, which a plain copy would only shadow (`kept: false`).
      */
-    save: (value: string): Promise<{ kept: boolean; degraded: boolean }> =>
-      serial(async () => {
+    save: (value: string): Promise<{ kept: boolean; degraded: boolean }> => {
+      begin();
+      return serial(async () => {
         let degraded = false;
         if (driver) {
           if (await toStore(value)) {
@@ -185,18 +199,22 @@ export function createKeyStore(storage: KeyValue, { run, store }: KeyStoreOption
         }
         notify(true);
         return { kept: true, degraded };
-      }),
+      });
+    },
     /** Moves a key kept in the profile to the store; false when it would not take it and the key stays where it was. */
-    moveToStore: (): Promise<boolean> =>
-      serial(async () => {
+    moveToStore: (): Promise<boolean> => {
+      begin();
+      return serial(async () => {
         if (key === undefined || place !== "profile" || !(await toStore(key))) return false;
         place = kind;
         notify(false);
         return true;
-      }),
+      });
+    },
     /** Removes the key from the store and the profile. False when one still has it afterwards (it then stays in use). */
-    clear: (): Promise<boolean> =>
-      serial(async () => {
+    clear: (): Promise<boolean> => {
+      begin();
+      return serial(async () => {
         dropProfileCopy();
         let left = profileCopy();
         let where: KeyPlace | undefined = left === undefined ? undefined : "profile";
@@ -208,7 +226,8 @@ export function createKeyStore(storage: KeyValue, { run, store }: KeyStoreOption
         [key, place] = [left, where];
         notify(true);
         return left === undefined;
-      }),
+      });
+    },
     subscribe(listener: () => void): () => void {
       listeners.add(listener);
       return () => listeners.delete(listener);

@@ -72,6 +72,38 @@ describe("key store, where there is no Keychain", () => {
   });
 });
 
+describe("the first look at the store", () => {
+  const recording = () => {
+    const seen: string[] = [];
+    const run = async (command: string) => {
+      seen.push(command);
+      return null;
+    };
+    return { seen, keys: createKeyStore(memoryStorage(), { store: "secret-service", run: run as never }) };
+  };
+
+  test("is not made when the store is made, nor by reading what is known, but when something asks for the key", async () => {
+    const { seen, keys } = recording();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(seen).toEqual([]);
+    expect([keys.has(), keys.read(), keys.place(), keys.store(), keys.version()]).toEqual([false, undefined, undefined, "secret-service", 0]);
+    expect(seen).toEqual([]);
+    await keys.ready;
+    expect(seen).toEqual(["secret-read"]);
+    await keys.ready;
+    expect(seen).toEqual(["secret-read"]); // once
+  });
+
+  for (const operation of ["save", "reload", "moveToStore", "clear"] as const) {
+    test(`${operation} makes it first, so it never decides on a key it has not looked for`, async () => {
+      const { seen, keys } = recording();
+      if (operation === "save") await keys.save("test-key-good");
+      else await keys[operation]();
+      expect(seen[0]).toBe("secret-read");
+    });
+  }
+});
+
 describe("what happens to a key once Linear has been asked about it", () => {
   const cannotAsk: LinearErrorKind[] = ["network", "server", "rate-limited"];
 

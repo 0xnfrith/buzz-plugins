@@ -74,13 +74,12 @@ jobs:
       - name: The key store against the real secret-tool
         env:
           LINEAR_REAL_SECRET_TOOL: "1"
-          NO_COLOR: "1" # so that the summary line below is plain text
         run: |
-          set -o pipefail
           dbus-run-session -- bash -ec '
             eval "$(printf "ci-keyring-password" | gnome-keyring-daemon --unlock --components=secrets)"
             export GNOME_KEYRING_CONTROL
-            pnpm exec vitest run test/unit/secret-service.real.test.ts
-          ' | tee "$RUNNER_TEMP/real.txt"
-          # A skipped suite would pass too: say so if it was not run.
-          grep -q "Tests  4 passed (4)" "$RUNNER_TEMP/real.txt"
+            pnpm exec vitest run test/unit/secret-service.real.test.ts --reporter=json --outputFile="$RUNNER_TEMP/real.json"
+          '
+          # A skipped suite passes too, so the machine-readable result says it: some tests ran, every one passed, none was skipped.
+          jq -e '.numTotalTests > 0 and .numPassedTests == .numTotalTests and .numFailedTests == 0 and .numPendingTests == 0' "$RUNNER_TEMP/real.json"
+          jq '{tests: .numTotalTests, passed: .numPassedTests, failed: .numFailedTests, skipped: .numPendingTests}' "$RUNNER_TEMP/real.json"
