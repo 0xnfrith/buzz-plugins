@@ -559,8 +559,28 @@ const threadLanded = (page) =>
 // gone, and the thread opened anew with the pill back, the keys in the pane and the cursor on the message that has the pill.
 const THREAD_PILL = '[data-panel-workspace] button[data-thread-summary][aria-controls]';
 const pillGone = (page) => page.waitForFunction((pill) => !document.querySelector(pill), THREAD_PILL, { timeout: 10_000 });
-const threadAnew = async (page) => {
-  await page.waitForFunction((pill) => !!document.querySelector(pill) && document.documentElement.dataset.vimRegion === "side", THREAD_PILL, { timeout: 15_000 });
+// The thread's tab closed by the page (what a key of the row does), then the thread opened again: it waits for the pane to be gone (and sends
+// the close again if it has not taken: the host closes the tab the focus is in), opens the thread, and waits for the pill to be back with the
+// keys in the pane. A fixed wait between the two missed on a slower runner once, so nothing here is a timer.
+const THREAD_CLOSE = `window.dispatchEvent(new Event("buzz:close-active-tab", { cancelable: true }))`;
+const threadAnew = async (page, target) => {
+  for (let attempt = 1; ; attempt++) {
+    await page.waitForFunction(
+      () => {
+        if (!document.querySelector("[data-panel-workspace] [data-message-scroller]")) return true;
+        window.dispatchEvent(new Event("buzz:close-active-tab", { cancelable: true }));
+        return false;
+      },
+      null,
+      { polling: 800, timeout: 15_000 },
+    );
+    await page.evaluate((t) => window.fixtureNavigation.open(t), target);
+    const back = await page
+      .waitForFunction((pill) => !!document.querySelector(pill) && document.documentElement.dataset.vimRegion === "side", THREAD_PILL, { timeout: 6_000 })
+      .then(() => true, () => false);
+    if (back) break;
+    if (attempt === 4) throw new Error("the thread did not open anew with the pill of its branch");
+  }
   await press(page, "Shift+g"); // the cursor goes to the newest message that shows: the one that has the pill
   await page.waitForFunction(() => !!document.querySelector('[data-panel-workspace] [data-vim-cursor="side"]'), null, { timeout: 5_000 });
   await page.waitForTimeout(300);
@@ -678,16 +698,12 @@ surface("list", "message list (2,400 messages loaded)", async ({ page, app, rows
 // The reply branch the thread's cursor is on, for the controls.
 const CURSOR_BRANCH = `document.querySelector('[data-panel-workspace] [data-vim-cursor="side"]').closest("[data-depth]")`;
 surface("thread", "thread pane (80 replies)", async ({ page, app, rows }) => {
-  const opened = await page.evaluate(
-    (target) => window.fixtureNavigation.open(target),
-    { version: 1, kind: "conversation", channelId: "alpha", messageId: app.exact.root.id, threadRootId: app.exact.root.id, scope: { viewer: app.viewer, communityOrigin: "https://primary.example" } },
-  );
+  const ROOT_THREAD = { version: 1, kind: "conversation", channelId: "alpha", messageId: app.exact.root.id, threadRootId: app.exact.root.id, scope: { viewer: app.viewer, communityOrigin: "https://primary.example" } };
+  const anew = (page) => threadAnew(page, ROOT_THREAD);
+  const opened = await page.evaluate((target) => window.fixtureNavigation.open(target), ROOT_THREAD);
   expect(opened).toEqual({ status: "opened" });
   await expect(bar(page)).toHaveText("-- NORMAL --  side");
   await page.waitForTimeout(1000);
-  // The thread's tab closed, and the same thread opened again 0.6 s later (the page itself): the branches come back closed.
-  const THREAD_ANEW = `window.dispatchEvent(new Event("buzz:close-active-tab", { cancelable: true }));
-    setTimeout(() => window.fixtureNavigation.open({ version: 1, kind: "conversation", channelId: "alpha", messageId: ${JSON.stringify(app.exact.root.id)}, threadRootId: ${JSON.stringify(app.exact.root.id)}, scope: { viewer: ${JSON.stringify(app.viewer)}, communityOrigin: "https://primary.example" } }), 600)`;
   await rows([
     ...moves(100, SIDE_LIST, 40),
     { pair: [{ key: "h" }, { key: "l" }], crosses: true }, // to the channel's list and back
@@ -724,24 +740,24 @@ surface("thread", "thread pane (80 replies)", async ({ page, app, rows }) => {
     {
       pair: [
         { key: "o: open the replies (the host's pill, the first press)", seq: ["o"], after: pillGone },
-        { key: "control: open the thread anew (the page itself)", seq: ["F9"], control: true, after: threadAnew },
+        { key: "control: close the thread and open it anew (the page itself)", seq: ["F9"], control: true, after: anew },
       ],
       reps: FIRST_PILL_REPS,
       before: async (page) => {
-        await controls(THREAD_ANEW, THREAD_ANEW)(page);
+        await controls(THREAD_CLOSE, THREAD_CLOSE)(page);
         await press(page, "F9");
-        await threadAnew(page);
+        await anew(page);
       },
     },
     // The control for it: the page presses the pill itself (the click `o` makes), and the thread is opened anew the same way.
     {
       pair: [
         { key: "control: press the pill (the page itself)", seq: ["F9"], control: true, after: pillGone },
-        { key: "control: open the thread anew (the page itself, after the pill)", seq: ["F10"], control: true, after: threadAnew },
+        { key: "control: close the thread and open it anew (the page itself, after the pill)", seq: ["F10"], control: true, after: anew },
       ],
       reps: FIRST_PILL_REPS,
       // (the host moves the focus to a reply it shows, and the plugin gives it back to the list a frame later: so does the page)
-      before: controls(`document.querySelector(${JSON.stringify(THREAD_PILL)}).click(); requestAnimationFrame(() => ${SIDE_LIST}.focus({ preventScroll: true }))`, THREAD_ANEW),
+      before: controls(`document.querySelector(${JSON.stringify(THREAD_PILL)}).click(); requestAnimationFrame(() => ${SIDE_LIST}.focus({ preventScroll: true }))`, THREAD_CLOSE),
     },
     control("focus the channel's list (the page itself)", "focus the thread's list (the page itself)", `${MAIN_LIST}.focus({ preventScroll: true })`, `${SIDE_LIST}.focus({ preventScroll: true })`),
   ]);
