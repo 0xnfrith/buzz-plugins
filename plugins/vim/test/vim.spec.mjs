@@ -1674,6 +1674,47 @@ test.describe("o in a thread opens and folds the replies to a message", () => {
     await expect.poll(() => branchOf(sideScroller(page), parent)).toMatchObject({ fold: "1 reply", shown: 0 });
   });
 
+  // Only the band the count fills opens the fold. A click on the branch itself above it (the branch's own box, none of its children: the
+  // test sends the event to the branch) does not.
+  test("a click on the branch itself above the count does not open the fold, one on the count does", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await press(page, "o");
+    const parent = app.exact.replies.at(-2).id;
+    await expect.poll(() => cursor(page)).toBe(parent);
+    await press(page, "o");
+    await press(page, "o");
+    await expect.poll(() => branchOf(sideScroller(page), parent)).toMatchObject({ fold: "1 reply", shown: 0 });
+    const clickBranch = (where) =>
+      sideScroller(page).evaluate(
+        (el, [id, where]) => {
+          const branch = el.querySelector(`[data-message-id="${id}"]`).closest("[data-depth]");
+          const box = branch.getBoundingClientRect();
+          const band = parseFloat(getComputedStyle(branch, "::after").height);
+          const clientY = where === "above" ? box.top + 2 : box.bottom - band / 2;
+          branch.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX: box.left + 5, clientY }));
+        },
+        [parent, where],
+      );
+    await clickBranch("above");
+    await page.waitForTimeout(400);
+    expect(await branchOf(sideScroller(page), parent)).toMatchObject({ fold: "1 reply", shown: 0 });
+    await clickBranch("count");
+    await expect.poll(() => branchOf(sideScroller(page), parent)).toMatchObject({ fold: null, open: "true", shown: 1 });
+  });
+
+  // The thread of 80 replies, for a count that tells one step from three (the fixture of the g page keys has two messages).
+  test("Esc cancels a pending count in the thread's list: 3 Esc k moves one reply", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await press(page, "o");
+    await expect.poll(() => cursor(page)).toBe(app.exact.replies.at(-2).id);
+    await press(page, "3", "Escape", "k");
+    await expect.poll(() => cursor(page)).toBe(app.exact.replies.at(-3).id);
+    await page.waitForTimeout(400);
+    expect(await cursor(page)).toBe(app.exact.replies.at(-3).id); // and it stays there: not three steps a moment later
+  });
+
   test("in the channel's list o still opens the thread, also after a thread was closed", async ({ page, app }) => {
     await open(page, app);
     await toRoot(page, app);
@@ -3171,7 +3212,7 @@ test.describe("the g page keys", () => {
   const channelIndex = (page) =>
     page.evaluate(() => [...document.querySelectorAll("button[data-channel-id]")].indexOf(document.activeElement));
   for (const place of ["the channel's list", "the thread's list", "the channel list", "the channel's box", "the thread's box"]) {
-    test(`Esc cancels a pending g and a pending count in ${place}`, async ({ page, app }) => {
+    test(`Esc cancels a pending g${place === "the thread's list" ? "" : " and a pending count"} in ${place}`, async ({ page, app }) => {
       await page.addInitScript(() => {
         localStorage.setItem("buzzodz.plugins.v1", JSON.stringify({ version: 2, enabled: { "fixture.page-placement": true } }));
       });
@@ -3190,8 +3231,8 @@ test.describe("the g page keys", () => {
       // A count is cancelled the same way: 3 Esc k moves one, not three.
       await enter(page, place);
       if (place === "the thread's list") {
-        // The thread of the fixture has two messages: one step and three are the same there. The count is cancelled by the same code
-        // as in the channel's list; here the g is what the test says.
+        // Nothing to check here: the thread of this fixture has two messages, where one step and three are the same. The count in a
+        // thread's list is in the test of the 80-reply thread ("Esc cancels a pending count in the thread's list").
       } else if (place === "the channel's list") {
         const ids = await rowIds(page);
         await shifted(page, "G");
