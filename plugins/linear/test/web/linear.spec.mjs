@@ -1144,6 +1144,28 @@ test("on Linux a newer key kept in the profile while the store was down replaces
   await expect(page.getByText("It is kept in the system secret store (Secret Service). It is not shown again.")).toBeVisible();
 });
 
+test("on a Mac a key added in Terminal after a move that did not work is the one used, and the old plain key is not written over it (Check Keychain)", async ({ page, app }) => {
+  // The old key is in the profile and the Keychain will not take it (as when Buzz was started from a terminal).
+  const fake = await openBoard(page, app, { mac: true, keychainMode: "refuse-add" });
+  await expect(card(page, "DSN-10")).toBeVisible();
+  expect(await savedKey(page)).toBe(fake.keys.good);
+  await openSettings(page);
+  await selectSettingsSection(page, "Linear");
+  await page.getByRole("button", { name: "Move to Keychain" }).click();
+  await expect(page.getByRole("group", { name: "Save the key in the Keychain by hand" })).toBeVisible();
+  // The person runs the command in Terminal with a new key, and presses Check Keychain.
+  await fake.keychain.byHand(fake.keys.other);
+  const written = fake.keychain.adds();
+  const requests = fake.control.log.requests.length;
+  await page.getByRole("button", { name: "Check Keychain" }).click();
+  await expect(page.getByText("Found the key in your Keychain.")).toBeVisible();
+  expect(fake.keychain.kept()).toEqual([fake.keys.other]); // the new key, not the old one
+  expect(fake.keychain.adds()).toBe(written); // nothing written over it
+  expect(await savedKey(page)).toBeNull(); // the old plain copy is gone
+  await expect.poll(() => fake.control.log.requests.length).toBeGreaterThan(requests); // the board starts over with the new key
+  await expect(page.getByText("It is kept in your Keychain. It is not shown again.")).toBeVisible();
+});
+
 test("on a Mac Cancel and Save wait while the key is being written to the Keychain, and the key is the new one when they come back", async ({ page, app }) => {
   // Every call of the stand-in takes 1.2 seconds: after Linear has accepted the key, writing it and reading it back takes a while.
   const fake = await startReplacing(page, app, { mac: true, inKeychain: "good", keychainMode: "slow", keychainDelay: 1200 });

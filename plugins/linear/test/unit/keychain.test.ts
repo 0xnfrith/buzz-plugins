@@ -307,30 +307,45 @@ describe("a key already in the profile (saved by an earlier version)", () => {
     expect(later.place()).toBe("keychain");
   });
 
-  it("takes the profile's key as the newer one when it differs from the Keychain's: moved over it, read back, and only then is the plain copy removed", async () => {
+  it("on a Mac the Keychain's key wins when it differs from the profile's: a plain copy there is always the older one, and goes once the Keychain's key is in use", async () => {
     const box = sandbox();
-    await box.byHand(OLD);
-    box.storage.set(PROFILE_KEY, KEY);
+    await box.byHand(KEY); // the key the person put in the Keychain
+    box.storage.set(PROFILE_KEY, OLD); // an older one, from an earlier version
+    const written = adds(box.calls());
     const keys = box.store();
     await keys.ready;
-    expect([keys.read(), keys.place()]).toEqual([KEY, "keychain"]);
+    expect([keys.read(), keys.place(), box.storage.size]).toEqual([KEY, "keychain", 0]);
     expect(Object.values(box.kept())).toEqual([KEY]);
-    expect(box.storage.size).toBe(0);
-    for (const call of box.calls()) expect(call.join(" ")).not.toContain(KEY);
+    expect(adds(box.calls())).toBe(written); // nothing was written over it
   });
 
-  it("keeps both and uses the profile's key when the Keychain will not take it over the older one", async () => {
+  it("on a Mac a key added in Terminal after a move that did not work is not overwritten by the old plain key (Check Keychain)", async () => {
     const box = sandbox();
-    await box.byHand(OLD);
-    box.storage.set(PROFILE_KEY, KEY);
-    const keys = box.store({ mode: "refuse-add" });
-    await keys.ready;
-    expect([keys.read(), keys.place(), box.storage.get(PROFILE_KEY)]).toEqual([KEY, "profile", KEY]);
-    expect(Object.values(box.kept())).toEqual([OLD]);
-    // The next start has a Keychain that works: the newer key goes in.
+    box.storage.set(PROFILE_KEY, OLD);
+    // Buzz was started from a terminal: `security` waits on it, the deadline ends it, and the move does not work. The old key stays in use, plain.
+    const stuck = createKeyStore(box.profile, { store: "keychain", run: (command, input) => runCommand(command, input, { env: { ...box.env, LINEAR_FAKE_KEYCHAIN_MODE: "terminal" }, deadlineMs: 400 }) });
+    await stuck.ready;
+    expect([stuck.read(), stuck.place(), box.storage.get(PROFILE_KEY)]).toEqual([OLD, "profile", OLD]);
+    // The person runs the command in Terminal with a new key (there, in a terminal, it works), and presses Check Keychain in the same session.
+    await box.byHand(KEY);
+    await stuck.reload();
+    expect([stuck.read(), stuck.place(), box.storage.size]).toEqual([KEY, "keychain", 0]);
+    expect(Object.values(box.kept())).toEqual([KEY]); // the Keychain still holds the new key
+    // And the next start finds the same.
     const later = box.store();
     await later.ready;
     expect([later.read(), later.place(), box.storage.size, Object.values(box.kept())]).toEqual([KEY, "keychain", 0, [KEY]]);
+  }, 20000);
+
+  it("on a Mac the same press of Check Keychain finds nothing to overwrite when the Keychain has no key yet: the plain one is moved as before", async () => {
+    const box = sandbox();
+    box.storage.set(PROFILE_KEY, OLD);
+    const refused = box.store({ mode: "refuse-add" });
+    await refused.ready;
+    expect([refused.read(), refused.place(), box.storage.get(PROFILE_KEY)]).toEqual([OLD, "profile", OLD]);
+    const later = box.store();
+    await later.ready;
+    expect([later.read(), later.place(), box.storage.size, Object.values(box.kept())]).toEqual([OLD, "keychain", 0, [OLD]]);
   });
 
   it("drops the plain copy that a crash between the two steps left beside the same key", async () => {

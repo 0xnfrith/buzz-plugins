@@ -129,17 +129,20 @@ export function createKeyStore(storage: KeyValue, { run, store }: KeyStoreOption
 
   /**
    * Looks for the key: the store first, then the profile. A key in the profile where there is a store is moved to it. When both
-   * hold a key and they differ, the profile's is the newer one: a key reaches the profile only when the store could not be
-   * reached (or, in an earlier version, always), so the store holds an older key. It is moved the same way, and the store keeps
-   * the older key until the read-back says the newer one is there.
+   * hold a key and they differ, which is newer depends on the system. Where a key that the store would not take is kept in the
+   * profile (Linux: `plainFallback`), the profile's is the newer one, written while the store could not be reached, so it is moved
+   * over the store's with the same read-back, the older key staying in the store until the read-back says the newer one is there.
+   * Where nothing is ever kept in the profile (a Mac), a copy there is always an older one, from an earlier version or from a move
+   * that did not work, and the key the person put in the store since wins, whatever tool put it there; the old plain copy goes.
    */
   async function load(initial: boolean): Promise<void> {
     const [before, placeBefore] = [key, place];
     const kept = await readStore();
     const plain = profileCopy();
-    if (kept && (plain === undefined || plain === kept)) {
+    const profileIsNewer = driver?.plainFallback === true;
+    if (kept && (plain === undefined || plain === kept || !profileIsNewer)) {
       [key, place] = [kept, kind];
-      // The same key twice (a crash between "saved" and "deleted"): the copy in the profile goes.
+      // The same key twice (a crash between "saved" and "deleted"), or an older one: the copy in the profile goes, now that the store's key is the one in use.
       if (plain !== undefined) dropProfileCopy();
     } else if (plain !== undefined) {
       [key, place] = [plain, "profile"];

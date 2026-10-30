@@ -316,6 +316,17 @@ describe("a key already in the profile (saved by an earlier version)", () => {
     for (const call of box.calls()) expect(call.join(" ")).not.toContain(KEY);
   });
 
+  it("on Linux the same two keys end the other way round from a Mac: the profile's is the newer one, because a key reaches it there when the store could not be reached", async () => {
+    // On a Mac, with the Keychain holding KEY and the profile OLD, the Keychain's key wins (see keychain.test.ts). Here the
+    // same state is read as: OLD was pasted while the store was down and is newer, so it goes over the store's key.
+    const box = sandbox();
+    await box.direct(KEY);
+    box.storage.set(PROFILE_KEY, OLD);
+    const keys = box.store();
+    await keys.ready;
+    expect([keys.read(), keys.place(), box.storage.size, box.kept()]).toEqual([OLD, "secret-service", 0, [OLD]]);
+  });
+
   it("keeps both and uses the profile's key when the store will not take it over the older one", async () => {
     const box = sandbox();
     await box.direct(OLD);
