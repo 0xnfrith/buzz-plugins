@@ -397,7 +397,7 @@ export function apply(ctx) {
   }
 
   /** One saved page in the Settings card: its name and address, what it is (default, in the top bar), and what can be done to it. */
-  function SavedPage({ link, isDefault, isPinned }) {
+  function SavedPage({ link, isDefault, isPinned, onRemove, renameRef }) {
     const [editing, setEditing] = React.useState(false);
     const [draft, setDraft] = React.useState(link.name);
     const [confirming, setConfirming] = React.useState(false);
@@ -460,14 +460,14 @@ export function apply(ctx) {
                 "div",
                 { className: "megatech-artifacts-set__confirm", role: "group", "aria-label": `Remove ${label}?` },
                 h("span", null, "Remove this page?"),
-                h("button", { type: "button", className: "megatech-artifacts-set__btn megatech-artifacts-set__btn--danger-solid", onClick: () => store.remove(link.id) }, "Remove"),
+                h("button", { type: "button", className: "megatech-artifacts-set__btn megatech-artifacts-set__btn--danger-solid", onClick: () => onRemove(link.id) }, "Remove"),
                 h("button", { type: "button", className: "megatech-artifacts-set__btn", autoFocus: true, onClick: keep }, "Keep"),
               ),
             )
           : h(
               "div",
               { className: "megatech-artifacts-set__actions" },
-              h("button", { type: "button", ref: renameButton, className: "megatech-artifacts-set__btn", "aria-label": `Rename ${label}`, onClick: () => setEditing(true) }, "Rename"),
+              h("button", { type: "button", ref: (element) => { renameButton.current = element; renameRef(element); }, className: "megatech-artifacts-set__btn", "aria-label": `Rename ${label}`, onClick: () => setEditing(true) }, "Rename"),
               isDefault ? null : h("button", { type: "button", className: "megatech-artifacts-set__btn", "aria-label": `Make default: ${label}`, onClick: () => store.setDefault(link.id) }, "Make default"),
               isPinned
                 ? h("button", { type: "button", className: "megatech-artifacts-set__btn", "aria-label": `Unpin from the top bar: ${label}`, onClick: () => store.unpin(link.id) }, "Unpin")
@@ -488,6 +488,17 @@ export function apply(ctx) {
     const [name, setName] = React.useState("");
     const [address, setAddress] = React.useState("");
     const [error, setError] = React.useState("");
+    const renameButtons = React.useRef(new Map()); // each card's Rename button by saved id, so focus can go to one
+    const nameField = React.useRef(null); // the first field of the add form
+    // The button that asked "Remove this page?" goes away with its card, and the focus would fall to the page's body. Before the card goes it
+    // moves to a card that stays (the next one, else the one before) and, with none left, to the add form.
+    const removePage = (id) => {
+      const at = links.findIndex((item) => item.id === id);
+      const others = [...links.slice(at + 1), ...links.slice(0, at).reverse()];
+      const target = others.map((item) => renameButtons.current.get(item.id)).find(Boolean) ?? nameField.current;
+      target?.focus();
+      store.remove(id);
+    };
     const add = (event) => {
       event.preventDefault();
       const result = store.add(name, address);
@@ -510,7 +521,7 @@ export function apply(ctx) {
       h(
         "form",
         { className: "megatech-artifacts-set__add", onSubmit: add, noValidate: true },
-        h("label", { className: "megatech-artifacts-set__field" }, h("span", { className: "megatech-artifacts-set__label" }, "Name (optional)"), h("input", { className: "megatech-artifacts-set__input", value: name, maxLength: MAX_NAME, placeholder: "Quarterly report", onChange: (event) => setName(event.target.value) })),
+        h("label", { className: "megatech-artifacts-set__field" }, h("span", { className: "megatech-artifacts-set__label" }, "Name (optional)"), h("input", { className: "megatech-artifacts-set__input", value: name, maxLength: MAX_NAME, placeholder: "Quarterly report", ref: nameField, onChange: (event) => setName(event.target.value) })),
         h(
           "label",
           { className: "megatech-artifacts-set__field" },
@@ -535,7 +546,7 @@ export function apply(ctx) {
             React.Fragment,
             null,
             h("div", { className: "megatech-artifacts-set__count", role: "status" }, h("b", null, `${links.length} saved`), h("i", { "aria-hidden": "true" }), h("span", null, `${pinnedIds.length} in the top bar`)),
-            h("ul", { className: "megatech-artifacts-set__list" }, links.map((link) => h(SavedPage, { key: link.id, link, isDefault: link.id === defaultId, isPinned: pinnedIds.includes(link.id) }))),
+            h("ul", { className: "megatech-artifacts-set__list" }, links.map((link) => h(SavedPage, { key: link.id, link, isDefault: link.id === defaultId, isPinned: pinnedIds.includes(link.id), onRemove: removePage, renameRef: (element) => (element ? renameButtons.current.set(link.id, element) : renameButtons.current.delete(link.id)) }))),
           )
         : h("div", { className: "megatech-artifacts-set__empty" }, h(WindowGlyph), h("p", { className: "megatech-artifacts-set__empty-title" }, "No saved pages yet"), h("p", { className: "megatech-artifacts-set__empty-text" }, "Add one above. A Claude artifact link works well: ", h("code", null, "https://claude.ai/artifact/…"))),
       h("p", { className: "megatech-artifacts-set__foot" }, "Kept on this computer · never sent anywhere"),
