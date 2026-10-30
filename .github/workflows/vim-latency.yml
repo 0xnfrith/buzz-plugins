@@ -64,16 +64,17 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: The shards
         id: shards
+        # `timeout` is in minutes: about twice the longest a shard has taken on a runner, setup included (message list 15, the others 4 to 6).
         # `grep` picks a shard's tests by title (a regular expression); "budget: the table" is in every one, because the table of a
         # shard's rows and its summary are written by that test. `invert` leaves tests out. "rest" names none and leaves out the others.
         run: |
           shards=$(jq -c . <<'JSON'
           [
-            {"id": "channel-list", "name": "channel list", "grep": "budget: (channel list|the table$)", "invert": "", "timeout": 30},
-            {"id": "message-list", "name": "message list", "grep": "budget: (message list \\(|the table$)", "invert": "", "timeout": 30},
-            {"id": "thread-pane", "name": "thread pane", "grep": "budget: (thread pane|the table$)", "invert": "", "timeout": 30},
-            {"id": "settings", "name": "Settings", "grep": "budget: (Settings dialog|the table$)", "invert": "", "timeout": 30},
-            {"id": "rest", "name": "rest", "grep": "", "invert": "budget: (channel list|message list \\(|thread pane|Settings dialog)", "timeout": 30}
+            {"id": "channel-list", "name": "channel list", "grep": "budget: (channel list|the table$)", "invert": "", "timeout": 20},
+            {"id": "message-list", "name": "message list", "grep": "budget: (message list \\(|the table$)", "invert": "", "timeout": 35},
+            {"id": "thread-pane", "name": "thread pane", "grep": "budget: (thread pane|the table$)", "invert": "", "timeout": 20},
+            {"id": "settings", "name": "Settings", "grep": "budget: (Settings dialog|the table$)", "invert": "", "timeout": 20},
+            {"id": "rest", "name": "rest", "grep": "", "invert": "budget: (channel list|message list \\(|thread pane|Settings dialog)", "timeout": 20}
           ]
           JSON
           )
