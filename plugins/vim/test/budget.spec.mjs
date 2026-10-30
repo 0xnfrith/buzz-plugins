@@ -451,6 +451,15 @@ const markSidebarScroller = (page) =>
 const settingsShown = (page) => page.waitForFunction(() => !!document.querySelector('nav[aria-label="Settings sections"] [aria-current]'), null, { timeout: 10_000 });
 const settingsGone = (page) => page.waitForFunction(() => !document.querySelector('nav[aria-label="Settings sections"]'), null, { timeout: 10_000 });
 const CLOSE_SETTINGS = `document.querySelector('button[aria-label="Close Settings"]').click()`;
+// The pages of the top bar, for g1 and g2: the entry that is selected (the page is drawn by then), and the control's way of opening one.
+const topBarIs = (name) => (page) =>
+  page.waitForFunction(
+    (name) => document.querySelector('[role="tablist"][aria-label="Topbar pages"] [role="tab"][aria-selected="true"]')?.textContent?.trim() === name && (name !== "Messages" || !!document.querySelector("[data-sidebar-section] button[data-channel-id]")),
+    name,
+    { timeout: 10_000 },
+  );
+const OPEN_REMINDERS = `window.fixtureNavigation.open({ version: 1, kind: "page", pluginId: "buzz.reminders", pageId: "reminders" }, { focus: "preserve" })`;
+const OPEN_MESSAGES = `window.fixtureNavigation.open({ version: 1, kind: "page", pluginId: "buzz.channels", pageId: "channels" }, { focus: "preserve" })`;
 surface("sidebar", "channel list (130 channels)", async ({ page, app, rows }) => {
   const OPEN_MANAGE_PLUGINS = `window.fixtureNavigation.open({ version: 1, kind: "settings", section: "plugins", scope: { viewer: ${JSON.stringify(app.viewer)}, communityOrigin: "https://primary.example" } })`;
   await markSidebarScroller(page);
@@ -487,6 +496,24 @@ surface("sidebar", "channel list (130 channels)", async ({ page, app, rows }) =>
       `const rows = ${CHANNEL_ROWS}; const row = rows[Math.max(0, rows.indexOf(document.activeElement) - 1)]; row.focus({ preventScroll: true }); row.scrollIntoView({ block: "nearest" });`,
       `const rows = ${CHANNEL_ROWS}; const row = rows[Math.min(rows.length - 1, rows.indexOf(document.activeElement) + 1)]; row.focus({ preventScroll: true }); row.scrollIntoView({ block: "nearest" });`,
     ),
+    // g2 opens the second entry of the top bar (Reminders) and g1 the first (Messages: the channel list is back), and the row alternates them. The
+    // page is the app's to draw: the controls are the page asking the host for the same two pages itself.
+    {
+      pair: [
+        { key: "g2: the second entry of the top bar", seq: ["g", "2"], after: topBarIs("Reminders") },
+        { key: "g1: the first entry of the top bar", seq: ["g", "1"], after: topBarIs("Messages") },
+      ],
+      crosses: true,
+      reps: SLOW_REPS,
+    },
+    {
+      pair: [
+        { key: "control: open Reminders (the page itself)", seq: ["F9"], control: true, after: topBarIs("Reminders") },
+        { key: "control: open Messages (the page itself)", seq: ["F10"], control: true, after: topBarIs("Messages") },
+      ],
+      reps: SLOW_REPS,
+      before: controls(OPEN_REMINDERS, OPEN_MESSAGES),
+    },
   ]);
 }, `a.closest("[data-sidebar-section]")`);
 

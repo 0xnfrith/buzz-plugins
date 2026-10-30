@@ -16,10 +16,13 @@ const pageRank = (page: PageInfo) => {
 };
 const byShell = (a: PageInfo, b: PageInfo) =>
   pageRank(a) - pageRank(b) || pageName(a).localeCompare(pageName(b), "en") || a.key.localeCompare(b.key, "en");
+const onTopBar = (page: PageInfo) => TOPBAR.includes(page.key) || page.placement === "topbar";
+// The top bar left to right, as the host orders it: Messages, Reminders, then every other page placed there, by name (the
+// bundled Agents and Workflows, and the pages plugins pin to it, in between).
+const topBar = () => ctx.pages.snapshot().filter((page) => page.primary && onTopBar(page)).sort(byShell);
 const pageList = () => {
   const pages = ctx.pages.snapshot().filter((page) => page.primary);
-  const top = (page: PageInfo) => TOPBAR.includes(page.key) || page.placement === "topbar";
-  return [...pages.filter(top).sort(byShell), ...pages.filter((page) => !top(page)).sort(byShell)];
+  return [...pages.filter(onTopBar).sort(byShell), ...pages.filter((page) => !onTopBar(page)).sort(byShell)];
 };
 const openPage = (page: PageInfo) =>
   void ctx.navigation
@@ -55,10 +58,15 @@ const openSettings = (section?: string) => {
   })().catch(() => {});
 };
 // The letter after a `g`: t and T walk the pages, s opens Settings, p opens Settings on Manage plugins (a section the
-// host's navigation names: `plugins`), any other letter picks the page whose name starts with it (gi Inbox, gm Messages). Both the lists (through the shortcut service) and
-// the message box's NORMAL mode (its own key handler) come here: one NORMAL mode, one set of g keys.
+// host's navigation names: `plugins`), a digit opens that entry of the top bar (g1 the first, counted from the left; there are
+// no more than nine keys), any other letter picks the page whose name starts with it (gi Inbox, gm Messages). Both the lists
+// (through the shortcut service) and the message box's NORMAL mode (its own key handler) come here: one NORMAL mode, one set of g keys.
 export const goPage = (letter: string) => {
   clearPending();
+  if (/^[1-9]$/.test(letter)) {
+    const page = topBar()[Number(letter) - 1];
+    return page ? openPage(page) : undefined;
+  }
   if (letter === "t" || letter === "T") return cyclePage(letter === "t" ? 1 : -1);
   if (letter === "s") return openSettings();
   if (letter === "p") return openSettings("plugins");
@@ -66,6 +74,6 @@ export const goPage = (letter: string) => {
   if (page) openPage(page);
 };
 // The letters the message box takes after a g (the others are its own gg, ge and gE).
-export const PAGE_KEYS = "imarwvtTsp";
+export const PAGE_KEYS = "imarwvtTsp123456789";
 // Keys already bound for something else call this first when `g` is pending.
 export const afterG = (letter: string, run: () => unknown) => () => (state.operator === "g" ? goPage(letter) : run());
