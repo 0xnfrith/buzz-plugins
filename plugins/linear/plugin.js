@@ -68,15 +68,44 @@ function retryAt(headers, now) {
 }
 // src/linear/keys.ts
 var KEY = "megatech.linear.api-key.v1";
+/** How each store is driven, and what a save that is not confirmed means there. */
+var STORES = {
+	keychain: {
+		read: "keychain-read",
+		save: "keychain-save",
+		delete: "keychain-delete",
+		input: (value) => `${value}\n${value}\n`,
+		plainFallback: false
+	},
+	"secret-service": {
+		read: "secret-read",
+		save: "secret-save",
+		delete: "secret-delete",
+		input: (value) => value,
+		plainFallback: true
+	}
+};
+/** What the card calls each store. */
+var STORE_NAME = {
+	keychain: "your Keychain",
+	"secret-service": "the system secret store (Secret Service)"
+};
+/** Which store this system has, from what the page says it runs on. */
+function detectStore(platform, userAgent) {
+	const [p, ua] = [platform ?? "", userAgent ?? ""];
+	if (/^Mac/i.test(p) || /Macintosh/.test(ua)) return "keychain";
+	if ((/^Linux/i.test(p) || /Linux/.test(ua)) && !/Android/i.test(ua)) return "secret-service";
+}
 var withoutLineBreak = (text) => text?.replace(/\r?\n$/, "");
-function createKeyStore(storage, { run, keychain = false } = {}) {
+function createKeyStore(storage, { run, store } = {}) {
 	const listeners = /* @__PURE__ */ new Set();
 	let version = 0;
 	const notify = (restart) => {
 		if (restart) version += 1;
 		listeners.forEach((listener) => listener());
 	};
-	const usable = keychain && run !== void 0;
+	const kind = run !== void 0 ? store : void 0;
+	const driver = kind ? STORES[kind] : void 0;
 	const secret = (command, input) => run ? run(command, input).catch(() => null) : Promise.resolve(null);
 	const profileCopy = () => {
 		try {
@@ -98,25 +127,26 @@ function createKeyStore(storage, { run, keychain = false } = {}) {
 		tail = next.catch(() => void 0);
 		return next;
 	};
-	/** Puts a key in the Keychain and reads it back to be sure: the program's own exit status is not trusted to say. */
-	async function toKeychain(value) {
-		if (!usable) return false;
-		await secret("keychain-save", `${value}\n${value}\n`);
-		if (withoutLineBreak(await secret("keychain-read")) !== value) return false;
+	const readStore = async () => driver ? withoutLineBreak(await secret(driver.read)) || void 0 : void 0;
+	/** Puts a key in the store and reads it back to be sure: the program's own exit status is not trusted to say. */
+	async function toStore(value) {
+		if (!driver) return false;
+		await secret(driver.save, driver.input(value));
+		if (await readStore() !== value) return false;
 		dropProfileCopy();
 		return true;
 	}
-	/** Looks for the key: the Keychain first, then the profile. A key found in the profile on a Mac is moved to the Keychain. */
+	/** Looks for the key: the store first, then the profile. A key found in the profile where there is a store is moved to it. */
 	async function load(initial) {
 		const [before, placeBefore] = [key, place];
-		const kept = usable ? withoutLineBreak(await secret("keychain-read")) || void 0 : void 0;
+		const kept = await readStore();
 		const plain = profileCopy();
 		if (kept) {
-			[key, place] = [kept, "keychain"];
+			[key, place] = [kept, kind];
 			if (plain !== void 0) dropProfileCopy();
 		} else if (plain !== void 0) {
 			[key, place] = [plain, "profile"];
-			if (usable && await toKeychain(plain)) place = "keychain";
+			if (driver && await toStore(plain)) place = kind;
 		} else [key, place] = [void 0, void 0];
 		if (initial || key !== before || place !== placeBefore) notify(!initial && key !== before);
 	}
@@ -125,44 +155,57 @@ function createKeyStore(storage, { run, keychain = false } = {}) {
 		version: () => version,
 		/** Settles when the first look for the key (and the move out of the profile) is over. */
 		ready: serial(() => load(true)),
-		/** Looks again (the Keychain may have been given the key from outside). */
+		/** Looks again (the store may have been given the key from outside). */
 		reload: () => serial(() => load(false)),
 		/** The saved key, for the client only. Nothing else should hold on to it. */
 		read: () => key,
 		has: () => key !== void 0,
 		place: () => place,
-		keychainAvailable: () => usable,
+		/** The store this system has and the plugin can drive, if any. */
+		store: () => kind,
 		/**
-		* Keeps a key: in the Keychain where there is one (false when it would not take it, with nothing kept and a saved key
-		* unchanged), otherwise in the profile as plain text.
+		* Keeps a key, in the store where there is one, otherwise in the profile as plain text. When the store does not confirm it:
+		* on a Mac nothing is kept (`kept: false`, a saved key unchanged); on Linux the key goes to the profile, labelled
+		* (`degraded: true`), unless the store already holds a key, which a plain copy would only shadow (`kept: false`).
 		*/
 		save: (value) => serial(async () => {
-			if (usable) {
-				if (!await toKeychain(value)) return false;
-				[key, place] = [value, "keychain"];
+			let degraded = false;
+			if (driver) {
+				if (await toStore(value)) [key, place] = [value, kind];
+				else if (driver.plainFallback && place !== kind) {
+					storage.setItem(KEY, value);
+					[key, place] = [value, "profile"];
+					degraded = true;
+				} else return {
+					kept: false,
+					degraded: false
+				};
 			} else {
 				storage.setItem(KEY, value);
 				[key, place] = [value, "profile"];
 			}
 			notify(true);
-			return true;
+			return {
+				kept: true,
+				degraded
+			};
 		}),
-		/** Moves a key kept in the profile to the Keychain; false when it would not take it and the key stays where it was. */
-		moveToKeychain: () => serial(async () => {
-			if (key === void 0 || place !== "profile" || !await toKeychain(key)) return false;
-			place = "keychain";
+		/** Moves a key kept in the profile to the store; false when it would not take it and the key stays where it was. */
+		moveToStore: () => serial(async () => {
+			if (key === void 0 || place !== "profile" || !await toStore(key)) return false;
+			place = kind;
 			notify(false);
 			return true;
 		}),
-		/** Removes the key from the Keychain and the profile. False when one still has it afterwards (it then stays in use). */
+		/** Removes the key from the store and the profile. False when one still has it afterwards (it then stays in use). */
 		clear: () => serial(async () => {
 			dropProfileCopy();
 			let left = profileCopy();
 			let where = left === void 0 ? void 0 : "profile";
-			if (usable) {
-				await secret("keychain-delete");
-				const kept = withoutLineBreak(await secret("keychain-read")) || void 0;
-				if (kept) [left, where] = [kept, "keychain"];
+			if (driver) {
+				await secret(driver.delete);
+				const kept = await readStore();
+				if (kept) [left, where] = [kept, kind];
 			}
 			[key, place] = [left, where];
 			notify(true);
@@ -1798,7 +1841,7 @@ function createSettingsCard({ keys, client }) {
 	return function LinearSettings() {
 		const saved = React.useSyncExternalStore(keys.subscribe, () => keys.has());
 		const place = React.useSyncExternalStore(keys.subscribe, () => keys.place());
-		const keychain = keys.keychainAvailable();
+		const store = keys.store();
 		const [draft, setDraft] = React.useState("");
 		const [replacing, setReplacing] = React.useState(false);
 		const [status, setStatus] = React.useState({ kind: "idle" });
@@ -1851,9 +1894,9 @@ function createSettingsCard({ keys, client }) {
 			const ruling = judgeKey(verdict.kind, keys.has(), verdict.text);
 			show(verdict, ruling.message ?? verdict.text);
 			if (!ruling.save) return;
-			let kept;
+			let result;
 			try {
-				kept = await keys.save(checked.key);
+				result = await keys.save(checked.key);
 			} catch {
 				if (alive.current) setStatus({
 					kind: "error",
@@ -1861,16 +1904,24 @@ function createSettingsCard({ keys, client }) {
 				});
 				return;
 			}
-			if (!kept) {
-				if (alive.current) {
+			if (!result.kept) {
+				if (!alive.current) return;
+				if (store === "keychain") {
 					setByHand(true);
 					setStatus({
 						kind: "error",
 						text: `The Keychain would not take the key from here, and it has not been kept anywhere.${keys.has() ? " Your saved key is unchanged." : ""}`
 					});
-				}
+				} else setStatus({
+					kind: "error",
+					text: "The system secret store would not take the new key, so your saved key is unchanged."
+				});
 				return;
 			}
+			if (result.degraded && alive.current) setStatus({
+				kind: "error",
+				text: "The system secret store (Secret Service) did not take the key from here, so it is kept in this app's profile, as plain text: any other plugin you install could read it. Is a Secret Service such as gnome-keyring running and unlocked? Buzz tries again each time it starts, or press Move to secret store."
+			});
 			setDraft("");
 			setReplacing(false);
 		};
@@ -1891,19 +1942,19 @@ function createSettingsCard({ keys, client }) {
 		};
 		const move = async () => {
 			setStatus({ kind: "checking" });
-			const moved = await keys.moveToKeychain();
+			const moved = await keys.moveToStore();
 			if (!alive.current) return;
 			if (moved) {
 				setByHand(false);
 				setStatus({
 					kind: "ok",
-					text: "Moved to your Keychain. The copy in this app's profile is gone."
+					text: `Moved to ${store ? STORE_NAME[store] : "the store"}. The copy in this app's profile is gone.`
 				});
 			} else {
-				setByHand(true);
+				setByHand(store === "keychain");
 				setStatus({
 					kind: "error",
-					text: "The Keychain would not take the key from here. It is still in this app's profile, as plain text."
+					text: `${store === "keychain" ? "The Keychain" : "The system secret store"} would not take the key from here. It is still in this app's profile, as plain text.`
 				});
 			}
 		};
@@ -1912,7 +1963,7 @@ function createSettingsCard({ keys, client }) {
 			if (!alive.current) return;
 			setStatus(gone ? { kind: "idle" } : {
 				kind: "error",
-				text: keys.place() === "keychain" ? "The Keychain would not give the key up. Remove it in Keychain Access (search for buzz-linear)." : "This app could not remove the key from its profile."
+				text: keys.place() === "keychain" ? "The Keychain would not give the key up. Remove it in Keychain Access (search for buzz-linear)." : keys.place() === "secret-service" ? "The system secret store would not give the key up. Remove it with `secret-tool clear service buzz-linear account linear`, or in your keyring's own app (Passwords and Keys, KWalletManager)." : "This app could not remove the key from its profile."
 			});
 			setReplacing(false);
 			setByHand(false);
@@ -1925,7 +1976,7 @@ function createSettingsCard({ keys, client }) {
 		}, /* @__PURE__ */ React.createElement("p", null, "Shows your Linear issues as a board. Each person pastes their own personal API key; it is kept on this computer and sent only to Linear."), saved && !replacing && /* @__PURE__ */ React.createElement("p", {
 			className: "mtl-saved",
 			"data-place": place
-		}, /* @__PURE__ */ React.createElement("strong", null, "Key saved."), " ", place === "keychain" ? "It is kept in your Keychain. It is not shown again." : keychain ? "It is in this app's profile, as plain text, because the Keychain would not take it yet (it is tried again each time Buzz starts). Any other plugin you install could read it. It is not shown again." : "It is in this app's profile, as plain text: any other plugin you install could read it. It is not shown again."), showInput && /* @__PURE__ */ React.createElement("form", {
+		}, /* @__PURE__ */ React.createElement("strong", null, "Key saved."), " ", place === "keychain" || place === "secret-service" ? `It is kept in ${STORE_NAME[place]}. It is not shown again.` : store ? `It is in this app's profile, as plain text, because ${store === "keychain" ? "the Keychain" : "the system secret store (Secret Service)"} would not take it yet (it is tried again each time Buzz starts). Any other plugin you install could read it. It is not shown again.` : "It is in this app's profile, as plain text, because this system has no secret store the plugin can use: any other plugin you install could read it. It is not shown again."), showInput && /* @__PURE__ */ React.createElement("form", {
 			onSubmit: save,
 			className: "mtl-key-form"
 		}, /* @__PURE__ */ React.createElement("label", { htmlFor: "mtl-key" }, "Personal API key"), /* @__PURE__ */ React.createElement("input", {
@@ -1960,13 +2011,13 @@ function createSettingsCard({ keys, client }) {
 			className: "mtl-button",
 			disabled: status.kind === "checking",
 			onClick: async () => show(await ask())
-		}, "Test connection"), keychain && place === "profile" && /* @__PURE__ */ React.createElement("button", {
+		}, "Test connection"), store && place === "profile" && /* @__PURE__ */ React.createElement("button", {
 			type: "button",
 			className: "mtl-button",
 			"data-primary": true,
 			disabled: status.kind === "checking",
 			onClick: () => void move()
-		}, "Move to Keychain"), /* @__PURE__ */ React.createElement("button", {
+		}, store === "keychain" ? "Move to Keychain" : "Move to secret store"), /* @__PURE__ */ React.createElement("button", {
 			type: "button",
 			className: "mtl-button",
 			onClick: () => setReplacing(true)
@@ -1981,7 +2032,7 @@ function createSettingsCard({ keys, client }) {
 			href: "https://linear.app/settings/account/security",
 			target: "_blank",
 			rel: "noopener noreferrer"
-		}, "Settings, Account, Security & access"), ". Give it Write access (Read comes with it): Write is what lets a dragged card change state. If Linear lets you limit the key to certain teams, limit it to the teams you use."), keychain ? /* @__PURE__ */ React.createElement("p", { className: "mtl-muted" }, "On a Mac the key is kept in your Keychain, in an item named buzz-linear, not in this app's profile. Buzz plugins are not sandboxed: a plugin that declares the ", /* @__PURE__ */ React.createElement("code", null, "security"), " program could read it too, and its install review lists that. Install only plugins you trust.") : /* @__PURE__ */ React.createElement("p", { className: "mtl-muted" }, "On this system the key is kept on this computer, in this app's profile, as plain text. Buzz plugins are not sandboxed, so any other plugin you install could read it: install only plugins you trust."));
+		}, "Settings, Account, Security & access"), ". Give it Write access (Read comes with it): Write is what lets a dragged card change state. If Linear lets you limit the key to certain teams, limit it to the teams you use."), store === "keychain" ? /* @__PURE__ */ React.createElement("p", { className: "mtl-muted" }, "On a Mac the key is kept in your Keychain, in an item named buzz-linear, not in this app's profile. Buzz plugins are not sandboxed: a plugin that declares the ", /* @__PURE__ */ React.createElement("code", null, "security"), " program could read it too, and its install review lists that. Install only plugins you trust.") : store === "secret-service" ? /* @__PURE__ */ React.createElement("p", { className: "mtl-muted" }, "On Linux the key is kept in the system secret store (the Secret Service: gnome-keyring, KWallet or another), in an item with the attributes service buzz-linear and account linear, not in this app's profile. Buzz plugins are not sandboxed: a plugin that declares the ", /* @__PURE__ */ React.createElement("code", null, "secret-tool"), " ", "program could read it too, and its install review lists that. If no Secret Service is running, the key is kept in this app's profile as plain text instead, and this card says so. Install only plugins you trust.") : /* @__PURE__ */ React.createElement("p", { className: "mtl-muted" }, "On this system the key is kept on this computer, in this app's profile, as plain text. Buzz plugins are not sandboxed, so any other plugin you install could read it: install only plugins you trust."));
 	};
 }
 // src/ui/styles.ts
@@ -2154,9 +2205,8 @@ var inject = [
 ];
 function apply(ctx) {
 	provideReact(ctx.react);
-	const mac = /^Mac/i.test(navigator.platform ?? "") || /Macintosh/.test(navigator.userAgent ?? "");
 	const keys = createKeyStore(window.localStorage, {
-		keychain: mac,
+		store: detectStore(navigator.platform, navigator.userAgent),
 		run: (command, input) => ctx.host.runCommand(command, input)
 	});
 	const client = createClient((request) => ctx.host.request(request), async () => {

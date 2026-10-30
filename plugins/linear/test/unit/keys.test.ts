@@ -26,7 +26,7 @@ describe("key store, where there is no Keychain", () => {
     const seen: number[] = [];
     const stop = keys.subscribe(() => seen.push(keys.version()));
     expect(keys.has()).toBe(false);
-    expect(await keys.save("test-key-good")).toBe(true);
+    expect(await keys.save("test-key-good")).toEqual({ kept: true, degraded: false });
     expect([keys.read(), keys.place()]).toEqual(["test-key-good", "profile"]);
     expect(await keys.clear()).toBe(true);
     expect(keys.has()).toBe(false);
@@ -42,7 +42,7 @@ describe("key store, where there is no Keychain", () => {
     expect(keys.has()).toBe(false); // not before the first look has finished
     await keys.ready;
     expect([keys.read(), keys.place()]).toEqual(["test-key-good", "profile"]);
-    expect(keys.keychainAvailable()).toBe(false);
+    expect(keys.store()).toBeUndefined();
     expect(keys.version()).toBe(0); // the first look restarts nothing
   });
 

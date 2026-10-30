@@ -1,6 +1,6 @@
 import { React } from "../react";
 import { LinearError, type LinearClient } from "../linear/client";
-import { KEYCHAIN_TERMINAL_COMMAND, checkKey, judgeKey, type KeyStore } from "../linear/keys";
+import { KEYCHAIN_TERMINAL_COMMAND, STORE_NAME, checkKey, judgeKey, type KeyStore } from "../linear/keys";
 import { VIEWER } from "../linear/queries";
 
 type Status =
@@ -17,11 +17,11 @@ export function createSettingsCard({ keys, client }: { keys: KeyStore; client: L
   return function LinearSettings() {
     const saved = React.useSyncExternalStore(keys.subscribe, () => keys.has());
     const place = React.useSyncExternalStore(keys.subscribe, () => keys.place());
-    const keychain = keys.keychainAvailable();
+    const store = keys.store();
     const [draft, setDraft] = React.useState("");
     const [replacing, setReplacing] = React.useState(false);
     const [status, setStatus] = React.useState<Status>({ kind: "idle" });
-    // The Keychain would not take a key: nothing was kept, and the card says how to put it there by hand.
+    // The Keychain would not take a key (on a Mac): nothing was kept, and the card says how to put it there by hand.
     const [byHand, setByHand] = React.useState(false);
     const alive = React.useRef(true);
     React.useEffect(() => {
@@ -63,22 +63,32 @@ export function createSettingsCard({ keys, client }: { keys: KeyStore; client: L
       const ruling = judgeKey(verdict.kind, keys.has(), verdict.text);
       show(verdict, ruling.message ?? verdict.text);
       if (!ruling.save) return;
-      let kept: boolean;
+      let result: { kept: boolean; degraded: boolean };
       try {
-        kept = await keys.save(checked.key);
+        result = await keys.save(checked.key);
       } catch {
         if (alive.current) setStatus({ kind: "error", text: "This app could not store the key." });
         return;
       }
-      if (!kept) {
-        if (alive.current) {
+      if (!result.kept) {
+        if (!alive.current) return;
+        if (store === "keychain") {
           setByHand(true);
           setStatus({
             kind: "error",
             text: `The Keychain would not take the key from here, and it has not been kept anywhere.${keys.has() ? " Your saved key is unchanged." : ""}`,
           });
+        } else {
+          // Only when the store already holds a key: a plain copy beside it would be shadowed by it, and the new key lost.
+          setStatus({ kind: "error", text: "The system secret store would not take the new key, so your saved key is unchanged." });
         }
         return;
+      }
+      if (result.degraded && alive.current) {
+        setStatus({
+          kind: "error",
+          text: "The system secret store (Secret Service) did not take the key from here, so it is kept in this app's profile, as plain text: any other plugin you install could read it. Is a Secret Service such as gnome-keyring running and unlocked? Buzz tries again each time it starts, or press Move to secret store.",
+        });
       }
       setDraft("");
       setReplacing(false);
@@ -97,14 +107,17 @@ export function createSettingsCard({ keys, client }: { keys: KeyStore; client: L
 
     const move = async () => {
       setStatus({ kind: "checking" });
-      const moved = await keys.moveToKeychain();
+      const moved = await keys.moveToStore();
       if (!alive.current) return;
       if (moved) {
         setByHand(false);
-        setStatus({ kind: "ok", text: "Moved to your Keychain. The copy in this app's profile is gone." });
+        setStatus({ kind: "ok", text: `Moved to ${store ? STORE_NAME[store] : "the store"}. The copy in this app's profile is gone.` });
       } else {
-        setByHand(true);
-        setStatus({ kind: "error", text: "The Keychain would not take the key from here. It is still in this app's profile, as plain text." });
+        setByHand(store === "keychain");
+        setStatus({
+          kind: "error",
+          text: `${store === "keychain" ? "The Keychain" : "The system secret store"} would not take the key from here. It is still in this app's profile, as plain text.`,
+        });
       }
     };
 
@@ -119,7 +132,9 @@ export function createSettingsCard({ keys, client }: { keys: KeyStore; client: L
               text:
                 keys.place() === "keychain"
                   ? "The Keychain would not give the key up. Remove it in Keychain Access (search for buzz-linear)."
-                  : "This app could not remove the key from its profile.",
+                  : keys.place() === "secret-service"
+                    ? "The system secret store would not give the key up. Remove it with `secret-tool clear service buzz-linear account linear`, or in your keyring's own app (Passwords and Keys, KWalletManager)."
+                    : "This app could not remove the key from its profile.",
             },
       );
       setReplacing(false);
@@ -137,11 +152,11 @@ export function createSettingsCard({ keys, client }: { keys: KeyStore; client: L
         {saved && !replacing && (
           <p className="mtl-saved" data-place={place}>
             <strong>Key saved.</strong>{" "}
-            {place === "keychain"
-              ? "It is kept in your Keychain. It is not shown again."
-              : keychain
-                ? "It is in this app's profile, as plain text, because the Keychain would not take it yet (it is tried again each time Buzz starts). Any other plugin you install could read it. It is not shown again."
-                : "It is in this app's profile, as plain text: any other plugin you install could read it. It is not shown again."}
+            {place === "keychain" || place === "secret-service"
+              ? `It is kept in ${STORE_NAME[place]}. It is not shown again.`
+              : store
+                ? `It is in this app's profile, as plain text, because ${store === "keychain" ? "the Keychain" : "the system secret store (Secret Service)"} would not take it yet (it is tried again each time Buzz starts). Any other plugin you install could read it. It is not shown again.`
+                : "It is in this app's profile, as plain text, because this system has no secret store the plugin can use: any other plugin you install could read it. It is not shown again."}
           </p>
         )}
         {showInput && (
@@ -189,9 +204,9 @@ export function createSettingsCard({ keys, client }: { keys: KeyStore; client: L
             <button type="button" className="mtl-button" disabled={status.kind === "checking"} onClick={async () => show(await ask())}>
               Test connection
             </button>
-            {keychain && place === "profile" && (
+            {store && place === "profile" && (
               <button type="button" className="mtl-button" data-primary disabled={status.kind === "checking"} onClick={() => void move()}>
-                Move to Keychain
+                {store === "keychain" ? "Move to Keychain" : "Move to secret store"}
               </button>
             )}
             <button type="button" className="mtl-button" onClick={() => setReplacing(true)}>
@@ -215,10 +230,17 @@ export function createSettingsCard({ keys, client }: { keys: KeyStore; client: L
           . Give it Write access (Read comes with it): Write is what lets a dragged card change state. If Linear lets you limit the key to certain
           teams, limit it to the teams you use.
         </p>
-        {keychain ? (
+        {store === "keychain" ? (
           <p className="mtl-muted">
             On a Mac the key is kept in your Keychain, in an item named buzz-linear, not in this app's profile. Buzz plugins are not sandboxed: a plugin that
             declares the <code>security</code> program could read it too, and its install review lists that. Install only plugins you trust.
+          </p>
+        ) : store === "secret-service" ? (
+          <p className="mtl-muted">
+            On Linux the key is kept in the system secret store (the Secret Service: gnome-keyring, KWallet or another), in an item with the attributes service
+            buzz-linear and account linear, not in this app's profile. Buzz plugins are not sandboxed: a plugin that declares the <code>secret-tool</code>{" "}
+            program could read it too, and its install review lists that. If no Secret Service is running, the key is kept in this app's profile as plain text
+            instead, and this card says so. Install only plugins you trust.
           </p>
         ) : (
           <p className="mtl-muted">

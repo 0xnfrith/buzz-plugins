@@ -32,7 +32,7 @@ function sandbox(mode?: string, delay?: number) {
   /** What the person does by hand, in Terminal, with nothing refusing. */
   const byHand = (value: string) => runCommand("keychain-save", `${value}\n${value}\n`, { env: { ...env, LINEAR_FAKE_KEYCHAIN_MODE: "" } });
   const store = (options: { mode?: string | undefined; keychain?: boolean } = {}) =>
-    createKeyStore(profile, { keychain: options.keychain ?? true, run: "mode" in options ? (command, input) => runCommand(command, input, { env: { ...env, LINEAR_FAKE_KEYCHAIN_MODE: options.mode ?? "" } }) : run });
+    createKeyStore(profile, { ...(options.keychain === false ? {} : { store: "keychain" as const }), run: "mode" in options ? (command, input) => runCommand(command, input, { env: { ...env, LINEAR_FAKE_KEYCHAIN_MODE: options.mode ?? "" } }) : run });
   return { env, run, storage, profile, calls, kept, byHand, store };
 }
 
@@ -53,7 +53,7 @@ describe("the manifest's Keychain commands", () => {
     expect(byId("keychain-delete").args).not.toContain("-w");
     expect(byId("keychain-read").maxInputBytes).toBeUndefined();
     expect(byId("keychain-save").maxInputBytes).toBeLessThanOrEqual(2048);
-    expect(declaredCommands().map((command: { id: string }) => command.id).sort()).toEqual(["keychain-delete", "keychain-read", "keychain-save"]);
+    expect(declaredCommands().map((command: { id: string }) => command.id).sort()).toEqual(["keychain-delete", "keychain-read", "keychain-save", "secret-delete", "secret-read", "secret-save"]);
   });
 
   it("are what the card tells a person to type in Terminal", () => {
@@ -67,7 +67,7 @@ describe("saving to a Keychain that behaves as assumed", () => {
     const keys = box.store();
     await keys.ready;
     expect(keys.has()).toBe(false);
-    expect(await keys.save(KEY)).toBe(true);
+    expect((await keys.save(KEY)).kept).toBe(true);
     expect([keys.read(), keys.place()]).toEqual([KEY, "keychain"]);
     expect(Object.values(box.kept())).toEqual([KEY]);
     expect(box.storage.size).toBe(0);
@@ -105,7 +105,7 @@ describe("saving to a Keychain that behaves as assumed", () => {
       }
     }
     expect(seen).toBeGreaterThan(0);
-    expect(await saving).toBe(true);
+    expect((await saving).kept).toBe(true);
   }, 30000);
 
   it("asks for the password twice, and a mismatch saves nothing", async () => {
@@ -121,9 +121,9 @@ describe("saving to a Keychain that behaves as assumed", () => {
     const box = sandbox();
     const keys = box.store();
     await keys.ready;
-    expect(await keys.save(OLD)).toBe(true);
+    expect((await keys.save(OLD)).kept).toBe(true);
     const version = keys.version();
-    expect(await keys.save(KEY)).toBe(true);
+    expect((await keys.save(KEY)).kept).toBe(true);
     expect(Object.values(box.kept())).toEqual([KEY]);
     expect(keys.version()).toBeGreaterThan(version);
   });
@@ -132,7 +132,7 @@ describe("saving to a Keychain that behaves as assumed", () => {
     const box = sandbox();
     const keys = box.store();
     await keys.ready;
-    expect(await keys.save("x".repeat(3000))).toBe(false);
+    expect((await keys.save("x".repeat(3000))).kept).toBe(false);
     expect(box.kept()).toEqual({});
     expect(keys.has()).toBe(false);
   });
@@ -143,7 +143,7 @@ describe("a Keychain that will not take the key", () => {
     const box = sandbox("refuse-add");
     const keys = box.store();
     await keys.ready;
-    expect(await keys.save(KEY)).toBe(false);
+    expect((await keys.save(KEY)).kept).toBe(false);
     expect(keys.has()).toBe(false);
     expect(box.storage.size).toBe(0);
     expect(box.kept()).toEqual({});
@@ -158,7 +158,7 @@ describe("a Keychain that will not take the key", () => {
     const keys = box.store({ mode: "refuse-add" });
     await keys.ready;
     expect([keys.read(), keys.place()]).toEqual([OLD, "keychain"]);
-    expect(await keys.save(KEY)).toBe(false);
+    expect((await keys.save(KEY)).kept).toBe(false);
     expect([keys.read(), keys.place()]).toEqual([OLD, "keychain"]);
     expect(Object.values(box.kept())).toEqual([OLD]);
   });
@@ -167,16 +167,16 @@ describe("a Keychain that will not take the key", () => {
     const box = sandbox("mismatch");
     const keys = box.store();
     await keys.ready;
-    expect(await keys.save(KEY)).toBe(false);
+    expect((await keys.save(KEY)).kept).toBe(false);
     expect(keys.has()).toBe(false);
     expect(box.storage.size).toBe(0);
   });
 
   it("does not wait for ever on a program that asks a terminal (Buzz started from one): the deadline ends it, and nothing is kept", async () => {
     const box = sandbox();
-    const keys = createKeyStore(box.profile, { keychain: true, run: (command, input) => runCommand(command, input, { env: { ...box.env, LINEAR_FAKE_KEYCHAIN_MODE: "terminal" }, deadlineMs: 400 }) });
+    const keys = createKeyStore(box.profile, { store: "keychain", run: (command, input) => runCommand(command, input, { env: { ...box.env, LINEAR_FAKE_KEYCHAIN_MODE: "terminal" }, deadlineMs: 400 }) });
     await keys.ready;
-    expect(await keys.save(KEY)).toBe(false);
+    expect((await keys.save(KEY)).kept).toBe(false);
     expect(keys.has()).toBe(false);
     expect(box.kept()).toEqual({});
     expect(box.storage.size).toBe(0);
@@ -189,24 +189,24 @@ describe("a Keychain that will not take the key", () => {
       setItem: (name: string, value: string) => void storage.set(name, value),
       removeItem: (name: string) => void storage.delete(name),
     };
-    const keys = createKeyStore(profile, { keychain: true, run: async () => null });
+    const keys = createKeyStore(profile, { store: "keychain", run: async () => null });
     await keys.ready;
     expect(keys.has()).toBe(false);
-    expect(await keys.save(KEY)).toBe(false);
+    expect((await keys.save(KEY)).kept).toBe(false);
     expect(keys.has()).toBe(false);
     expect(storage.size).toBe(0);
   });
 
   it("treats a command that throws like one that failed", async () => {
     const keys = createKeyStore(new Map() as never, {
-      keychain: true,
+      store: "keychain",
       run: async () => {
         throw new Error("the host refused");
       },
     });
     await keys.ready;
     expect(keys.has()).toBe(false);
-    expect(await keys.save(KEY)).toBe(false);
+    expect((await keys.save(KEY)).kept).toBe(false);
   });
 });
 
@@ -284,12 +284,12 @@ describe("a key already in the profile (saved by an earlier version)", () => {
     for (const mode of ["mismatch", "terminal"]) {
       const box = sandbox();
       box.storage.set(PROFILE_KEY, KEY);
-      const keys = createKeyStore(box.profile, { keychain: true, run: (command, input) => runCommand(command, input, { env: { ...box.env, LINEAR_FAKE_KEYCHAIN_MODE: mode }, deadlineMs: 400 }) });
+      const keys = createKeyStore(box.profile, { store: "keychain", run: (command, input) => runCommand(command, input, { env: { ...box.env, LINEAR_FAKE_KEYCHAIN_MODE: mode }, deadlineMs: 400 }) });
       await keys.ready;
       expect([keys.read(), keys.place(), box.storage.get(PROFILE_KEY)], mode).toEqual([KEY, "profile", KEY]);
     }
     const storage = new Map([[PROFILE_KEY, KEY]]);
-    const missing = createKeyStore({ getItem: (n) => storage.get(n) ?? null, setItem: (n, v) => void storage.set(n, v), removeItem: (n) => void storage.delete(n) }, { keychain: true, run: async () => null });
+    const missing = createKeyStore({ getItem: (n) => storage.get(n) ?? null, setItem: (n, v) => void storage.set(n, v), removeItem: (n) => void storage.delete(n) }, { store: "keychain", run: async () => null });
     await missing.ready;
     expect([missing.read(), missing.place(), storage.get(PROFILE_KEY)]).toEqual([KEY, "profile", KEY]);
   }, 20000);
@@ -299,11 +299,11 @@ describe("a key already in the profile (saved by an earlier version)", () => {
     box.storage.set(PROFILE_KEY, KEY);
     const refused = box.store({ mode: "refuse-add" });
     await refused.ready;
-    expect(await refused.moveToKeychain()).toBe(false);
+    expect(await refused.moveToStore()).toBe(false);
     expect([refused.read(), refused.place(), box.storage.get(PROFILE_KEY)]).toEqual([KEY, "profile", KEY]);
     const later = box.store();
     await later.ready; // moved here already, by the start
-    expect(await later.moveToKeychain()).toBe(false); // nothing left in the profile to move
+    expect(await later.moveToStore()).toBe(false); // nothing left in the profile to move
     expect(later.place()).toBe("keychain");
   });
 
@@ -335,12 +335,12 @@ describe("where there is no Keychain (not a Mac)", () => {
     const box = sandbox();
     const keys = box.store({ keychain: false });
     await keys.ready;
-    expect(keys.keychainAvailable()).toBe(false);
-    expect(await keys.save(KEY)).toBe(true);
+    expect(keys.store()).toBeUndefined();
+    expect((await keys.save(KEY)).kept).toBe(true);
     expect([keys.read(), keys.place(), box.storage.get(PROFILE_KEY)]).toEqual([KEY, "profile", KEY]);
     expect(await keys.clear()).toBe(true);
     expect(box.storage.size).toBe(0);
     expect(box.calls()).toEqual([]);
-    expect(await keys.moveToKeychain()).toBe(false);
+    expect(await keys.moveToStore()).toBe(false);
   });
 });

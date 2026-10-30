@@ -21,28 +21,46 @@ const KEY_NAME = "megatech.linear.api-key.v1";
 
 /**
  * A page wired to a fresh fake Linear (changed first by `prepare`), with the key already saved in the profile unless `key` is
- * null (or, with `inKeychain`, saved in the stand-in Keychain instead). `mac` makes the page think it runs on a Mac, where the
- * Keychain is used. The stand-in `security` keeps its "keychain" in a file and logs every call it gets; `keychainMode` makes it
- * misbehave (see test/fake-security/security) and can be changed while the page runs.
+ * null (or, with `inKeychain`, saved in the stand-in store instead). The page is made to look like a Mac (`mac`: the Keychain is
+ * used), like Linux (`linux`: the Secret Service is) or, by default, like Windows, where there is no store and the key is plain text.
+ * The stand-ins for `security` and `secret-tool` keep their stores in files and log every call they get; `keychainMode` and
+ * `secretMode` make them misbehave (see test/fake-security and test/fake-secret-tool) and can be changed while the page runs.
  */
-async function arrange(page, app, { key = "good", prepare, mac = false, inKeychain, keychainMode = "", holdKeychain = false } = {}) {
+async function arrange(page, app, { key = "good", prepare, mac = false, linux = false, inKeychain, keychainMode = "", secretMode = "", holdKeychain = false } = {}) {
   // Both of the fixture's keys are accepted, so that a replacement can be told from the key it replaces.
   const fake = createFakeLinear({ keys: Object.values(createFakeLinear().keys) });
   prepare?.(fake);
   const dir = mkdtempSync(join(tmpdir(), "linear-web-keychain-"));
-  const env = { LINEAR_FAKE_KEYCHAIN: join(dir, "keychain.json"), LINEAR_FAKE_KEYCHAIN_LOG: join(dir, "log.jsonl"), LINEAR_FAKE_KEYCHAIN_MODE: keychainMode };
+  const env = {
+    LINEAR_FAKE_KEYCHAIN: join(dir, "keychain.json"),
+    LINEAR_FAKE_KEYCHAIN_LOG: join(dir, "log.jsonl"),
+    LINEAR_FAKE_KEYCHAIN_MODE: keychainMode,
+    LINEAR_FAKE_SECRET: join(dir, "secret.json"),
+    LINEAR_FAKE_SECRET_LOG: join(dir, "secret-log.jsonl"),
+    LINEAR_FAKE_SECRET_MODE: secretMode,
+  };
+  const logged = (file) => (existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)) : []);
+  const stored = (file) => (existsSync(file) ? Object.values(JSON.parse(readFileSync(file, "utf8"))) : []);
   const keychain = {
     env,
-    calls: () => (existsSync(env.LINEAR_FAKE_KEYCHAIN_LOG) ? readFileSync(env.LINEAR_FAKE_KEYCHAIN_LOG, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)) : []),
-    kept: () => (existsSync(env.LINEAR_FAKE_KEYCHAIN) ? Object.values(JSON.parse(readFileSync(env.LINEAR_FAKE_KEYCHAIN, "utf8"))) : []),
+    calls: () => logged(env.LINEAR_FAKE_KEYCHAIN_LOG),
+    kept: () => stored(env.LINEAR_FAKE_KEYCHAIN),
     /** What the person does in Terminal, with nothing refusing. */
     byHand: (value) => runCommand("keychain-save", `${value}\n${value}\n`, { env: { ...env, LINEAR_FAKE_KEYCHAIN_MODE: "" } }),
     mode: (mode) => void (env.LINEAR_FAKE_KEYCHAIN_MODE = mode),
     adds: () => keychain.calls().filter((call) => call[0] === "add-generic-password").length,
   };
-  if (inKeychain) await keychain.byHand(fake.keys[inKeychain]);
+  const secret = {
+    calls: () => logged(env.LINEAR_FAKE_SECRET_LOG),
+    kept: () => stored(env.LINEAR_FAKE_SECRET),
+    direct: (value) => runCommand("secret-save", value, { env: { ...env, LINEAR_FAKE_SECRET_MODE: "" } }),
+    mode: (mode) => void (env.LINEAR_FAKE_SECRET_MODE = mode),
+    stores: () => secret.calls().filter((call) => call[0] === "store").length,
+  };
+  if (inKeychain && mac) await keychain.byHand(fake.keys[inKeychain]);
+  if (inKeychain && linux) await secret.direct(fake.keys[inKeychain]);
   await page.exposeFunction("__linearRequest", (request) => fake.handle(request));
-  // With `holdKeychain` no command runs until the test calls `keychain.release()`: the plugin's first look at the Keychain is late.
+  // With `holdKeychain` no command runs until the test calls `keychain.release()`: the plugin's first look at the store is late.
   let release;
   const gate = holdKeychain ? new Promise((resolve) => (release = resolve)) : undefined;
   keychain.release = () => release?.();
@@ -50,7 +68,14 @@ async function arrange(page, app, { key = "good", prepare, mac = false, inKeycha
     await gate;
     return runCommand(command, input, { env });
   });
-  if (mac) await page.addInitScript(() => Object.defineProperty(navigator, "platform", { get: () => "MacIntel" }));
+  // What the plugin is told it runs on: a Mac, Linux (what the browser here says anyway), or Windows, where it has no store.
+  await page.addInitScript((os) => {
+    if (os === "mac") Object.defineProperty(navigator, "platform", { get: () => "MacIntel" });
+    if (os === "other") {
+      Object.defineProperty(navigator, "platform", { get: () => "Win32" });
+      Object.defineProperty(navigator, "userAgent", { get: () => "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" });
+    }
+  }, mac ? "mac" : linux ? "linux" : "other");
   if (key && !inKeychain) {
     const value = fake.keys[key];
     // Once per tab: a reload is a new session of the plugin, and what the plugin did with the key in the first one stays done.
@@ -65,6 +90,7 @@ async function arrange(page, app, { key = "good", prepare, mac = false, inKeycha
   }
   await page.goto(app.origin);
   fake.keychain = keychain;
+  fake.secret = secret;
   return fake;
 }
 
@@ -710,21 +736,23 @@ const storedAnywhere = (page, secret) =>
     secret,
   );
 
-test("off a Mac there is no Keychain: the card says the key is plain text in the profile, and `security` is never run", async ({ page, app }) => {
+test("on a system with no secret store the card says the key is plain text in the profile, and no store program is ever run", async ({ page, app }) => {
   const fake = await openBoard(page, app, { key: null });
   await page.getByRole("button", { name: "Open Linear settings" }).click();
   await expect(page.getByText("On this system the key is kept on this computer, in this app's profile, as plain text.")).toBeVisible();
   await page.getByLabel("Personal API key").fill(fake.keys.good);
   await page.getByRole("button", { name: "Save key" }).click();
   await expect(page.getByText("Key saved.")).toBeVisible();
-  await expect(page.getByText("It is in this app's profile, as plain text: any other plugin you install could read it. It is not shown again.")).toBeVisible();
+  await expect(page.getByText("It is in this app's profile, as plain text, because this system has no secret store the plugin can use: any other plugin you install could read it. It is not shown again.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Move to Keychain" })).toHaveCount(0);
   await shot(page, "16-plain-fallback");
   expect(await savedKey(page)).toBe(fake.keys.good);
   expect(fake.keychain.calls()).toEqual([]);
+  expect(fake.secret.calls()).toEqual([]);
   await page.getByRole("button", { name: "Remove key" }).click();
   expect(await savedKey(page)).toBeNull();
   expect(fake.keychain.calls()).toEqual([]);
+  expect(fake.secret.calls()).toEqual([]);
 });
 
 test("on a Mac the key goes to the Keychain, not the profile, is nowhere else, and is found there in the next session", async ({ page, app }) => {
@@ -895,6 +923,133 @@ test("on a Mac Linear's own wording of a refusal, even one that repeats the key 
   await expect(page.getByRole("alert")).toContainText("PLT-110 was not moved to In Progress: Linear refused the request.");
   expect((await everything(page)).includes(fake.keys.good)).toBe(false);
   expect(logs.some((line) => line.includes(fake.keys.good))).toBe(false);
+});
+
+// ---- Linux: the Secret Service, through the stand-in `secret-tool` (test/fake-secret-tool), which does what the real one was seen to do ----
+
+test("on Linux the key goes to the Secret Service, not the profile, is nowhere else, and is found there in the next session", async ({ page, app }) => {
+  const logs = [];
+  const asked = [];
+  page.on("console", (message) => logs.push(message.text()));
+  page.on("request", (request) => asked.push(request.url()));
+  const fake = await openBoard(page, app, { key: null, linux: true });
+  await page.getByRole("button", { name: "Open Linear settings" }).click();
+  await expect(page.getByText("On Linux the key is kept in the system secret store (the Secret Service")).toBeVisible();
+  await page.getByLabel("Personal API key").fill(fake.keys.good);
+  await page.getByRole("button", { name: "Save key" }).click();
+  await expect(page.getByText("It is kept in the system secret store (Secret Service). It is not shown again.")).toBeVisible();
+  await shot(page, "20-secret-service-saved");
+  expect(fake.secret.kept()).toEqual([fake.keys.good]);
+  expect(await savedKey(page)).toBeNull();
+  expect(await storedAnywhere(page, fake.keys.good)).toBe(false);
+  expect((await everything(page)).includes(fake.keys.good)).toBe(false);
+  expect(fake.secret.calls().length).toBeGreaterThan(0);
+  for (const call of fake.secret.calls()) expect(call.join(" ")).not.toContain(fake.keys.good);
+  expect(fake.keychain.calls()).toEqual([]); // `security` is a Mac's
+  await closeSettings(page);
+  await openPage(page, "Linear");
+  await expect(card(page, "DSN-10")).toBeVisible();
+  const stores = fake.secret.stores();
+  await page.reload();
+  await openPage(page, "Linear");
+  await expect(card(page, "DSN-10")).toBeVisible();
+  expect(fake.secret.stores()).toBe(stores);
+  expect(await savedKey(page)).toBeNull();
+  expect(logs.filter((line) => line.includes(fake.keys.good))).toEqual([]);
+  expect(asked.filter((url) => url.includes(fake.keys.good))).toEqual([]);
+});
+
+test("on Linux a key from an earlier version is moved to the Secret Service at the start, the board waits for it, and it is not moved again", async ({ page, app }) => {
+  const fake = await openBoard(page, app, { linux: true });
+  await expect(card(page, "DSN-10")).toBeVisible();
+  expect(fake.secret.kept()).toEqual([fake.keys.good]);
+  expect(await savedKey(page)).toBeNull();
+  expect(fake.secret.stores()).toBe(1);
+  for (const call of fake.secret.calls()) expect(call.join(" ")).not.toContain(fake.keys.good);
+  await page.reload();
+  await openPage(page, "Linear");
+  await expect(card(page, "DSN-10")).toBeVisible();
+  expect(fake.secret.stores()).toBe(1);
+  await openSettings(page);
+  await selectSettingsSection(page, "Linear");
+  await expect(page.getByText("It is kept in the system secret store (Secret Service). It is not shown again.")).toBeVisible();
+});
+
+test("on Linux with no Secret Service the key is kept in the profile, labelled as plain text, still works, and moves to the store when the store does", async ({ page, app }) => {
+  const fake = await openBoard(page, app, { key: null, linux: true, secretMode: "unreachable" });
+  await page.getByRole("button", { name: "Open Linear settings" }).click();
+  await page.getByLabel("Personal API key").fill(fake.keys.good);
+  await page.getByRole("button", { name: "Save key" }).click();
+  await expect(page.getByRole("alert")).toContainText("The system secret store (Secret Service) did not take the key from here, so it is kept in this app's profile, as plain text: any other plugin you install could read it.");
+  await expect(page.getByText("because the system secret store (Secret Service) would not take it yet (it is tried again each time Buzz starts)")).toBeVisible();
+  await shot(page, "21-secret-service-unreachable");
+  expect(await savedKey(page)).toBe(fake.keys.good);
+  expect(fake.secret.kept()).toEqual([]);
+  // The key is not lost: the board works with it.
+  await closeSettings(page);
+  await openPage(page, "Linear");
+  await expect(card(page, "DSN-10")).toBeVisible();
+  await openSettings(page);
+  await selectSettingsSection(page, "Linear");
+  await page.getByRole("button", { name: "Move to secret store" }).click();
+  await expect(page.getByRole("alert")).toContainText("The system secret store would not take the key from here. It is still in this app's profile, as plain text.");
+  await expect(page.getByRole("group", { name: "Save the key in the Keychain by hand" })).toHaveCount(0); // that is a Mac's way
+  fake.secret.mode("");
+  await page.getByRole("button", { name: "Move to secret store" }).click();
+  await expect(page.getByText("Moved to the system secret store (Secret Service). The copy in this app's profile is gone.")).toBeVisible();
+  expect(fake.secret.kept()).toEqual([fake.keys.good]);
+  expect(await savedKey(page)).toBeNull();
+});
+
+test("on Linux a key in the profile that the store will not take at the start stays in use, and is moved at the next start", async ({ page, app }) => {
+  const fake = await openBoard(page, app, { linux: true, secretMode: "refuse-store" });
+  await expect(card(page, "DSN-10")).toBeVisible();
+  expect(await savedKey(page)).toBe(fake.keys.good);
+  expect(fake.secret.kept()).toEqual([]);
+  fake.secret.mode("");
+  await page.reload();
+  await openPage(page, "Linear");
+  await expect(card(page, "DSN-10")).toBeVisible();
+  expect(fake.secret.kept()).toEqual([fake.keys.good]);
+  expect(await savedKey(page)).toBeNull();
+});
+
+test("on Linux a replacement that cannot be checked, or that the store will not take, keeps the saved key, and no plain copy is made beside it", async ({ page, app }) => {
+  const fake = await startReplacing(page, app, { linux: true, inKeychain: "good" });
+  const stores = fake.secret.stores(); // the one that put the saved key there
+  await page.getByLabel("Personal API key").fill(fake.keys.other);
+  fake.control.fail("network");
+  await page.getByRole("button", { name: "Save key" }).click();
+  await expect(page.getByRole("alert")).toHaveText("Couldn't reach Linear to check the new key. Your saved key is unchanged; try again.");
+  expect(fake.secret.stores()).toBe(stores);
+  fake.secret.mode("refuse-store");
+  await page.getByRole("button", { name: "Save key" }).click();
+  await expect(page.getByRole("alert")).toHaveText("The system secret store would not take the new key, so your saved key is unchanged.");
+  expect(fake.secret.kept()).toEqual([fake.keys.good]);
+  expect(await savedKey(page)).toBeNull();
+  fake.secret.mode("");
+  await page.getByRole("button", { name: "Save key" }).click();
+  await expect(page.getByText("It is kept in the system secret store (Secret Service). It is not shown again.")).toBeVisible();
+  expect(fake.secret.kept()).toEqual([fake.keys.other]);
+});
+
+test("on Linux Remove key deletes the store's item and any copy in the profile; if the store will not let go it says so and the key stays", async ({ page, app }) => {
+  const fake = await startReplacing(page, app, { linux: true, inKeychain: "good" });
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await page.evaluate(([name]) => localStorage.setItem(name, "a stale plain copy"), [KEY_NAME]);
+  fake.secret.mode("refuse-clear");
+  await page.getByRole("button", { name: "Remove key" }).click();
+  await expect(page.getByRole("alert")).toContainText("The system secret store would not give the key up. Remove it with `secret-tool clear service buzz-linear account linear`");
+  expect(fake.secret.kept()).toEqual([fake.keys.good]);
+  await expect(page.getByText("Key saved.")).toBeVisible();
+  fake.secret.mode("");
+  await page.getByRole("button", { name: "Remove key" }).click();
+  await expect(page.getByLabel("Personal API key")).toBeVisible();
+  expect(fake.secret.kept()).toEqual([]);
+  expect(await savedKey(page)).toBeNull();
+  await closeSettings(page);
+  await openPage(page, "Linear");
+  await expect(page.getByRole("heading", { name: "Connect Linear" })).toBeVisible();
 });
 
 test("a saved view that was deleted in Linear does not break the board", async ({ page, app }) => {

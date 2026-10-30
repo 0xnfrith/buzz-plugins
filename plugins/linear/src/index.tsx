@@ -1,6 +1,6 @@
 import type { Context } from "./buzz";
 import { createClient } from "./linear/client";
-import { createKeyStore } from "./linear/keys";
+import { createKeyStore, detectStore } from "./linear/keys";
 import { createBoardStore } from "./linear/store";
 import { provideReact } from "./react";
 import { createBoardPage } from "./ui/Board";
@@ -13,11 +13,15 @@ export const inject = ["react", "pages", "settingsCards", "navigation", "host"];
 export function apply(ctx: Context) {
   provideReact(ctx.react);
 
-  // The Keychain is macOS's. On other systems the key can only be kept in the profile, and the settings card says so.
-  const mac = /^Mac/i.test(navigator.platform ?? "") || /Macintosh/.test(navigator.userAgent ?? "");
-  const keys = createKeyStore(window.localStorage, { keychain: mac, run: (command, input) => ctx.host.runCommand(command, input) });
+  // The Keychain is macOS's and the Secret Service is Linux's. Where the system has neither, the key can only be kept in the profile,
+  // and the settings card says so.
+  const keys = createKeyStore(window.localStorage, {
+    store: detectStore(navigator.platform, navigator.userAgent),
+    run: (command, input) => ctx.host.runCommand(command, input),
+  });
   // `ctx.host.request` is the only way to Linear; its origin is the one the manifest declares. `ctx.host.runCommand` runs only the
-  // three `security` commands the manifest declares, for the Keychain. A request waits for the first look at where the key is kept.
+  // `security` and `secret-tool` commands the manifest declares, for the system's store. A request waits for the first look at where
+  // the key is kept.
   const client = createClient(
     (request) => ctx.host.request(request),
     async () => {

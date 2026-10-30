@@ -45,6 +45,41 @@
           "-a",
           "linear"
         ]
+      },
+      {
+        "id": "secret-read",
+        "program": "secret-tool",
+        "args": [
+          "lookup",
+          "service",
+          "buzz-linear",
+          "account",
+          "linear"
+        ]
+      },
+      {
+        "id": "secret-save",
+        "program": "secret-tool",
+        "args": [
+          "store",
+          "--label=Linear API key (Buzz)",
+          "service",
+          "buzz-linear",
+          "account",
+          "linear"
+        ],
+        "maxInputBytes": 2048
+      },
+      {
+        "id": "secret-delete",
+        "program": "secret-tool",
+        "args": [
+          "clear",
+          "service",
+          "buzz-linear",
+          "account",
+          "linear"
+        ]
       }
     ],
     "networkOrigins": ["https://api.linear.app"]

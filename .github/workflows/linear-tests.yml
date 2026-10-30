@@ -1,5 +1,6 @@
-# Type check and unit tests of the Linear plugin (plugins/linear/test/unit). The browser suite (plugins/linear/test/run.sh) needs a
-# block/buzz-app checkout and is run by hand; plugins/linear/NOTES.md says what it covers.
+# Type check and unit tests of the Linear plugin (plugins/linear/test/unit), and its key store against a real Secret Service. The
+# browser suite (plugins/linear/test/run.sh) needs a block/buzz-app checkout and is run by hand; plugins/linear/NOTES.md says what
+# it covers.
 name: Linear tests
 
 on:
@@ -44,3 +45,41 @@ jobs:
         run: pnpm exec tsc
       - name: Unit tests
         run: pnpm test
+
+  secret-service:
+    # The Linux key store (plugins/linear/test/unit/secret-service.real.test.ts) with the real `secret-tool` and a real Secret
+    # Service: gnome-keyring on a private session bus, started with a throwaway password so that it makes its keyring. The same
+    # tests are skipped in the job above, where no keyring runs. The macOS Keychain has no runner here.
+    name: Linear key store on a real Secret Service
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: plugins/linear
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@12.16.1 --activate
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: A Secret Service and secret-tool
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends dbus gnome-keyring libsecret-tools
+      - name: The key store against the real secret-tool
+        env:
+          LINEAR_REAL_SECRET_TOOL: "1"
+        run: |
+          set -o pipefail
+          dbus-run-session -- bash -ec '
+            eval "$(printf "ci-keyring-password" | gnome-keyring-daemon --unlock --components=secrets)"
+            export GNOME_KEYRING_CONTROL
+            pnpm exec vitest run test/unit/secret-service.real.test.ts
+          ' | tee "$RUNNER_TEMP/real.txt"
+          # A skipped suite would pass too: say so if it was not run.
+          grep -q "Tests  4 passed (4)" "$RUNNER_TEMP/real.txt"

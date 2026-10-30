@@ -8,31 +8,74 @@ export type KeyValue = {
 };
 
 // Buzz has no storage or credential API for plugins. Where the system has a credential store that a declared command can
-// reach, the key goes there: on macOS, the Keychain, through the `security` program (see manifest.json). Everywhere else the
-// key is kept in the app profile's localStorage, under this plugin's id, in plain text, and the settings card says so. It is
-// sent only to api.linear.app, never shown again after saving, and never logged.
+// reach, the key goes there: on macOS the Keychain, through the `security` program; on Linux the Secret Service (gnome-keyring,
+// KWallet, ...), through `secret-tool` (see manifest.json). Where there is none, or on Linux when none is running, the key is
+// kept in the app profile's localStorage, under this plugin's id, in plain text, and the settings card says so. It is sent only
+// to api.linear.app, never shown again after saving, and never logged.
 const KEY = "megatech.linear.api-key.v1";
 
-/** The commands the manifest declares for the Keychain. */
-export type SecretCommand = "keychain-read" | "keychain-save" | "keychain-delete";
+/** The commands the manifest declares for the system stores. */
+export type SecretCommand =
+  | "keychain-read"
+  | "keychain-save"
+  | "keychain-delete"
+  | "secret-read"
+  | "secret-save"
+  | "secret-delete";
 export type SecretRun = (command: SecretCommand, input?: string) => Promise<string | null>;
 
+/** The system stores this plugin can use: the macOS Keychain, the Linux Secret Service. */
+export type StoreKind = "keychain" | "secret-service";
+
 /** Where the saved key is. */
-export type KeyPlace = "keychain" | "profile";
+export type KeyPlace = StoreKind | "profile";
 
 export type KeyStoreOptions = {
-  /** Runs one of the Keychain commands: `null` is any failure (the host does not say which). */
+  /** Runs one of the store commands: `null` is any failure (the host does not say which). */
   run?: SecretRun;
-  /** The Keychain can be used here (macOS). */
-  keychain?: boolean;
+  /** The store this system has, if any. */
+  store?: StoreKind;
 };
 
-/** The one command, to run in Terminal, that asks for the key and saves it where the plugin looks. It carries no secret. */
+/** How each store is driven, and what a save that is not confirmed means there. */
+const STORES: Record<StoreKind, { read: SecretCommand; save: SecretCommand; delete: SecretCommand; input(value: string): string; plainFallback: boolean }> = {
+  keychain: {
+    read: "keychain-read",
+    save: "keychain-save",
+    delete: "keychain-delete",
+    // `-w` last, with no value, makes `security` ask for the password and then for it again: on its standard input here.
+    input: (value) => `${value}\n${value}\n`,
+    // On a Mac a save that is not confirmed keeps nothing, and the card shows the command to run in Terminal.
+    plainFallback: false,
+  },
+  "secret-service": {
+    read: "secret-read",
+    save: "secret-save",
+    delete: "secret-delete",
+    // `secret-tool store` reads standard input to the end and keeps what it gets, a trailing line break included.
+    input: (value) => value,
+    // On Linux a save that is not confirmed (no Secret Service running, a locked keyring nobody can unlock) goes to the profile, labelled.
+    plainFallback: true,
+  },
+};
+
+/** What the card calls each store. */
+export const STORE_NAME: Record<StoreKind, string> = { keychain: "your Keychain", "secret-service": "the system secret store (Secret Service)" };
+
+/** The one command, to run in Terminal, that asks for the key and saves it where the plugin looks on a Mac. It carries no secret. */
 export const KEYCHAIN_TERMINAL_COMMAND = "security add-generic-password -U -s buzz-linear -a linear -w";
+
+/** Which store this system has, from what the page says it runs on. */
+export function detectStore(platform: string | undefined, userAgent: string | undefined): StoreKind | undefined {
+  const [p, ua] = [platform ?? "", userAgent ?? ""];
+  if (/^Mac/i.test(p) || /Macintosh/.test(ua)) return "keychain";
+  if ((/^Linux/i.test(p) || /Linux/.test(ua)) && !/Android/i.test(ua)) return "secret-service";
+  return undefined;
+}
 
 const withoutLineBreak = (text: string | null | undefined) => text?.replace(/\r?\n$/, "");
 
-export function createKeyStore(storage: KeyValue, { run, keychain = false }: KeyStoreOptions = {}) {
+export function createKeyStore(storage: KeyValue, { run, store }: KeyStoreOptions = {}) {
   const listeners = new Set<() => void>();
   let version = 0;
   // `restart` says the key itself is another one (saved, replaced, removed, found elsewhere), so what was read with the old one is stale.
@@ -41,7 +84,8 @@ export function createKeyStore(storage: KeyValue, { run, keychain = false }: Key
     if (restart) version += 1;
     listeners.forEach((listener) => listener());
   };
-  const usable = keychain && run !== undefined;
+  const kind = run !== undefined ? store : undefined;
+  const driver = kind ? STORES[kind] : undefined;
   const secret = (command: SecretCommand, input?: string) => (run ? run(command, input).catch(() => null) : Promise.resolve(null));
 
   const profileCopy = (): string | undefined => {
@@ -55,7 +99,7 @@ export function createKeyStore(storage: KeyValue, { run, keychain = false }: Key
     try {
       storage.removeItem(KEY);
     } catch {
-      // A copy that cannot be removed is not read while the Keychain has the key.
+      // A copy that cannot be removed is not read while the store has the key.
     }
   };
 
@@ -71,30 +115,31 @@ export function createKeyStore(storage: KeyValue, { run, keychain = false }: Key
     return next;
   };
 
-  /** Puts a key in the Keychain and reads it back to be sure: the program's own exit status is not trusted to say. */
-  async function toKeychain(value: string): Promise<boolean> {
-    if (!usable) return false;
-    // `-w` last, with no value, makes the program ask for the password and then for it again: on its standard input here.
-    await secret("keychain-save", `${value}\n${value}\n`);
-    if (withoutLineBreak(await secret("keychain-read")) !== value) return false;
-    // Only now, with the Keychain confirmed to hold it, does a copy in the profile go.
+  const readStore = async (): Promise<string | undefined> => (driver ? withoutLineBreak(await secret(driver.read)) || undefined : undefined);
+
+  /** Puts a key in the store and reads it back to be sure: the program's own exit status is not trusted to say. */
+  async function toStore(value: string): Promise<boolean> {
+    if (!driver) return false;
+    await secret(driver.save, driver.input(value));
+    if ((await readStore()) !== value) return false;
+    // Only now, with the store confirmed to hold it, does a copy in the profile go.
     dropProfileCopy();
     return true;
   }
 
-  /** Looks for the key: the Keychain first, then the profile. A key found in the profile on a Mac is moved to the Keychain. */
+  /** Looks for the key: the store first, then the profile. A key found in the profile where there is a store is moved to it. */
   async function load(initial: boolean): Promise<void> {
     const [before, placeBefore] = [key, place];
-    const kept = usable ? withoutLineBreak(await secret("keychain-read")) || undefined : undefined;
+    const kept = await readStore();
     const plain = profileCopy();
     if (kept) {
-      [key, place] = [kept, "keychain"];
-      // The Keychain is the one that counts; a copy left in the profile is the same key or an older one.
+      [key, place] = [kept, kind];
+      // The store is the one that counts; a copy left in the profile is the same key or an older one.
       if (plain !== undefined) dropProfileCopy();
     } else if (plain !== undefined) {
       [key, place] = [plain, "profile"];
-      // The move: the Keychain takes it, is read back, and only then does the plain copy go. If it will not, the copy stays, in use, and is tried again next start.
-      if (usable && (await toKeychain(plain))) place = "keychain";
+      // The move: the store takes it, is read back, and only then does the plain copy go. If it will not, the copy stays, in use, and is tried again next start.
+      if (driver && (await toStore(plain))) place = kind;
     } else {
       [key, place] = [undefined, undefined];
     }
@@ -108,47 +153,57 @@ export function createKeyStore(storage: KeyValue, { run, keychain = false }: Key
     version: () => version,
     /** Settles when the first look for the key (and the move out of the profile) is over. */
     ready,
-    /** Looks again (the Keychain may have been given the key from outside). */
+    /** Looks again (the store may have been given the key from outside). */
     reload: () => serial(() => load(false)),
     /** The saved key, for the client only. Nothing else should hold on to it. */
     read: () => key,
     has: () => key !== undefined,
     place: () => place,
-    keychainAvailable: () => usable,
+    /** The store this system has and the plugin can drive, if any. */
+    store: () => kind,
     /**
-     * Keeps a key: in the Keychain where there is one (false when it would not take it, with nothing kept and a saved key
-     * unchanged), otherwise in the profile as plain text.
+     * Keeps a key, in the store where there is one, otherwise in the profile as plain text. When the store does not confirm it:
+     * on a Mac nothing is kept (`kept: false`, a saved key unchanged); on Linux the key goes to the profile, labelled
+     * (`degraded: true`), unless the store already holds a key, which a plain copy would only shadow (`kept: false`).
      */
-    save: (value: string): Promise<boolean> =>
+    save: (value: string): Promise<{ kept: boolean; degraded: boolean }> =>
       serial(async () => {
-        if (usable) {
-          if (!(await toKeychain(value))) return false;
-          [key, place] = [value, "keychain"];
+        let degraded = false;
+        if (driver) {
+          if (await toStore(value)) {
+            [key, place] = [value, kind];
+          } else if (driver.plainFallback && place !== kind) {
+            storage.setItem(KEY, value);
+            [key, place] = [value, "profile"];
+            degraded = true;
+          } else {
+            return { kept: false, degraded: false };
+          }
         } else {
           storage.setItem(KEY, value);
           [key, place] = [value, "profile"];
         }
         notify(true);
-        return true;
+        return { kept: true, degraded };
       }),
-    /** Moves a key kept in the profile to the Keychain; false when it would not take it and the key stays where it was. */
-    moveToKeychain: (): Promise<boolean> =>
+    /** Moves a key kept in the profile to the store; false when it would not take it and the key stays where it was. */
+    moveToStore: (): Promise<boolean> =>
       serial(async () => {
-        if (key === undefined || place !== "profile" || !(await toKeychain(key))) return false;
-        place = "keychain";
+        if (key === undefined || place !== "profile" || !(await toStore(key))) return false;
+        place = kind;
         notify(false);
         return true;
       }),
-    /** Removes the key from the Keychain and the profile. False when one still has it afterwards (it then stays in use). */
+    /** Removes the key from the store and the profile. False when one still has it afterwards (it then stays in use). */
     clear: (): Promise<boolean> =>
       serial(async () => {
         dropProfileCopy();
         let left = profileCopy();
         let where: KeyPlace | undefined = left === undefined ? undefined : "profile";
-        if (usable) {
-          await secret("keychain-delete");
-          const kept = withoutLineBreak(await secret("keychain-read")) || undefined;
-          if (kept) [left, where] = [kept, "keychain"];
+        if (driver) {
+          await secret(driver.delete);
+          const kept = await readStore();
+          if (kept) [left, where] = [kept, kind];
         }
         [key, place] = [left, where];
         notify(true);
