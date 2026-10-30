@@ -1,7 +1,14 @@
 # The key-latency budget of the Vim mode plugin (plugins/vim/test/budget.spec.mjs): the time from a key press to the next
-# painted frame, on every surface, in headless Chromium against block/buzz-app's own production web build. A row fails the job
+# painted frame, on every surface, in headless Chromium against block/buzz-app's own production web build. A row fails its job
 # when its p99 is over 50 ms in all three attempts; the p95 target (16 ms) is reported in the job summary (the spec writes the
 # table to $GITHUB_STEP_SUMMARY), not enforced.
+#
+# The rows are run in shards, one job per surface, so that one slow runner cannot fail the gate on its own and the wait is the
+# longest surface rather than the sum of them. The shards are told apart by the titles of the spec's tests (`--grep`), so the spec
+# and the scripts under plugins/vim/test do not change for it. They are listed in one place, the `shards` step of the `plan` job,
+# which also checks, before anything is measured, that between them they run every row of the spec exactly once. "rest" is
+# everything the other shards do not name, so a row added later always lands somewhere. The final job, "Key latency budget", is the
+# one check to require: it fails unless the plan and every shard passed.
 name: Vim key latency
 
 on:
@@ -25,13 +32,100 @@ concurrency:
 
 env:
   # The block/buzz-app commit the plugin is tested against (plugins/vim/NOTES.md, "What was and was not verified").
+  # vim-tests.yml names the same commit: change both together.
   BUZZ_APP_REF: d92bfb2c4dd89fc5ae6e7a1445f38ad1e8ab7060
 
 jobs:
-  budget:
-    name: Key latency budget
+  plan:
+    name: Plan the latency shards
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 15
+    outputs:
+      shards: ${{ steps.shards.outputs.json }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: block/buzz-app
+          ref: ${{ env.BUZZ_APP_REF }}
+          path: buzz-app
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: pnpm, as the app pins it
+        run: |
+          corepack enable
+          corepack prepare "$(node -p "require('./buzz-app/package.json').packageManager")" --activate
+      - name: Install the app's dependencies (frozen lockfile)
+        working-directory: buzz-app
+        run: pnpm install --frozen-lockfile
+      - name: The shards
+        id: shards
+        # `grep` picks a shard's tests by title (a regular expression); "budget: the table" is in every one, because the table of a
+        # shard's rows and its summary are written by that test. `invert` leaves tests out. "rest" names none and leaves out the others.
+        run: |
+          shards=$(jq -c . <<'JSON'
+          [
+            {"id": "channel-list", "name": "channel list", "grep": "budget: (channel list|the table$)", "invert": "", "timeout": 30},
+            {"id": "message-list", "name": "message list", "grep": "budget: (message list \\(|the table$)", "invert": "", "timeout": 30},
+            {"id": "thread-pane", "name": "thread pane", "grep": "budget: (thread pane|the table$)", "invert": "", "timeout": 30},
+            {"id": "settings", "name": "Settings", "grep": "budget: (Settings dialog|the table$)", "invert": "", "timeout": 30},
+            {"id": "rest", "name": "rest", "grep": "", "invert": "budget: (channel list|message list \\(|thread pane|Settings dialog)", "timeout": 30}
+          ]
+          JSON
+          )
+          echo "json=$shards" >> "$GITHUB_OUTPUT"
+      - name: Every row runs in exactly one shard
+        env:
+          SHARDS: ${{ steps.shards.outputs.json }}
+        run: |
+          set -euo pipefail
+          table='budget: the table'
+          fail() { echo "::error::$1"; echo "**Not planned:** $1" >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+          # The test titles Playwright would run for these arguments, without the file, line and project.
+          list() {
+            local out
+            out=$(plugins/vim/test/budget.sh buzz-app --list "$@" 2>"$RUNNER_TEMP/list.err") || { cat "$RUNNER_TEMP/list.err"; fail "listing the tests failed"; }
+            sed -n -E 's/^ +\[[^]]*\] › [^ ]+ › //p' <<<"$out"
+          }
+          without_table() { grep -v -x -F "$table" || true; }
+          all=$(list | without_table | LC_ALL=C sort)
+          [ -n "$all" ] || fail "the spec lists no rows"
+          { echo "### Latency shards"; echo; echo "The spec lists $(wc -l <<<"$all") rows."; echo; echo "| Shard | Rows |"; echo "| --- | ---: |"; } >> "$GITHUB_STEP_SUMMARY"
+          [ "$(jq -r '[.[].id] | length - (unique | length)' <<<"$SHARDS")" = 0 ] || fail "two shards have the same id"
+          union=""
+          while IFS= read -r shard; do
+            id=$(jq -r .id <<<"$shard"); g=$(jq -r .grep <<<"$shard"); inv=$(jq -r .invert <<<"$shard")
+            args=()
+            [ -z "$g" ] || args+=(--grep "$g")
+            [ -z "$inv" ] || args+=(--grep-invert "$inv")
+            mine=$(list "${args[@]}")
+            [ "$(grep -c -x -F "$table" <<<"$mine" || true)" = 1 ] || fail "shard $id does not run the table test exactly once, so it would write no table"
+            mine=$(without_table <<<"$mine" | LC_ALL=C sort)
+            [ -n "$mine" ] || fail "shard $id has no rows"
+            echo "| $id | $(wc -l <<<"$mine") |" >> "$GITHUB_STEP_SUMMARY"
+            union+="$mine"$'\n'
+          done < <(jq -c '.[]' <<<"$SHARDS")
+          union=$(printf '%s' "$union" | LC_ALL=C sort)
+          if [ "$union" != "$all" ]; then
+            echo "Rows in no shard (<) or in more than one (>):"
+            diff <(printf '%s\n' "$all") <(printf '%s\n' "$union") || true
+            fail "the shards together are not exactly the rows of the spec: see the log for which"
+          fi
+          echo "All $(wc -l <<<"$all") rows are in exactly one shard."
+
+  shard:
+    name: Key latency (${{ matrix.shard.name }})
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.shard.timeout }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.shards) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -55,15 +149,37 @@ jobs:
       - name: Install Chromium
         working-directory: buzz-app
         run: pnpm exec playwright install --with-deps chromium
-      - name: Key latency budget
+      - name: Key latency budget (${{ matrix.shard.name }})
         env:
           BUDGET_OUT: ${{ runner.temp }}/vim-budget
-        run: plugins/vim/test/budget.sh buzz-app
+          SHARD_GREP: ${{ matrix.shard.grep }}
+          SHARD_INVERT: ${{ matrix.shard.invert }}
+        run: |
+          args=()
+          [ -z "$SHARD_GREP" ] || args+=(--grep "$SHARD_GREP")
+          [ -z "$SHARD_INVERT" ] || args+=(--grep-invert "$SHARD_INVERT")
+          plugins/vim/test/budget.sh buzz-app "${args[@]}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
-          name: vim-key-latency
+          name: vim-key-latency-${{ matrix.shard.id }}
           path: |
             ${{ runner.temp }}/vim-budget.md
             ${{ runner.temp }}/vim-budget.json
           retention-days: 14
+
+  budget:
+    # The one check to require. A shard that fails, is cancelled or never ran (the plan failed) turns it red.
+    name: Key latency budget
+    needs: [plan, shard]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every shard passed
+        env:
+          PLAN: ${{ needs.plan.result }}
+          SHARDS: ${{ needs.shard.result }}
+        run: |
+          echo "plan: $PLAN, shards: $SHARDS"
+          [ "$PLAN" = success ] && [ "$SHARDS" = success ]
