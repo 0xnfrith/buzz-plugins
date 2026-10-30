@@ -19,6 +19,10 @@
     "control": "control: close the thread (the page itself)",
     "why": "Closing a thread's pane costs the app a render and the layout of the channel's list in the room it gives back (the control row is the page sending the window event that `q` sends, the native Close Tab menu's)."
   },
+  "list yY": {
+    "control": "control: copy the message (the page itself)",
+    "why": "The key opens the app's More message actions menu, which the app has to mount, picks Copy message when the menu is drawn, and the app closes the menu again: the render of all that is the app's (the control row is the page doing the same itself, opening the menu and picking the item). The key marks the menu itself, as it is drawn, with an attribute that keeps it from showing."
+  },
   "longthread o: the 80-reply thread": {
     "control": "control: open the 80-reply thread (the page itself)",
     "why": "Opening the long thread costs the app a render of its pane with 80 replies, even when the thread is already open and only its tab comes forward, and that is all of what `o` costs there (the control row is the page asking the host to open the same thread itself); the plugin's landing runs after the frames measured."

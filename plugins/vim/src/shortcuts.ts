@@ -15,6 +15,7 @@ import { afterG, goPage } from "./pages";
 import * as perf from "./perf";
 import { armPending, clearPending, set, setting, state } from "./state";
 import { closeThread, enterOpens, hidePane, openOrFold, openThread, resizePane, rowControl, showPane } from "./threads";
+import { yankMessage } from "./yank";
 
 const eligible = () => state.enabled && contextOk();
 const ctrl = (letter: string): Binding => (apple ? { key: letter, ctrl: true } : { key: letter, mod: true });
@@ -81,6 +82,17 @@ export const registerShortcuts = () => {
     when: () => eligible() && enterOpens(),
   });
   key("close-thread", "Close the active thread", { key: "q" }, afterG("q", closeThread));
+  key(
+    "yank",
+    "Yank prefix: yy copies the link of the message under the cursor, yY its text",
+    { key: "y" },
+    afterG("y", () => {
+      if (state.operator === "y") return void yankMessage("link");
+      set({ operator: "y" });
+      armPending();
+    }),
+  );
+  key("yank-text", "After y: copy the text of the message under the cursor", { key: "Y", shift: true }, () => state.operator === "y" && void yankMessage("text"));
   key("fold", "Fold prefix: zc hides the thread pane, zo shows it", { key: "z" }, afterG("z", () => {
     set({ operator: "z" });
     armPending();

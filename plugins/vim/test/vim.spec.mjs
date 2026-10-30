@@ -1301,6 +1301,150 @@ test.describe("o opens a thread at its end", () => {
   });
 });
 
+// ---- yy and yY ----------------------------------------------------------------------------------------
+test.describe("yy and yY copy the link and the text of the message under the cursor", () => {
+  test.use({ exactMessages: true });
+  test.beforeEach(async ({ context }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  });
+  const clipboard = (page) => page.evaluate(() => navigator.clipboard.readText());
+  const emptyClipboard = (page) => page.evaluate(() => navigator.clipboard.writeText("nothing copied"));
+  const toast = (page, text) => page.getByText(text, { exact: true });
+
+  test("in the channel's list: yy copies the link, yY the text, with the host's toast; the cursor and the focus stay", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await emptyClipboard(page);
+    await press(page, "y");
+    await expect(bar(page)).toContainText("y"); // the prefix is pending
+    await press(page, "y");
+    await expect.poll(() => clipboard(page)).toBe(`buzz://message?channel=alpha&id=${app.exact.root.id}`);
+    await expect(toast(page, "Link copied")).toBeVisible();
+    await expect.poll(() => cursor(page)).toBe(app.exact.root.id); // nothing moved
+    await expect(mainScroller(page)).toBeFocused();
+    await emptyClipboard(page);
+    // Every frame in which a menu exists: what it looks like when that frame is painted (rAF callbacks run just before the paint). The
+    // menu fades in, so its opacity alone says little: it must be marked, invisible, and without a transition from its first frame.
+    await page.evaluate(() => {
+      window.__menuSeen = [];
+      const watch = () => {
+        for (const menu of document.querySelectorAll('[role="menu"]')) {
+          const style = getComputedStyle(menu);
+          window.__menuSeen.push(`marked ${menu.hasAttribute("data-vim-yanking")}, opacity ${style.opacity}, transition ${style.transitionDuration}`);
+        }
+        requestAnimationFrame(watch);
+      };
+      requestAnimationFrame(watch);
+    });
+    await press(page, "y");
+    await shifted(page, "Y");
+    await expect.poll(() => clipboard(page)).toBe(app.exact.root.content);
+    await expect(toast(page, "Message copied")).toBeVisible();
+    const seen = await page.evaluate(() => window.__menuSeen);
+    expect(seen.length, "the menu was drawn for at least a frame").toBeGreaterThan(0);
+    expect([...new Set(seen)], "the menu was hidden in every frame it was drawn").toEqual(["marked true, opacity 0, transition 0s"]);
+    await expect(mainScroller(page)).toBeFocused();
+    await expect(page.getByRole("menu")).toHaveCount(0); // the menu it used is gone, and the rule that hid it with it
+    await expect(page.locator("html")).not.toHaveAttribute("data-vim-yanking", /.*/);
+    await expect(bar(page)).toHaveText("-- NORMAL --  main");
+  });
+
+  test("in a thread's list: the link of a reply names its thread", async ({ page, app }) => {
+    await open(page, app);
+    await toRoot(page, app);
+    await press(page, "o");
+    await expect.poll(() => cursor(page)).toBe(app.exact.target.id);
+    await emptyClipboard(page);
+    await press(page, "y", "y");
+    await expect.poll(() => clipboard(page)).toBe(`buzz://message?channel=alpha&id=${app.exact.target.id}&thread=${app.exact.root.id}`);
+    await expect(bar(page)).toContainText("side");
+    await expect(sideScroller(page)).toBeFocused();
+    await emptyClipboard(page);
+    await press(page, "y");
+    await shifted(page, "Y");
+    await expect.poll(() => clipboard(page)).toBe("**Exact reply edited** · Hello @Alice Fixture"); // the text as shown: the edit, not the first version
+    await expect(sideScroller(page)).toBeFocused();
+  });
+
+  test("a y that nothing follows, a lone Y, and yy with no cursor copy nothing", async ({ page, app }) => {
+    await open(page, app);
+    await emptyClipboard(page);
+    await press(page, "Escape", "k"); // out of the box: the message list, with the cursor on the newest message
+    await expect.poll(() => cursor(page)).toBeDefined();
+    await shifted(page, "Y");
+    const was = await cursor(page);
+    await press(page, "y", "k"); // y then another key: nothing is copied, and k still moves
+    await expect.poll(() => cursor(page)).not.toBe(was);
+    await page.waitForTimeout(600);
+    expect(await clipboard(page)).toBe("nothing copied");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+  });
+
+  test("y and Y in the message box are the box's own: nothing is copied, the draft is not touched", async ({ page, app }) => {
+    await open(page, app);
+    await emptyClipboard(page);
+    await composer(page).click();
+    await page.keyboard.type("hello");
+    await press(page, "Escape");
+    await press(page, "y", "y");
+    await page.waitForTimeout(600);
+    expect(await clipboard(page)).toBe("nothing copied");
+    await expect.poll(() => draft(page)).toBe("hello");
+  });
+
+  // yY drives the host's More message actions menu, hidden. A menu the plugin cannot use has to be closed again, or an invisible menu
+  // stays open and takes the next keys. The page changes the menu as the host puts it into the page, before anything else can look at it
+  // (a MutationObserver is too late: the plugin's first look comes in the same run of microtasks): its Copy message item disabled, as a
+  // message that is still sending has it, or not there under that name, as another Buzz might draw it.
+  const changeMenu = (page, how) =>
+    page.evaluate((how) => {
+      const MENU = '[role="menu"][data-message-id]';
+      const change = (node) => {
+        if (!(node instanceof Element)) return;
+        const menus = new Set(node.querySelectorAll(MENU));
+        const around = node.closest(MENU);
+        if (around) menus.add(around);
+        for (const menu of menus)
+          for (const item of menu.querySelectorAll('[role="menuitem"]'))
+            if (item.textContent.trim() === "Copy message") {
+              if (how === "disabled") {
+                item.setAttribute("aria-disabled", "true");
+                item.setAttribute("data-disabled", "");
+              } else item.textContent = "Copy this message";
+            }
+      };
+      for (const name of ["appendChild", "insertBefore"]) {
+        const insert = Node.prototype[name];
+        Node.prototype[name] = function (...args) {
+          const result = insert.apply(this, args);
+          change(args[0]);
+          return result;
+        };
+      }
+    }, how);
+
+  for (const [how, title] of [
+    ["disabled", "a Copy message item that is disabled is not pressed: yY copies nothing and the menu is closed again"],
+    ["renamed", "a menu with no Copy message item is closed again: yY copies nothing and no menu is left to take the keys"],
+  ])
+    test(title, async ({ page, app }) => {
+      await open(page, app);
+      await toRoot(page, app);
+      await emptyClipboard(page);
+      await changeMenu(page, how);
+      await press(page, "y");
+      await shifted(page, "Y");
+      await expect(page.getByRole("menu")).toHaveCount(0); // nothing is left open (an open menu is drawn again once the plugin stops hiding it)
+      await page.waitForTimeout(600);
+      expect(await clipboard(page)).toBe("nothing copied");
+      await expect(mainScroller(page)).toBeFocused();
+      await expect.poll(() => cursor(page)).toBe(app.exact.root.id);
+      // The next key is the list's own: k moves the cursor (a menu left open would have taken it).
+      await press(page, "k");
+      await expect.poll(() => cursor(page)).not.toBe(app.exact.root.id);
+    });
+});
+
 // In a thread, `o` opens and folds the replies to the message under the cursor. The thread of the message with 80 replies has one reply
 // that has a reply of its own (the 80th, to the 79th): the 79th has a branch, closed behind a pill at first.
 test.describe("o in a thread opens and folds the replies to a message", () => {

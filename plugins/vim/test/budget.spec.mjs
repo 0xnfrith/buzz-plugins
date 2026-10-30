@@ -111,12 +111,21 @@ const probe = async (page) => {
     // scroll position of the scrolling areas (the message lists, the settings, and the one a page marks with data-budget-scroller),
     // the caret, and the label. A press that leaves it as it was did nothing. It is read in the page, outside the measured time
     // (before t0, and after the frame's mark), and it builds little: garbage made between two presses is paid by the next one.
+    // The writes to the clipboard are counted: a yank (yy, yY) leaves the focus, the cursor and the scroll position as they were, and what it did
+    // is the host's write of the link or the text.
+    window.__copies = 0;
+    const write = navigator.clipboard?.writeText?.bind(navigator.clipboard);
+    if (write)
+      navigator.clipboard.writeText = (text) => {
+        window.__copies++;
+        return write(text);
+      };
     const fingerprint = () => {
       const active = document.activeElement;
       const selection = getSelection();
       let text = `${active?.tagName}|${active?.getAttribute?.("data-channel-id") ?? active?.getAttribute?.("aria-label") ?? active?.id}|${active?.tagName === "BUTTON" ? active.textContent?.slice(0, 40) : ""}|${document.querySelector("nav[aria-label='Settings sections'] [aria-current]")?.textContent?.slice(0, 40)}|${selection?.anchorOffset}|${selection?.focusOffset}|${selection?.anchorNode?.nodeValue?.length}|${document.querySelector("[data-vim-status]")?.textContent}`;
       for (const el of document.querySelectorAll("[data-vim-cursor]")) text += `|${el.dataset.messageId}${el.getAttribute("data-vim-cursor")}`;
-      text += `|${document.querySelectorAll("[data-vim-fold]").length}`;
+      text += `|${document.querySelectorAll("[data-vim-fold]").length}|${window.__copies}`;
       for (const el of document.querySelectorAll("[data-message-scroller], #settings-content, nav[aria-label='Settings sections'], [data-budget-scroller]")) text += `|${Math.round(el.scrollTop)}`;
       return text;
     };
@@ -365,6 +374,7 @@ const surface = (id, title, body, on) =>
     expect(SURFACE_IDS, "a surface id the baseline knows").toContain(id);
     test.skip(!wanted(id), "not in BUDGET_ONLY");
     test.setTimeout(30 * 60_000);
+    await page.context().grantPermissions(["clipboard-write"]);
     await probe(page);
     await open(page, app);
     if (on)
@@ -514,6 +524,34 @@ const IN_MAIN_LIST = `a.id === "main-content" || a.closest("[data-main-workspace
 // the work, outside the measured time. The plugin has the keys in the pane and has marked a message there once the thread has opened and landed.
 const threadLanded = (page) =>
   page.waitForFunction(() => document.documentElement.dataset.vimRegion === "side" && !!document.querySelector('[data-panel-workspace] [data-message-scroller] [data-vim-cursor="side"]'), null, { timeout: 10_000 });
+// The cursor message's action bar is built the first time a key asks for it (a Tab on the window, the host's "keyboard user" signal); the
+// controls need it built. The buttons are the ones yy and yY press.
+const CURSOR_BAR = `document.querySelector('[data-vim-cursor="main"]').querySelector('[aria-label="Message actions"]')`;
+const COPY_LINK = `${CURSOR_BAR}.querySelector('button[aria-label="Copy link"]').click()`;
+// What yY does, done by the page: open the More message actions menu, and pick Copy message when the menu has been drawn (a frame or two later).
+const COPY_MESSAGE = `const id = document.querySelector('[data-vim-cursor="main"]').dataset.messageId;
+  ${CURSOR_BAR}.querySelector('button[aria-label="More message actions"]').click();
+  const pick = () => {
+    const item = [...document.querySelectorAll('[role="menu"][data-message-id="' + id + '"] [role="menuitem"]')].find((el) => el.textContent.trim() === "Copy message");
+    if (item) item.click();
+    else requestAnimationFrame(pick);
+  };
+  requestAnimationFrame(pick);`;
+const yankReady = async (page) => {
+  await page.evaluate(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+    window.__seen = window.__copies;
+  });
+  await page.waitForTimeout(400);
+};
+// Once the host has written to the clipboard and no menu is open: the work of a yank is over. A press that copies nothing times out here
+// and the row is then invalid (nothing moved), not an error.
+const copied = async (page) => {
+  await page
+    .waitForFunction(() => window.__copies > window.__seen && !document.querySelector('[role="menu"][data-message-id]'), null, { timeout: 3000 })
+    .catch(() => {});
+  await page.evaluate(() => (window.__seen = window.__copies));
+};
 surface("list", "message list (2,400 messages loaded)", async ({ page, app, rows }) => {
   // The thread of the message the cursor is on, opened by the page itself the way the plugin's `o` opens it (focus stays where it is).
   const OPEN_THREAD = `const id = document.querySelector('[data-vim-cursor="main"]').dataset.messageId; window.fixtureNavigation.open({ version: 1, kind: "conversation", channelId: "alpha", messageId: id, threadRootId: id, scope: { viewer: ${JSON.stringify(app.viewer)}, communityOrigin: "https://primary.example" } }, { focus: "preserve" })`;
@@ -557,6 +595,14 @@ surface("list", "message list (2,400 messages loaded)", async ({ page, app, rows
       crosses: true,
       before: openNewestOnce,
     },
+    // yy and yY press the host's own Copy link button and Copy message menu item on the cursor message, and the host copies. They leave
+    // the focus and the cursor where they were, so the row is "moved" by the host's write to the clipboard; the page is read again once the
+    // write is in and the menu is gone (the `after`, outside the measured time).
+    { key: "yy", seq: ["y", "y"], reps: SLOW_REPS, after: copied, before: yankReady },
+    { key: "yY", seq: ["y", "Shift+y"], reps: SLOW_REPS, after: copied, before: yankReady },
+    // The controls: the page presses the same host controls itself (for yY, it opens the menu and picks Copy message as the plugin does).
+    { key: "control: copy the link (the page itself)", seq: ["F9"], control: true, reps: SLOW_REPS, after: copied, before: async (page) => (await controls(COPY_LINK, COPY_LINK)(page), yankReady(page)) },
+    { key: "control: copy the message (the page itself)", seq: ["F9"], control: true, reps: SLOW_REPS, after: copied, before: async (page) => (await controls(COPY_MESSAGE, COPY_MESSAGE)(page), yankReady(page)) },
     // q closes the thread beside the channel (and runs the hand-back for a thread over it). The page opens the thread again after each q, which
     // is not the key's work (a control row), so that the next q has a thread to close.
     {
