@@ -18,6 +18,21 @@ Every skill, message and path in the screenshots is made up.
 2. Open Settings, **Agent Skills**. It says how many skill names it found. Nothing to configure unless your skills live somewhere unusual.
 3. Open any channel, thread or DM and look for a `/skill-name` that matches one of yours.
 
+## Screenshots
+
+Taken in the Buzz desktop app on Linux, with made-up skills (a skills folder, a made-up Claude Code plugin install and an extra folder) and made-up messages. Vim mode is on too: its cursor is the outlined message.
+
+| Dark | Light |
+| --- | --- |
+| ![Hovering /plan-review: the card, in dark mode](screenshots/card-dark.png) | ![The same in light mode](screenshots/card-light.png) |
+| Hover: the card (name, description, where from, a line of lore). The highlight is the dim tint with a dither; `/usr/local/bin/deploy`, `a/deploy`, the URL and `/deploy.md` are left alone | The same in light: the plate, text and border are Buzz's own |
+| ![Tab to /brainstorming: a focus ring and the card](screenshots/focus-dark.png) | ![Tab to /plan-review in light mode](screenshots/focus-light.png) |
+| Keyboard: Tab onto a skill opens its card, and the app's focus ring shows where you are | The same in light |
+| ![A thread: the card of a skill in a reply](screenshots/thread-dark.png) | ![Settings, Agent skills: 9 names found, one from the extra folder](screenshots/settings.png) |
+| In a thread; a skill that wraps across two lines is highlighted on both | Settings, **Agent Skills**: what was found and from where, and the extra folder |
+| ![The install review: Run sh, with its arguments](screenshots/install-review.png) | ![The decloak on hover, then Tab through two skills](screenshots/hover.gif) |
+| The review the app shows before it installs or updates the plugin lists the one program, `sh`, and its arguments (the script). (This is the update dialog, so the source folder, which is a path on the test machine, is hidden) | The hover decloak (a scan beam and a cyan and magenta split for 0.4 s), the card of a plugin's skill, then Tab |
+
 ## What is highlighted
 
 A `/name` is highlighted only when **all** of these hold:
@@ -194,16 +209,17 @@ The browser tests run the production web build, a fixture relay and headless Chr
 
 Checked:
 
-- **Node tests (115):** detection (the table above), parsing a `SKILL.md` (plain, quoted, folded and literal values), the store and the settings, and **the real script** run as the manifest declares it (`sh -c`) against made-up folders: what it prints, that it prints nothing else, the caps, quiet skips, names with spaces and `$(…)`, an extra folder that is not absolute, and that every file it read is unchanged afterwards.
+- **Node tests (115):** detection (the table above), parsing a `SKILL.md` (plain, quoted, folded and literal values), the store and the settings, **the real program** run as the manifest declares it (`sh -c`) against made-up folders (what it prints, that it prints nothing else, the caps, quiet skips, names with spaces and `$(…)`, an extra folder that is not absolute, that every file it read is unchanged afterwards), and the manifest against the limits the app applies when it installs a plugin (see `NOTES.md`).
 - **Browser tests (12)**, in Buzz's own production web build (commit `d92bfb2c` of block/buzz-app, headless Chromium): a skill is drawn in a channel, a thread and a DM, and a path, a URL, code and an unknown name are left alone; hover opens the card, mouse-out and the card itself; keyboard (tab stops, Esc); scrolling and clicking away; the text and its box do not move; reduced motion; contrast in both themes; the card's tokens (dark) and the host's plate and text (light), square corners; Settings (the extra folder, a failed read keeps the last list); reading again; disabling and enabling leaves nothing behind. The DM is checked in the browser build only: sending a message to a real person to see one was not worth it.
 - **Speed** (above), in the browser build.
-- **The skill reader on Linux**, against fixture folders.
+- **The installed Buzz 1.0 desktop app on Linux** (`0.0.0-preview.156.1`, WebKitGTK): the plugin is installed from this folder (the review lists `sh` and its arguments); the real `sh -c` reads a made-up Claude config folder (set with `CLAUDE_CONFIG_DIR`: four skills, a made-up plugin install with two skills, and an extra folder entered in Settings); the skills are highlighted in a channel and in a thread; a path, a URL, a file name, code and an unknown name are not; the card opens on hover and on Tab, and closes on Esc, in dark and in light; Settings says what was found; and with Vim mode on, `j` and `k` still move its cursor while a skill has the focus. The screenshots above are from it.
 
 Not checked:
 
 - **macOS and Windows.** The plugin runs on whichever web view Buzz uses; the shell script uses only `sh`, `read`, `printf`, `grep`, `sed`, `head` and `awk`, and has been run here only with Linux's (dash, GNU grep, sed and awk).
-- **A real Claude Code plugin install.** The folder layout read from `installed_plugins.json` is the one Claude Code's documentation and binary describe (V1 and V2 files, `installPath`, `skills/<name>/SKILL.md`, `.claude-plugin/plugin.json`). The tests build that layout; they cannot show that a real install has the same files.
+- **A real Claude Code plugin install.** The folder layout read from `installed_plugins.json` is the one Claude Code's documentation and binary describe (V1 and V2 files, `installPath`, `skills/<name>/SKILL.md`, `.claude-plugin/plugin.json`). The tests and the real-app check build that layout; they cannot show that a real install has the same files.
 - **The Chakra Petch and Share Tech Mono faces.** The card was looked at with the system faces only.
+- **Reduced motion and a DM in the real app.** Both are covered by the browser tests only.
 
 ## License
 
