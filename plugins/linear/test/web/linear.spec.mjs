@@ -2,13 +2,15 @@
 // a fake Linear behind `ctx.host.request`. Run with plugins/linear/test/run.sh.
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { test, expect } from "./fixture.mjs";
 import { chooseColorMode, closeSettings, openPage, openSettings, pageChoices, selectSettingsSection } from "./navigation.mjs";
 import { setPluginEnabled } from "./plugin-settings.mjs";
 
 const dir = process.env.LINEAR_PLUGIN_DIR;
 const { createFakeLinear } = await import(pathToFileURL(join(dir, "test/fake-linear/server.mjs")).href);
+const { runCommand } = await import(pathToFileURL(join(dir, "test/host-sim.mjs")).href);
 const SHOTS = process.env.SHOTS;
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 const shot = (page, name) => SHOTS && page.screenshot({ path: join(SHOTS, `${name}.png`) });
@@ -17,16 +19,52 @@ test.use({ pluginFixtures: true });
 
 const KEY_NAME = "megatech.linear.api-key.v1";
 
-/** A page wired to a fresh fake Linear (changed first by `prepare`), with the key already saved unless `key` is null. */
-async function arrange(page, app, { key = "good", prepare } = {}) {
-  const fake = createFakeLinear();
+/**
+ * A page wired to a fresh fake Linear (changed first by `prepare`), with the key already saved in the profile unless `key` is
+ * null (or, with `inKeychain`, saved in the stand-in Keychain instead). `mac` makes the page think it runs on a Mac, where the
+ * Keychain is used. The stand-in `security` keeps its "keychain" in a file and logs every call it gets; `keychainMode` makes it
+ * misbehave (see test/fake-security/security) and can be changed while the page runs.
+ */
+async function arrange(page, app, { key = "good", prepare, mac = false, inKeychain, keychainMode = "", holdKeychain = false } = {}) {
+  // Both of the fixture's keys are accepted, so that a replacement can be told from the key it replaces.
+  const fake = createFakeLinear({ keys: Object.values(createFakeLinear().keys) });
   prepare?.(fake);
+  const dir = mkdtempSync(join(tmpdir(), "linear-web-keychain-"));
+  const env = { LINEAR_FAKE_KEYCHAIN: join(dir, "keychain.json"), LINEAR_FAKE_KEYCHAIN_LOG: join(dir, "log.jsonl"), LINEAR_FAKE_KEYCHAIN_MODE: keychainMode };
+  const keychain = {
+    env,
+    calls: () => (existsSync(env.LINEAR_FAKE_KEYCHAIN_LOG) ? readFileSync(env.LINEAR_FAKE_KEYCHAIN_LOG, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)) : []),
+    kept: () => (existsSync(env.LINEAR_FAKE_KEYCHAIN) ? Object.values(JSON.parse(readFileSync(env.LINEAR_FAKE_KEYCHAIN, "utf8"))) : []),
+    /** What the person does in Terminal, with nothing refusing. */
+    byHand: (value) => runCommand("keychain-save", `${value}\n${value}\n`, { env: { ...env, LINEAR_FAKE_KEYCHAIN_MODE: "" } }),
+    mode: (mode) => void (env.LINEAR_FAKE_KEYCHAIN_MODE = mode),
+    adds: () => keychain.calls().filter((call) => call[0] === "add-generic-password").length,
+  };
+  if (inKeychain) await keychain.byHand(fake.keys[inKeychain]);
   await page.exposeFunction("__linearRequest", (request) => fake.handle(request));
-  if (key) {
+  // With `holdKeychain` no command runs until the test calls `keychain.release()`: the plugin's first look at the Keychain is late.
+  let release;
+  const gate = holdKeychain ? new Promise((resolve) => (release = resolve)) : undefined;
+  keychain.release = () => release?.();
+  await page.exposeFunction("__linearRun", async (command, input) => {
+    await gate;
+    return runCommand(command, input, { env });
+  });
+  if (mac) await page.addInitScript(() => Object.defineProperty(navigator, "platform", { get: () => "MacIntel" }));
+  if (key && !inKeychain) {
     const value = fake.keys[key];
-    await page.addInitScript(([name, v]) => localStorage.setItem(name, v), [KEY_NAME, value]);
+    // Once per tab: a reload is a new session of the plugin, and what the plugin did with the key in the first one stays done.
+    await page.addInitScript(
+      ([name, v]) => {
+        if (sessionStorage.getItem("__linear-seeded")) return;
+        sessionStorage.setItem("__linear-seeded", "1");
+        localStorage.setItem(name, v);
+      },
+      [KEY_NAME, value],
+    );
   }
   await page.goto(app.origin);
+  fake.keychain = keychain;
   return fake;
 }
 
@@ -526,8 +564,8 @@ test("replacing the key keeps the old one unless Linear accepts the new one; rem
 
 const savedKey = (page) => page.evaluate((name) => localStorage.getItem(name), KEY_NAME);
 
-async function startReplacing(page, app) {
-  const fake = await openBoard(page, app);
+async function startReplacing(page, app, options) {
+  const fake = await openBoard(page, app, options);
   await expect(card(page, "DSN-10")).toBeVisible();
   await openSettings(page);
   await selectSettingsSection(page, "Linear");
@@ -661,6 +699,202 @@ test("while a card is held, the Duplicate column is greyed out and is not a targ
   await expect(dup).not.toHaveAttribute("data-refuses");
   expect(stateOf(fake, "PLT-110")).toBe("todo");
   expect(fake.control.log.operations.MoveIssue ?? 0).toBe(0);
+});
+
+// ---- The Keychain: a page that thinks it runs on a Mac, and the stand-in `security` (test/fake-security) behind `runCommand` ----
+
+const everything = (page) => page.evaluate(() => document.documentElement.outerHTML + document.body.innerText);
+const storedAnywhere = (page, secret) =>
+  page.evaluate(
+    (value) => [localStorage, sessionStorage].some((store) => Object.keys(store).some((name) => name.includes(value) || (store.getItem(name) ?? "").includes(value))),
+    secret,
+  );
+
+test("off a Mac there is no Keychain: the card says the key is plain text in the profile, and `security` is never run", async ({ page, app }) => {
+  const fake = await openBoard(page, app, { key: null });
+  await page.getByRole("button", { name: "Open Linear settings" }).click();
+  await expect(page.getByText("On this system the key is kept on this computer, in this app's profile, as plain text.")).toBeVisible();
+  await page.getByLabel("Personal API key").fill(fake.keys.good);
+  await page.getByRole("button", { name: "Save key" }).click();
+  await expect(page.getByText("Key saved.")).toBeVisible();
+  await expect(page.getByText("It is in this app's profile, as plain text: any other plugin you install could read it. It is not shown again.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Move to Keychain" })).toHaveCount(0);
+  await shot(page, "16-plain-fallback");
+  expect(await savedKey(page)).toBe(fake.keys.good);
+  expect(fake.keychain.calls()).toEqual([]);
+  await page.getByRole("button", { name: "Remove key" }).click();
+  expect(await savedKey(page)).toBeNull();
+  expect(fake.keychain.calls()).toEqual([]);
+});
+
+test("on a Mac the key goes to the Keychain, not the profile, is nowhere else, and is found there in the next session", async ({ page, app }) => {
+  const logs = [];
+  const asked = [];
+  page.on("console", (message) => logs.push(message.text()));
+  page.on("request", (request) => asked.push(request.url()));
+  const fake = await openBoard(page, app, { key: null, mac: true });
+  await page.getByRole("button", { name: "Open Linear settings" }).click();
+  await expect(page.getByText("On a Mac the key is kept in your Keychain, in an item named buzz-linear")).toBeVisible();
+  await page.getByLabel("Personal API key").fill(fake.keys.good);
+  await page.getByRole("button", { name: "Save key" }).click();
+  await expect(page.getByText("It is kept in your Keychain. It is not shown again.")).toBeVisible();
+  await shot(page, "17-keychain-saved");
+  expect(fake.keychain.kept()).toEqual([fake.keys.good]);
+  expect(await savedKey(page)).toBeNull();
+  expect(await storedAnywhere(page, fake.keys.good)).toBe(false);
+  expect((await everything(page)).includes(fake.keys.good)).toBe(false);
+  expect(await page.evaluate((key) => [...document.querySelectorAll("input")].some((input) => input.value.includes(key)), fake.keys.good)).toBe(false);
+  // The command line of every call has the item's name and no key: the key went in on standard input.
+  expect(fake.keychain.calls().length).toBeGreaterThan(0);
+  for (const call of fake.keychain.calls()) expect(call.join(" ")).not.toContain(fake.keys.good);
+  await closeSettings(page);
+  await openPage(page, "Linear");
+  await expect(card(page, "DSN-10")).toBeVisible();
+  // A new session reads it back and does not write again.
+  const adds = fake.keychain.adds();
+  await page.reload();
+  await openPage(page, "Linear");
+  await expect(card(page, "DSN-10")).toBeVisible();
+  expect(fake.keychain.adds()).toBe(adds);
+  expect(await savedKey(page)).toBeNull();
+  expect(logs.filter((line) => line.includes(fake.keys.good))).toEqual([]);
+  expect(asked.filter((url) => url.includes(fake.keys.good))).toEqual([]);
+});
+
+test("on a Mac a key from an earlier version is moved to the Keychain at the start, the board waits for it, and it is not moved again", async ({ page, app }) => {
+  const fake = await openBoard(page, app, { mac: true });
+  await expect(card(page, "DSN-10")).toBeVisible();
+  expect(fake.keychain.kept()).toEqual([fake.keys.good]);
+  expect(await savedKey(page)).toBeNull();
+  expect(fake.keychain.adds()).toBe(1);
+  for (const call of fake.keychain.calls()) expect(call.join(" ")).not.toContain(fake.keys.good);
+  await page.reload();
+  await openPage(page, "Linear");
+  await expect(card(page, "DSN-10")).toBeVisible();
+  expect(fake.keychain.adds()).toBe(1);
+  await openSettings(page);
+  await selectSettingsSection(page, "Linear");
+  await expect(page.getByText("It is kept in your Keychain. It is not shown again.")).toBeVisible();
+});
+
+test("on a Mac, if the Keychain will not take a key from the profile, it stays in use, says it is plain text, and moves when the button is pressed and the Keychain works", async ({ page, app }) => {
+  const fake = await openBoard(page, app, { mac: true, keychainMode: "refuse-add" });
+  await expect(card(page, "DSN-10")).toBeVisible(); // the key is not lost: the board works
+  expect(await savedKey(page)).toBe(fake.keys.good);
+  expect(fake.keychain.kept()).toEqual([]);
+  await openSettings(page);
+  await selectSettingsSection(page, "Linear");
+  await expect(page.getByText("because the Keychain would not take it yet (it is tried again each time Buzz starts). Any other plugin you install could read it.")).toBeVisible();
+  await shot(page, "18-plain-until-moved");
+  await page.getByRole("button", { name: "Move to Keychain" }).click();
+  await expect(page.getByRole("alert")).toContainText("The Keychain would not take the key from here. It is still in this app's profile, as plain text.");
+  await expect(page.getByRole("group", { name: "Save the key in the Keychain by hand" })).toContainText("security add-generic-password -U -s buzz-linear -a linear -w");
+  expect(await savedKey(page)).toBe(fake.keys.good);
+  fake.keychain.mode("");
+  await page.getByRole("button", { name: "Move to Keychain" }).click();
+  await expect(page.getByText("Moved to your Keychain. The copy in this app's profile is gone.")).toBeVisible();
+  await expect(page.getByText("It is kept in your Keychain. It is not shown again.")).toBeVisible();
+  expect(fake.keychain.kept()).toEqual([fake.keys.good]);
+  expect(await savedKey(page)).toBeNull();
+});
+
+test("on a Mac a replacement that cannot be checked, or that Linear refuses, leaves the Keychain as it was and writes nothing", async ({ page, app }) => {
+  const fake = await startReplacing(page, app, { mac: true, inKeychain: "good" });
+  const written = fake.keychain.adds(); // the one that put the saved key there
+  await page.getByLabel("Personal API key").fill(fake.keys.other);
+  fake.control.fail("network");
+  await page.getByRole("button", { name: "Save key" }).click();
+  await expect(page.getByRole("alert")).toHaveText("Couldn't reach Linear to check the new key. Your saved key is unchanged; try again.");
+  expect(fake.keychain.kept()).toEqual([fake.keys.good]);
+  expect(fake.keychain.adds()).toBe(written);
+  await page.getByLabel("Personal API key").fill("test-key-unknown");
+  await page.getByRole("button", { name: "Save key" }).click();
+  await expect(page.getByRole("alert")).toHaveText("Linear did not accept the API key.");
+  expect(fake.keychain.kept()).toEqual([fake.keys.good]);
+  expect(fake.keychain.adds()).toBe(written);
+});
+
+test("on a Mac a Keychain that refuses a replacement keeps the saved key, shows the command for Terminal, and takes up the key once it is there", async ({ page, app }) => {
+  const fake = await startReplacing(page, app, { mac: true, inKeychain: "good", keychainMode: "refuse-add" });
+  await page.getByLabel("Personal API key").fill(fake.keys.other);
+  await page.getByRole("button", { name: "Save key" }).click();
+  await expect(page.getByRole("alert")).toHaveText("The Keychain would not take the key from here, and it has not been kept anywhere. Your saved key is unchanged.");
+  await expect(page.getByRole("group", { name: "Save the key in the Keychain by hand" })).toContainText("security add-generic-password -U -s buzz-linear -a linear -w");
+  await shot(page, "19-keychain-by-hand");
+  expect(fake.keychain.kept()).toEqual([fake.keys.good]);
+  expect(await savedKey(page)).toBeNull();
+  // The person runs the command in Terminal; the card looks again, and the board starts over with the key it finds.
+  await fake.keychain.byHand(fake.keys.other);
+  const requests = fake.control.log.requests.length;
+  await page.getByRole("button", { name: "Check Keychain" }).click();
+  await expect(page.getByText("Found the key in your Keychain.")).toBeVisible();
+  expect(fake.keychain.kept()).toEqual([fake.keys.other]);
+  await expect.poll(() => fake.control.log.requests.length).toBeGreaterThan(requests);
+  await expect(page.getByRole("group", { name: "Save the key in the Keychain by hand" })).toHaveCount(0);
+});
+
+test("on a Mac a first key the Keychain refuses is kept nowhere, and nothing is left in the profile", async ({ page, app }) => {
+  const fake = await openBoard(page, app, { key: null, mac: true, keychainMode: "refuse-add" });
+  await page.getByRole("button", { name: "Open Linear settings" }).click();
+  await page.getByLabel("Personal API key").fill(fake.keys.good);
+  await page.getByRole("button", { name: "Save key" }).click();
+  await expect(page.getByRole("alert")).toHaveText("The Keychain would not take the key from here, and it has not been kept anywhere.");
+  expect(fake.keychain.kept()).toEqual([]);
+  expect(await savedKey(page)).toBeNull();
+  expect(await storedAnywhere(page, fake.keys.good)).toBe(false);
+  await expect(page.getByText("Key saved.")).toHaveCount(0);
+});
+
+test("on a Mac a replacement saved before the first look at the Keychain has finished still cannot replace the key that is there", async ({ page, app }) => {
+  // No command runs until the test lets them, so what the card knows about a saved key is late.
+  const fake = await arrange(page, app, { key: null, mac: true, inKeychain: "good", holdKeychain: true });
+  await openSettings(page);
+  await selectSettingsSection(page, "Linear");
+  await page.getByLabel("Personal API key").fill(fake.keys.other);
+  fake.control.fail("network");
+  await page.getByRole("button", { name: "Save key" }).click();
+  await page.waitForTimeout(1000);
+  await expect(page.getByRole("alert")).toHaveCount(0); // it is waiting for the first look
+  expect(fake.keychain.calls().filter((call) => call[0] === "add-generic-password")).toHaveLength(1); // only the one that put the saved key there
+  fake.keychain.release();
+  await expect(page.getByRole("alert")).toHaveText("Couldn't reach Linear to check the new key. Your saved key is unchanged; try again.");
+  expect(fake.keychain.kept()).toEqual([fake.keys.good]);
+});
+
+test("on a Mac Remove key deletes the Keychain item and any copy in the profile; if the Keychain will not let go it says so and the key stays", async ({ page, app }) => {
+  const fake = await startReplacing(page, app, { mac: true, inKeychain: "good" });
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await page.evaluate(([name]) => localStorage.setItem(name, "a stale plain copy"), [KEY_NAME]);
+  fake.keychain.mode("refuse-delete");
+  await page.getByRole("button", { name: "Remove key" }).click();
+  await expect(page.getByRole("alert")).toHaveText("The Keychain would not give the key up. Remove it in Keychain Access (search for buzz-linear).");
+  expect(fake.keychain.kept()).toEqual([fake.keys.good]);
+  await expect(page.getByText("Key saved.")).toBeVisible();
+  fake.keychain.mode("");
+  await page.getByRole("button", { name: "Remove key" }).click();
+  await expect(page.getByLabel("Personal API key")).toBeVisible();
+  expect(fake.keychain.kept()).toEqual([]);
+  expect(await savedKey(page)).toBeNull();
+  await closeSettings(page);
+  await openPage(page, "Linear");
+  await expect(page.getByRole("heading", { name: "Connect Linear" })).toBeVisible();
+  await page.reload();
+  await openPage(page, "Linear");
+  await expect(page.getByRole("heading", { name: "Connect Linear" })).toBeVisible();
+});
+
+test("on a Mac Linear's own wording of a refusal, even one that repeats the key from the Keychain, never reaches the page", async ({ page, app }) => {
+  const logs = [];
+  page.on("console", (message) => logs.push(message.text()));
+  await page.setViewportSize({ width: 1500, height: 900 });
+  const fake = await openBoard(page, app, { key: null, mac: true, inKeychain: "good" });
+  await page.getByLabel("Team").selectOption("team-plt");
+  await expect(card(page, "PLT-110")).toBeVisible();
+  fake.control.fail("echo", { operation: "MoveIssue" });
+  await dragCard(page, "PLT-110", "In Progress");
+  await expect(page.getByRole("alert")).toContainText("PLT-110 was not moved to In Progress: Linear refused the request.");
+  expect((await everything(page)).includes(fake.keys.good)).toBe(false);
+  expect(logs.some((line) => line.includes(fake.keys.good))).toBe(false);
 });
 
 test("a saved view that was deleted in Linear does not break the board", async ({ page, app }) => {

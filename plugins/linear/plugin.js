@@ -17,7 +17,7 @@ var LinearError = class extends Error {
 */
 function createClient(transport, readKey, now = Date.now) {
 	return { async request(operationName, query, variables = {}, candidate) {
-		const key = candidate ?? readKey();
+		const key = candidate ?? await readKey();
 		if (!key) throw new LinearError("no-key", "No Linear API key is saved.");
 		let response;
 		try {
@@ -68,35 +68,106 @@ function retryAt(headers, now) {
 }
 // src/linear/keys.ts
 var KEY = "megatech.linear.api-key.v1";
-function createKeyStore(storage) {
+var withoutLineBreak = (text) => text?.replace(/\r?\n$/, "");
+function createKeyStore(storage, { run, keychain = false } = {}) {
 	const listeners = /* @__PURE__ */ new Set();
 	let version = 0;
-	const changed = () => {
-		version += 1;
+	const notify = (restart) => {
+		if (restart) version += 1;
 		listeners.forEach((listener) => listener());
 	};
-	return {
-		/** Changes whenever a key is saved or removed, for effects that must start over. */
-		version: () => version,
-		/** The saved key, for the client only. Nothing else should hold on to it. */
-		read() {
-			try {
-				return storage.getItem(KEY) || void 0;
-			} catch {
-				return;
-			}
-		},
-		has() {
-			return this.read() !== void 0;
-		},
-		save(key) {
-			storage.setItem(KEY, key);
-			changed();
-		},
-		clear() {
+	const usable = keychain && run !== void 0;
+	const secret = (command, input) => run ? run(command, input).catch(() => null) : Promise.resolve(null);
+	const profileCopy = () => {
+		try {
+			return storage.getItem(KEY) || void 0;
+		} catch {
+			return;
+		}
+	};
+	const dropProfileCopy = () => {
+		try {
 			storage.removeItem(KEY);
-			changed();
-		},
+		} catch {}
+	};
+	let key;
+	let place;
+	let tail = Promise.resolve();
+	const serial = (task) => {
+		const next = tail.then(task, task);
+		tail = next.catch(() => void 0);
+		return next;
+	};
+	/** Puts a key in the Keychain and reads it back to be sure: the program's own exit status is not trusted to say. */
+	async function toKeychain(value) {
+		if (!usable) return false;
+		await secret("keychain-save", `${value}\n${value}\n`);
+		if (withoutLineBreak(await secret("keychain-read")) !== value) return false;
+		dropProfileCopy();
+		return true;
+	}
+	/** Looks for the key: the Keychain first, then the profile. A key found in the profile on a Mac is moved to the Keychain. */
+	async function load(initial) {
+		const [before, placeBefore] = [key, place];
+		const kept = usable ? withoutLineBreak(await secret("keychain-read")) || void 0 : void 0;
+		const plain = profileCopy();
+		if (kept) {
+			[key, place] = [kept, "keychain"];
+			if (plain !== void 0) dropProfileCopy();
+		} else if (plain !== void 0) {
+			[key, place] = [plain, "profile"];
+			if (usable && await toKeychain(plain)) place = "keychain";
+		} else [key, place] = [void 0, void 0];
+		if (initial || key !== before || place !== placeBefore) notify(!initial && key !== before);
+	}
+	return {
+		/** Changes whenever the key is another one, for effects that must start over. */
+		version: () => version,
+		/** Settles when the first look for the key (and the move out of the profile) is over. */
+		ready: serial(() => load(true)),
+		/** Looks again (the Keychain may have been given the key from outside). */
+		reload: () => serial(() => load(false)),
+		/** The saved key, for the client only. Nothing else should hold on to it. */
+		read: () => key,
+		has: () => key !== void 0,
+		place: () => place,
+		keychainAvailable: () => usable,
+		/**
+		* Keeps a key: in the Keychain where there is one (false when it would not take it, with nothing kept and a saved key
+		* unchanged), otherwise in the profile as plain text.
+		*/
+		save: (value) => serial(async () => {
+			if (usable) {
+				if (!await toKeychain(value)) return false;
+				[key, place] = [value, "keychain"];
+			} else {
+				storage.setItem(KEY, value);
+				[key, place] = [value, "profile"];
+			}
+			notify(true);
+			return true;
+		}),
+		/** Moves a key kept in the profile to the Keychain; false when it would not take it and the key stays where it was. */
+		moveToKeychain: () => serial(async () => {
+			if (key === void 0 || place !== "profile" || !await toKeychain(key)) return false;
+			place = "keychain";
+			notify(false);
+			return true;
+		}),
+		/** Removes the key from the Keychain and the profile. False when one still has it afterwards (it then stays in use). */
+		clear: () => serial(async () => {
+			dropProfileCopy();
+			let left = profileCopy();
+			let where = left === void 0 ? void 0 : "profile";
+			if (usable) {
+				await secret("keychain-delete");
+				const kept = withoutLineBreak(await secret("keychain-read")) || void 0;
+				if (kept) [left, where] = [kept, "keychain"];
+			}
+			[key, place] = [left, where];
+			notify(true);
+			return left === void 0;
+		}),
 		subscribe(listener) {
 			listeners.add(listener);
 			return () => listeners.delete(listener);
@@ -1726,9 +1797,12 @@ function Blocked({ snapshot, openSettings, onRetry }) {
 function createSettingsCard({ keys, client }) {
 	return function LinearSettings() {
 		const saved = React.useSyncExternalStore(keys.subscribe, () => keys.has());
+		const place = React.useSyncExternalStore(keys.subscribe, () => keys.place());
+		const keychain = keys.keychainAvailable();
 		const [draft, setDraft] = React.useState("");
 		const [replacing, setReplacing] = React.useState(false);
 		const [status, setStatus] = React.useState({ kind: "idle" });
+		const [byHand, setByHand] = React.useState(false);
 		const alive = React.useRef(true);
 		React.useEffect(() => {
 			alive.current = true;
@@ -1771,33 +1845,87 @@ function createSettingsCard({ keys, client }) {
 				});
 				return;
 			}
+			await keys.ready;
+			setByHand(false);
 			const verdict = await ask(checked.key);
 			const ruling = judgeKey(verdict.kind, keys.has(), verdict.text);
 			show(verdict, ruling.message ?? verdict.text);
 			if (!ruling.save) return;
+			let kept;
 			try {
-				keys.save(checked.key);
+				kept = await keys.save(checked.key);
 			} catch {
-				setStatus({
+				if (alive.current) setStatus({
 					kind: "error",
 					text: "This app could not store the key."
 				});
 				return;
 			}
+			if (!kept) {
+				if (alive.current) {
+					setByHand(true);
+					setStatus({
+						kind: "error",
+						text: `The Keychain would not take the key from here, and it has not been kept anywhere.${keys.has() ? " Your saved key is unchanged." : ""}`
+					});
+				}
+				return;
+			}
 			setDraft("");
 			setReplacing(false);
 		};
-		const remove = () => {
-			keys.clear();
-			setStatus({ kind: "idle" });
+		const checkKeychain = async () => {
+			await keys.reload();
+			if (!alive.current) return;
+			if (keys.place() === "keychain") {
+				setByHand(false);
+				setReplacing(false);
+				setStatus({
+					kind: "ok",
+					text: "Found the key in your Keychain."
+				});
+			} else setStatus({
+				kind: "error",
+				text: "Nothing in the Keychain yet. Run the command in Terminal, type the key at the prompt, then check again."
+			});
+		};
+		const move = async () => {
+			setStatus({ kind: "checking" });
+			const moved = await keys.moveToKeychain();
+			if (!alive.current) return;
+			if (moved) {
+				setByHand(false);
+				setStatus({
+					kind: "ok",
+					text: "Moved to your Keychain. The copy in this app's profile is gone."
+				});
+			} else {
+				setByHand(true);
+				setStatus({
+					kind: "error",
+					text: "The Keychain would not take the key from here. It is still in this app's profile, as plain text."
+				});
+			}
+		};
+		const remove = async () => {
+			const gone = await keys.clear();
+			if (!alive.current) return;
+			setStatus(gone ? { kind: "idle" } : {
+				kind: "error",
+				text: keys.place() === "keychain" ? "The Keychain would not give the key up. Remove it in Keychain Access (search for buzz-linear)." : "This app could not remove the key from its profile."
+			});
 			setReplacing(false);
+			setByHand(false);
 			setDraft("");
 		};
 		const showInput = !saved || replacing;
 		return /* @__PURE__ */ React.createElement("section", {
 			className: "mtl-root mtl-settings",
 			"aria-label": "Linear"
-		}, /* @__PURE__ */ React.createElement("p", null, "Shows your Linear issues as a board. Each person pastes their own personal API key; it is kept on this computer and sent only to Linear."), saved && !replacing && /* @__PURE__ */ React.createElement("p", { className: "mtl-saved" }, /* @__PURE__ */ React.createElement("strong", null, "Key saved."), " It is not shown again."), showInput && /* @__PURE__ */ React.createElement("form", {
+		}, /* @__PURE__ */ React.createElement("p", null, "Shows your Linear issues as a board. Each person pastes their own personal API key; it is kept on this computer and sent only to Linear."), saved && !replacing && /* @__PURE__ */ React.createElement("p", {
+			className: "mtl-saved",
+			"data-place": place
+		}, /* @__PURE__ */ React.createElement("strong", null, "Key saved."), " ", place === "keychain" ? "It is kept in your Keychain. It is not shown again." : keychain ? "It is in this app's profile, as plain text, because the Keychain would not take it yet (it is tried again each time Buzz starts). Any other plugin you install could read it. It is not shown again." : "It is in this app's profile, as plain text: any other plugin you install could read it. It is not shown again."), showInput && /* @__PURE__ */ React.createElement("form", {
 			onSubmit: save,
 			className: "mtl-key-form"
 		}, /* @__PURE__ */ React.createElement("label", { htmlFor: "mtl-key" }, "Personal API key"), /* @__PURE__ */ React.createElement("input", {
@@ -1818,20 +1946,34 @@ function createSettingsCard({ keys, client }) {
 		}, "Save key"), replacing && /* @__PURE__ */ React.createElement("button", {
 			type: "button",
 			className: "mtl-button",
-			onClick: () => (setReplacing(false), setDraft(""))
-		}, "Cancel"))), saved && !replacing && /* @__PURE__ */ React.createElement("div", { className: "mtl-actions" }, /* @__PURE__ */ React.createElement("button", {
+			onClick: () => (setReplacing(false), setDraft(""), setByHand(false))
+		}, "Cancel"))), byHand && /* @__PURE__ */ React.createElement("div", {
+			role: "group",
+			"aria-label": "Save the key in the Keychain by hand",
+			className: "mtl-key-form"
+		}, /* @__PURE__ */ React.createElement("p", null, "To put it in the Keychain yourself, run this in Terminal. It asks for the key (twice, showing nothing as you type), so the key is not in the command:"), /* @__PURE__ */ React.createElement("code", { className: "mtl-code" }, "security add-generic-password -U -s buzz-linear -a linear -w"), /* @__PURE__ */ React.createElement("div", { className: "mtl-actions" }, /* @__PURE__ */ React.createElement("button", {
+			type: "button",
+			className: "mtl-button",
+			onClick: () => void checkKeychain()
+		}, "Check Keychain"))), saved && !replacing && /* @__PURE__ */ React.createElement("div", { className: "mtl-actions" }, /* @__PURE__ */ React.createElement("button", {
 			type: "button",
 			className: "mtl-button",
 			disabled: status.kind === "checking",
 			onClick: async () => show(await ask())
-		}, "Test connection"), /* @__PURE__ */ React.createElement("button", {
+		}, "Test connection"), keychain && place === "profile" && /* @__PURE__ */ React.createElement("button", {
+			type: "button",
+			className: "mtl-button",
+			"data-primary": true,
+			disabled: status.kind === "checking",
+			onClick: () => void move()
+		}, "Move to Keychain"), /* @__PURE__ */ React.createElement("button", {
 			type: "button",
 			className: "mtl-button",
 			onClick: () => setReplacing(true)
 		}, "Replace key"), /* @__PURE__ */ React.createElement("button", {
 			type: "button",
 			className: "mtl-button",
-			onClick: remove
+			onClick: () => void remove()
 		}, "Remove key")), status.kind !== "idle" && /* @__PURE__ */ React.createElement("p", {
 			role: status.kind === "error" ? "alert" : "status",
 			"data-tone": status.kind === "error" ? "error" : void 0
@@ -1839,7 +1981,7 @@ function createSettingsCard({ keys, client }) {
 			href: "https://linear.app/settings/account/security",
 			target: "_blank",
 			rel: "noopener noreferrer"
-		}, "Settings, Account, Security & access"), ". Give it Write access (Read comes with it): Write is what lets a dragged card change state. If Linear lets you limit the key to certain teams, limit it to the teams you use."), /* @__PURE__ */ React.createElement("p", { className: "mtl-muted" }, "The key is kept on this computer, in this app's profile, as plain text. Buzz plugins are not sandboxed, so any other plugin you install could read it: install only plugins you trust."));
+		}, "Settings, Account, Security & access"), ". Give it Write access (Read comes with it): Write is what lets a dragged card change state. If Linear lets you limit the key to certain teams, limit it to the teams you use."), keychain ? /* @__PURE__ */ React.createElement("p", { className: "mtl-muted" }, "On a Mac the key is kept in your Keychain, in an item named buzz-linear, not in this app's profile. Buzz plugins are not sandboxed: a plugin that declares the ", /* @__PURE__ */ React.createElement("code", null, "security"), " program could read it too, and its install review lists that. Install only plugins you trust.") : /* @__PURE__ */ React.createElement("p", { className: "mtl-muted" }, "On this system the key is kept on this computer, in this app's profile, as plain text. Buzz plugins are not sandboxed, so any other plugin you install could read it: install only plugins you trust."));
 	};
 }
 // src/ui/styles.ts
@@ -1998,6 +2140,8 @@ img[src="${PAGE_ICON}"] {
 .mtl-settings [data-tone="error"] { color: var(--red-11, #e5484d); }
 .mtl-key-form { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .mtl-key-form input { width: 100%; max-width: 420px; height: 32px; }
+.mtl-code { display: block; padding: 8px 10px; border: 1px solid var(--mtl-line); border-radius: 2px; background: var(--mtl-card); font-family: var(--mtl-mono); font-size: 12px; overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
+.mtl-muted code { font-family: var(--mtl-mono); font-size: 12px; }
 .mtl-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 `;
 // src/index.tsx
@@ -2010,15 +2154,27 @@ var inject = [
 ];
 function apply(ctx) {
 	provideReact(ctx.react);
-	const keys = createKeyStore(window.localStorage);
-	const client = createClient((request) => ctx.host.request(request), () => keys.read());
+	const mac = /^Mac/i.test(navigator.platform ?? "") || /Macintosh/.test(navigator.userAgent ?? "");
+	const keys = createKeyStore(window.localStorage, {
+		keychain: mac,
+		run: (command, input) => ctx.host.runCommand(command, input)
+	});
+	const client = createClient((request) => ctx.host.request(request), async () => {
+		await keys.ready;
+		return keys.read();
+	});
 	const store = createBoardStore(client, window.localStorage);
 	ctx.effect(() => {
 		const style = document.createElement("style");
 		style.dataset.megatechLinear = "";
 		style.textContent = CSS$1;
 		document.head.append(style);
-		const unsubscribe = keys.subscribe(() => store.reset());
+		let seen = keys.version();
+		const unsubscribe = keys.subscribe(() => {
+			if (keys.version() === seen) return;
+			seen = keys.version();
+			store.reset();
+		});
 		return () => {
 			unsubscribe();
 			style.remove();

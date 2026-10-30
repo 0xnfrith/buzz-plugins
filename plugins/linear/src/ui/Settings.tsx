@@ -1,6 +1,6 @@
 import { React } from "../react";
 import { LinearError, type LinearClient } from "../linear/client";
-import { checkKey, judgeKey, type KeyStore } from "../linear/keys";
+import { KEYCHAIN_TERMINAL_COMMAND, checkKey, judgeKey, type KeyStore } from "../linear/keys";
 import { VIEWER } from "../linear/queries";
 
 type Status =
@@ -16,9 +16,13 @@ type Viewer = { viewer: { name: string }; organization: { name: string } };
 export function createSettingsCard({ keys, client }: { keys: KeyStore; client: LinearClient }) {
   return function LinearSettings() {
     const saved = React.useSyncExternalStore(keys.subscribe, () => keys.has());
+    const place = React.useSyncExternalStore(keys.subscribe, () => keys.place());
+    const keychain = keys.keychainAvailable();
     const [draft, setDraft] = React.useState("");
     const [replacing, setReplacing] = React.useState(false);
     const [status, setStatus] = React.useState<Status>({ kind: "idle" });
+    // The Keychain would not take a key: nothing was kept, and the card says how to put it there by hand.
+    const [byHand, setByHand] = React.useState(false);
     const alive = React.useRef(true);
     React.useEffect(() => {
       alive.current = true;
@@ -51,25 +55,75 @@ export function createSettingsCard({ keys, client }: { keys: KeyStore; client: L
         setStatus({ kind: "error", text: checked.message });
         return;
       }
+      // The first look at where the key is kept comes first: whether a key is saved already decides what an unchecked key may do.
+      await keys.ready;
+      setByHand(false);
       // Linear is asked first, so a mistyped replacement never costs the key that works, even when Linear cannot answer.
       const verdict = await ask(checked.key);
       const ruling = judgeKey(verdict.kind, keys.has(), verdict.text);
       show(verdict, ruling.message ?? verdict.text);
       if (!ruling.save) return;
+      let kept: boolean;
       try {
-        keys.save(checked.key);
+        kept = await keys.save(checked.key);
       } catch {
-        setStatus({ kind: "error", text: "This app could not store the key." });
+        if (alive.current) setStatus({ kind: "error", text: "This app could not store the key." });
+        return;
+      }
+      if (!kept) {
+        if (alive.current) {
+          setByHand(true);
+          setStatus({
+            kind: "error",
+            text: `The Keychain would not take the key from here, and it has not been kept anywhere.${keys.has() ? " Your saved key is unchanged." : ""}`,
+          });
+        }
         return;
       }
       setDraft("");
       setReplacing(false);
     };
 
-    const remove = () => {
-      keys.clear();
-      setStatus({ kind: "idle" });
+    const checkKeychain = async () => {
+      await keys.reload();
+      if (!alive.current) return;
+      if (keys.place() === "keychain") {
+        setByHand(false);
+        setReplacing(false);
+        setStatus({ kind: "ok", text: "Found the key in your Keychain." });
+      } else
+        setStatus({ kind: "error", text: "Nothing in the Keychain yet. Run the command in Terminal, type the key at the prompt, then check again." });
+    };
+
+    const move = async () => {
+      setStatus({ kind: "checking" });
+      const moved = await keys.moveToKeychain();
+      if (!alive.current) return;
+      if (moved) {
+        setByHand(false);
+        setStatus({ kind: "ok", text: "Moved to your Keychain. The copy in this app's profile is gone." });
+      } else {
+        setByHand(true);
+        setStatus({ kind: "error", text: "The Keychain would not take the key from here. It is still in this app's profile, as plain text." });
+      }
+    };
+
+    const remove = async () => {
+      const gone = await keys.clear();
+      if (!alive.current) return;
+      setStatus(
+        gone
+          ? { kind: "idle" }
+          : {
+              kind: "error",
+              text:
+                keys.place() === "keychain"
+                  ? "The Keychain would not give the key up. Remove it in Keychain Access (search for buzz-linear)."
+                  : "This app could not remove the key from its profile.",
+            },
+      );
       setReplacing(false);
+      setByHand(false);
       setDraft("");
     };
 
@@ -81,8 +135,13 @@ export function createSettingsCard({ keys, client }: { keys: KeyStore; client: L
           Linear.
         </p>
         {saved && !replacing && (
-          <p className="mtl-saved">
-            <strong>Key saved.</strong> It is not shown again.
+          <p className="mtl-saved" data-place={place}>
+            <strong>Key saved.</strong>{" "}
+            {place === "keychain"
+              ? "It is kept in your Keychain. It is not shown again."
+              : keychain
+                ? "It is in this app's profile, as plain text, because the Keychain would not take it yet (it is tried again each time Buzz starts). Any other plugin you install could read it. It is not shown again."
+                : "It is in this app's profile, as plain text: any other plugin you install could read it. It is not shown again."}
           </p>
         )}
         {showInput && (
@@ -104,22 +163,41 @@ export function createSettingsCard({ keys, client }: { keys: KeyStore; client: L
                 Save key
               </button>
               {replacing && (
-                <button type="button" className="mtl-button" onClick={() => (setReplacing(false), setDraft(""))}>
+                <button type="button" className="mtl-button" onClick={() => (setReplacing(false), setDraft(""), setByHand(false))}>
                   Cancel
                 </button>
               )}
             </div>
           </form>
         )}
+        {byHand && (
+          <div role="group" aria-label="Save the key in the Keychain by hand" className="mtl-key-form">
+            <p>
+              To put it in the Keychain yourself, run this in Terminal. It asks for the key (twice, showing nothing as you type), so the key is not in the
+              command:
+            </p>
+            <code className="mtl-code">{KEYCHAIN_TERMINAL_COMMAND}</code>
+            <div className="mtl-actions">
+              <button type="button" className="mtl-button" onClick={() => void checkKeychain()}>
+                Check Keychain
+              </button>
+            </div>
+          </div>
+        )}
         {saved && !replacing && (
           <div className="mtl-actions">
             <button type="button" className="mtl-button" disabled={status.kind === "checking"} onClick={async () => show(await ask())}>
               Test connection
             </button>
+            {keychain && place === "profile" && (
+              <button type="button" className="mtl-button" data-primary disabled={status.kind === "checking"} onClick={() => void move()}>
+                Move to Keychain
+              </button>
+            )}
             <button type="button" className="mtl-button" onClick={() => setReplacing(true)}>
               Replace key
             </button>
-            <button type="button" className="mtl-button" onClick={remove}>
+            <button type="button" className="mtl-button" onClick={() => void remove()}>
               Remove key
             </button>
           </div>
@@ -137,10 +215,17 @@ export function createSettingsCard({ keys, client }: { keys: KeyStore; client: L
           . Give it Write access (Read comes with it): Write is what lets a dragged card change state. If Linear lets you limit the key to certain
           teams, limit it to the teams you use.
         </p>
-        <p className="mtl-muted">
-          The key is kept on this computer, in this app's profile, as plain text. Buzz plugins are not sandboxed, so any other plugin you install could read
-          it: install only plugins you trust.
-        </p>
+        {keychain ? (
+          <p className="mtl-muted">
+            On a Mac the key is kept in your Keychain, in an item named buzz-linear, not in this app's profile. Buzz plugins are not sandboxed: a plugin that
+            declares the <code>security</code> program could read it too, and its install review lists that. Install only plugins you trust.
+          </p>
+        ) : (
+          <p className="mtl-muted">
+            On this system the key is kept on this computer, in this app's profile, as plain text. Buzz plugins are not sandboxed, so any other plugin you
+            install could read it: install only plugins you trust.
+          </p>
+        )}
       </section>
     );
   };

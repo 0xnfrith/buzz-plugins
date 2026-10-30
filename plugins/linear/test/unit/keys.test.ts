@@ -19,22 +19,34 @@ describe("checkKey", () => {
   });
 });
 
-describe("key store", () => {
-  test("saves, reads, clears, and tells subscribers each time", () => {
+describe("key store, where there is no Keychain", () => {
+  test("saves, reads, clears, and tells subscribers each time", async () => {
     const keys = createKeyStore(memoryStorage());
+    await keys.ready;
     const seen: number[] = [];
     const stop = keys.subscribe(() => seen.push(keys.version()));
     expect(keys.has()).toBe(false);
-    keys.save("test-key-good");
-    expect(keys.read()).toBe("test-key-good");
-    keys.clear();
+    expect(await keys.save("test-key-good")).toBe(true);
+    expect([keys.read(), keys.place()]).toEqual(["test-key-good", "profile"]);
+    expect(await keys.clear()).toBe(true);
     expect(keys.has()).toBe(false);
     stop();
-    keys.save("test-key-other");
+    await keys.save("test-key-other");
     expect(seen).toEqual([1, 2]);
   });
 
-  test("a storage that throws reads as no key", () => {
+  test("finds a key the profile already holds, once, without calling anything else", async () => {
+    const storage = memoryStorage();
+    storage.setItem("megatech.linear.api-key.v1", "test-key-good");
+    const keys = createKeyStore(storage);
+    expect(keys.has()).toBe(false); // not before the first look has finished
+    await keys.ready;
+    expect([keys.read(), keys.place()]).toEqual(["test-key-good", "profile"]);
+    expect(keys.keychainAvailable()).toBe(false);
+    expect(keys.version()).toBe(0); // the first look restarts nothing
+  });
+
+  test("a storage that throws reads as no key", async () => {
     const keys = createKeyStore({
       getItem: () => {
         throw new Error("blocked");
@@ -42,7 +54,21 @@ describe("key store", () => {
       setItem: () => {},
       removeItem: () => {},
     });
+    await keys.ready;
     expect(keys.read()).toBeUndefined();
+  });
+
+  test("a storage that will not take the key says so, and nothing is kept", async () => {
+    const keys = createKeyStore({
+      getItem: () => null,
+      setItem: () => {
+        throw new Error("full");
+      },
+      removeItem: () => {},
+    });
+    await keys.ready;
+    await expect(keys.save("test-key-good")).rejects.toThrow();
+    expect(keys.has()).toBe(false);
   });
 });
 
