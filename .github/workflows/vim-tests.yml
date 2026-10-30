@@ -36,6 +36,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: BUZZ_APP_REF is the same in both Vim workflows
+        run: |
+          ref() { sed -n 's/^  BUZZ_APP_REF: \([0-9a-f]\{40\}\).*/\1/p' "$1"; }
+          [ -n "$(ref .github/workflows/vim-latency.yml)" ] && [ "$(ref .github/workflows/vim-latency.yml)" = "$(ref .github/workflows/vim-tests.yml)" ] \
+            || { echo "::error::BUZZ_APP_REF is not the same 40-character commit in vim-latency.yml and vim-tests.yml: change both together"; exit 1; }
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: block/buzz-app

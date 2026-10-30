@@ -3,11 +3,11 @@
 # when its p99 is over 50 ms in all three attempts; the p95 target (16 ms) is reported in the job summary (the spec writes the
 # table to $GITHUB_STEP_SUMMARY), not enforced.
 #
-# The rows are run in shards, one job per surface, so that one slow runner cannot fail the gate on its own and the wait is the
+# The tests are run in shards, one job per surface, so that one slow runner cannot fail the gate on its own and the wait is the
 # longest surface rather than the sum of them. The shards are told apart by the titles of the spec's tests (`--grep`), so the spec
 # and the scripts under plugins/vim/test do not change for it. They are listed in one place, the `shards` step of the `plan` job,
-# which also checks, before anything is measured, that between them they run every row of the spec exactly once. "rest" is
-# everything the other shards do not name, so a row added later always lands somewhere. The final job, "Key latency budget", is the
+# which also checks, before anything is measured, that between them they run every test of the spec exactly once. "rest" is
+# everything the other shards do not name, so a test added later always lands somewhere. The final job, "Key latency budget", is the
 # one check to require: it fails unless the plan and every shard passed.
 name: Vim key latency
 
@@ -46,6 +46,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: BUZZ_APP_REF is the same in both Vim workflows
+        run: |
+          ref() { sed -n 's/^  BUZZ_APP_REF: \([0-9a-f]\{40\}\).*/\1/p' "$1"; }
+          [ -n "$(ref .github/workflows/vim-latency.yml)" ] && [ "$(ref .github/workflows/vim-latency.yml)" = "$(ref .github/workflows/vim-tests.yml)" ] \
+            || { echo "::error::BUZZ_APP_REF is not the same 40-character commit in vim-latency.yml and vim-tests.yml: change both together"; exit 1; }
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: block/buzz-app
@@ -79,7 +84,7 @@ jobs:
           JSON
           )
           echo "json=$shards" >> "$GITHUB_OUTPUT"
-      - name: Every row runs in exactly one shard
+      - name: Every test runs in exactly one shard
         env:
           SHARDS: ${{ steps.shards.outputs.json }}
         run: |
@@ -94,8 +99,8 @@ jobs:
           }
           without_table() { grep -v -x -F "$table" || true; }
           all=$(list | without_table | LC_ALL=C sort)
-          [ -n "$all" ] || fail "the spec lists no rows"
-          { echo "### Latency shards"; echo; echo "The spec lists $(wc -l <<<"$all") rows."; echo; echo "| Shard | Rows |"; echo "| --- | ---: |"; } >> "$GITHUB_STEP_SUMMARY"
+          [ -n "$all" ] || fail "the spec lists no tests"
+          { echo "### Latency shards"; echo; echo "The spec lists $(wc -l <<<"$all") tests."; echo; echo "| Shard | Tests |"; echo "| --- | ---: |"; } >> "$GITHUB_STEP_SUMMARY"
           [ "$(jq -r '[.[].id] | length - (unique | length)' <<<"$SHARDS")" = 0 ] || fail "two shards have the same id"
           union=""
           while IFS= read -r shard; do
@@ -106,17 +111,17 @@ jobs:
             mine=$(list "${args[@]}")
             [ "$(grep -c -x -F "$table" <<<"$mine" || true)" = 1 ] || fail "shard $id does not run the table test exactly once, so it would write no table"
             mine=$(without_table <<<"$mine" | LC_ALL=C sort)
-            [ -n "$mine" ] || fail "shard $id has no rows"
+            [ -n "$mine" ] || fail "shard $id has no tests"
             echo "| $id | $(wc -l <<<"$mine") |" >> "$GITHUB_STEP_SUMMARY"
             union+="$mine"$'\n'
           done < <(jq -c '.[]' <<<"$SHARDS")
           union=$(printf '%s' "$union" | LC_ALL=C sort)
           if [ "$union" != "$all" ]; then
-            echo "Rows in no shard (<) or in more than one (>):"
+            echo "Tests in no shard (<) or in more than one (>):"
             diff <(printf '%s\n' "$all") <(printf '%s\n' "$union") || true
-            fail "the shards together are not exactly the rows of the spec: see the log for which"
+            fail "the shards together are not exactly the tests of the spec: see the log for which"
           fi
-          echo "All $(wc -l <<<"$all") rows are in exactly one shard."
+          echo "All $(wc -l <<<"$all") tests are in exactly one shard."
 
   shard:
     name: Key latency (${{ matrix.shard.name }})
