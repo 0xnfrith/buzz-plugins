@@ -1808,7 +1808,7 @@ const openThreadBeside = async (page) => {
 // ProseMirror (prosemirror-view, DOMObserver.flush) reads a caret that lands on the very start of the draft within 200 ms of the editor gaining
 // focus, with no click in the last 300 ms, as the browser's own reset after focus, and puts its own selection back: a 0 (or gg) pressed that soon
 // after a key focused the box is undone a moment later, and the h after it finds the caret where it was. A fast typist can reach it too (a cross
-// key or i rolled straight into 0 h, 50 to 120 ms between keys; see NOTES.md), and CI does: it types a draft and reaches the 0 in about 180 ms,
+// key rolled straight into 0 h, or i, Esc, 0, h, 50 to 120 ms between keys; see NOTES.md), and CI does: it types a draft and reaches the 0 in about 180 ms,
 // so a test that moves to the start of a draft the box was focused for by a key waits the window out first.
 const pastEditorFocusWindow = (page) => page.waitForTimeout(250);
 
