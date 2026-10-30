@@ -2,8 +2,12 @@
 // Every dialog and menu keeps the plugin's keys off (the host's dispatcher stands down for them and so
 // does the plugin), except Settings, which is a list and a detail like the app itself: j and k move
 // through its sections, l or Enter opens one and goes into it, h comes back to the list. Esc closes it,
-// which the host already does. Plugin API: nothing, there is no keyboard service for a dialog. DOM: the
-// dialog, its `nav[aria-label="Settings sections"]` and the host's own `#settings-content`.
+// which the host already does. Inside a section j and k move from one control to the next (the plugin
+// cards and their buttons, the tabs, a section's switches and menus: the tab stops, in the order Tab
+// takes them, except the fields, which j and k step over: Tab reaches one, and there j types), Enter is
+// the host's own (a button, a link and a switch all take it), and a field, a select or an open menu keep
+// their own keys. Plugin API: nothing, there is no keyboard service for a dialog. DOM: the dialog, its
+// `nav[aria-label="Settings sections"]` and the host's own `#settings-content`.
 import { afterLayout, clamp, isEditable, visible } from "./dom";
 import { keepFocusInView, scrollLines } from "./scroll";
 import { armPending, set, state, takeCount } from "./state";
@@ -11,6 +15,23 @@ import { armPending, set, state, takeCount } from "./state";
 const SETTINGS_NAV = 'nav[aria-label="Settings sections"]';
 const SETTINGS_OWN_KEYS = 'select, [role="combobox"], [role="listbox"], [role="menu"], [role="menuitem"], [role="option"]';
 const settingsDialog = () => document.querySelector(SETTINGS_NAV)?.closest('[role="dialog"]');
+// A menu button (the host's select) that is shut keeps no keys of its own: j and k move on from it. Open, its menu has them.
+const ownKeys = (el: HTMLElement) => {
+  const own = el.closest<HTMLElement>(SETTINGS_OWN_KEYS);
+  return !!own && !(own.getAttribute("role") === "combobox" && own.tagName === "BUTTON" && own.getAttribute("aria-expanded") !== "true");
+};
+// Where a key is typed: a text field, a native select, a text area, an editable region. j and k are letters there. (A check box or
+// a radio button is an input too, and takes no letters.)
+const NOT_TYPED_IN = /^(checkbox|radio|button|submit|reset|image|file|color|range)$/;
+const typing = (el: Element) => isEditable(el) && !(el instanceof HTMLInputElement && NOT_TYPED_IN.test(el.type));
+// The controls of a section in the order Tab visits them: what takes the focus (a tabindex of 0 or more, so a tab list's
+// roving items count once) and shows, except where a key is typed (the search box, a select): j and k step over those, so that
+// they reach a plugin's Disable button from the cards without a Tab, and Tab reaches them.
+const TAB_STOPS = 'a[href], button, input, select, textarea, [tabindex]';
+const paneStops = (content: HTMLElement) =>
+  [...content.querySelectorAll<HTMLElement>(TAB_STOPS)].filter(
+    (el) => el.tabIndex >= 0 && !(el as HTMLButtonElement).disabled && visible(el) && !typing(el),
+  );
 // The sections, not the community address button the list starts with (it copies a URL).
 const settingsItems = (dialog: Element) =>
   [...dialog.querySelectorAll<HTMLElement>(`${SETTINGS_NAV} button:not([aria-label])`)].filter(visible);
@@ -22,6 +43,12 @@ const focusSection = (item: HTMLElement | undefined) => {
   document.documentElement.dataset.keyboardNavigation = "";
   item.focus({ preventScroll: true, focusVisible: true });
   item.scrollIntoView({ block: "nearest" });
+};
+// The same for a control inside a section.
+const focusControl = (el: HTMLElement) => {
+  document.documentElement.dataset.keyboardNavigation = "";
+  el.focus({ preventScroll: true, focusVisible: true });
+  el.scrollIntoView({ block: "nearest" });
 };
 // The scrolling element around `el`, up to (not including) `stop`; `stop` when there is none.
 const scrollParent = (el: Element, stop: HTMLElement): HTMLElement => {
@@ -43,7 +70,7 @@ export const onSettingsKey = (event: KeyboardEvent) => {
   const dialog = settingsDialog();
   const el = event.target as HTMLElement;
   // Typing, a select, a menu or a popup over the dialog (its focus is outside it) keep their own keys.
-  if (!dialog || !dialog.contains(el) || isEditable(el) || el.closest?.(SETTINGS_OWN_KEYS)) return;
+  if (!dialog || !dialog.contains(el) || typing(el) || ownKeys(el)) return;
   if (digit) {
     set({ count: Math.min(state.count * 10 + Number(key), 999) });
     return armPending();
@@ -77,14 +104,36 @@ export const onSettingsKey = (event: KeyboardEvent) => {
       if (!items.includes(item)) return; // the community address button: Enter copies, l does nothing
       // Opens the section ... unless it is the open one already: the host renders a section anew on every click (some 130 ms in
       // the browser harness) and would show what is there.
-      if (item.getAttribute("aria-current") !== "page" || !content || !visible(content)) item.click();
-      afterLayout(() => content?.focus({ preventScroll: true })); // ... and goes into it
+      const shown = item.getAttribute("aria-current") === "page" && !!content && visible(content);
+      if (shown) content.focus({ preventScroll: true }); // already open: in at once, so that a j straight after finds the focus there
+      else {
+        item.click();
+        afterLayout(() => content?.focus({ preventScroll: true })); // ... and goes into it
+      }
     } else swallow(); // h: already in the list
     return;
   }
-  if (key === "Enter" || key === "l") return; // a button or link in the detail keeps its Enter
+  if (content?.contains(el)) {
+    // In the open section.
+    if (key === "h") {
+      swallow();
+      return focusSection(current); // back to the list, on the open section
+    }
+    if (key === "j" || key === "k") {
+      swallow();
+      const stops = paneStops(content);
+      // The next control after the one that has the focus (the section itself, just after l, is before all of them); with none
+      // that way the section scrolls, as it did before the controls could be walked.
+      const after = (stop: HTMLElement) => !!(el.compareDocumentPosition(stop) & Node.DOCUMENT_POSITION_FOLLOWING) && !el.contains(stop);
+      const before = (stop: HTMLElement) => !!(el.compareDocumentPosition(stop) & Node.DOCUMENT_POSITION_PRECEDING) && !stop.contains(el);
+      const next = el === content ? (key === "j" ? stops[0] : undefined) : key === "j" ? stops.find(after) : stops.findLast(before);
+      if (next) return focusControl(next);
+      return scrollParent(el, dialog as HTMLElement).scrollBy({ top: key === "j" ? 48 : -48 });
+    }
+    return; // Enter is the host's own (a button, a link and a switch all take it themselves); l: nothing further in
+  }
+  if (key === "Enter" || key === "l") return; // a button or link around the section keeps its Enter
   swallow();
   if (key === "h") focusSection(current); // back to the list, on the open section
-  else if (content?.contains(el)) scrollParent(el, dialog as HTMLElement).scrollBy({ top: key === "j" ? 48 : -48 });
   else focusSection(current); // from the close button or the dialog itself, into the list
 };

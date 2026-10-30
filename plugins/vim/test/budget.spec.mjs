@@ -729,6 +729,9 @@ for (const [id, letter, name] of [
     ]);
   });
 
+// The controls of the open Settings section in the order Tab visits them, without the fields where a key is typed (j and k step over those),
+// for the control rows.
+const PANE_STOPS = `const stops = [...document.querySelectorAll('#settings-content :is(a[href], button, input, select, textarea, [tabindex])')].filter((e) => e.tabIndex >= 0 && !e.disabled && e.getClientRects().length > 0 && !e.matches('input:not([type=checkbox]):not([type=radio]):not([type=button]), select, textarea'))`;
 surface("settings", "Settings dialog", async ({ page, rows }) => {
   await page.keyboard.press("g");
   await page.keyboard.press("s");
@@ -750,6 +753,28 @@ surface("settings", "Settings dialog", async ({ page, rows }) => {
     ),
     control("click the open section (the page itself)", "focus the open section (the page itself)", `document.querySelector('nav[aria-label="Settings sections"] button[aria-current]').click()`, `document.querySelector('nav[aria-label="Settings sections"] button[aria-current]').focus()`, 30),
     { pair: [{ key: "Ctrl-e", seq: ["Control+e"] }, { key: "Ctrl-y", seq: ["Control+y"] }] },
+    // Inside a section: j and k move from one control to the next. Manage plugins has the most (the cards, the tabs and two buttons
+    // for each of some forty plugins; the search box is stepped over). The row starts on the fourth control, and the two keys alternate between the fourth and the third.
+    {
+      pair: [{ key: "j: the next control (Manage plugins)", seq: ["j"] }, { key: "k: the control before (Manage plugins)", seq: ["k"] }],
+      before: async (page) => {
+        // The section's button has the focus (as j gives it), and l opens the section and goes into it.
+        await page.evaluate(() => [...document.querySelectorAll('nav[aria-label="Settings sections"] button')].find((b) => b.textContent.includes("Manage plugins"))?.focus());
+        await press(page, "l");
+        await expect(page.getByRole("region", { name: "Manage plugins", exact: true })).toBeVisible();
+        await page.waitForTimeout(600);
+        for (let i = 0; i < 4; i++) await press(page, "j");
+        const where = await page.evaluate(() => document.activeElement?.getAttribute("aria-label"));
+        expect(where, "the fourth control of Manage plugins has the focus").toBe("View Profiles details");
+      },
+    },
+    // The control for j and k: the page moves the focus to the next or the previous control of the section itself, and shows it.
+    control(
+      "focus the next control (the page itself)",
+      "focus the control before (the page itself)",
+      `${PANE_STOPS}; const at = stops.indexOf(document.activeElement); const to = stops[Math.min(stops.length - 1, at + 1)]; to.focus({ preventScroll: true }); to.scrollIntoView({ block: "nearest" })`,
+      `${PANE_STOPS}; const at = stops.indexOf(document.activeElement); const to = stops[Math.max(0, at - 1)]; to.focus({ preventScroll: true }); to.scrollIntoView({ block: "nearest" })`,
+    ),
   ]);
 }, `a.closest('[role="dialog"]')`);
 
