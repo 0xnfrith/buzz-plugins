@@ -95,3 +95,11 @@ What the harness cannot cover, check by hand and say so: the desktop installer p
 ## 7. Write down what you found
 
 Each plugin keeps a `NOTES.md`: what works through the API, what needed the DOM and why, what was verified and what was not. It is how the next plugin starts ahead.
+
+### Limits that only the installed app checks
+
+The browser harness runs a plugin's code but not the desktop app's installer, so a manifest can pass every browser test and still be refused at install. Known so far:
+
+- **A declared host command** (`host.commands`) may have at most 16 arguments, each at most 1,024 bytes, with no NUL byte. The desktop app's plugin manager checks this when the plugin is installed (`crates/plugin-manager`, `valid_program`) and refuses the whole declaration ("Invalid host command declaration"). A shell script longer than that does not fit in one `sh -c` argument: keep it short, move comments to the README, and pass a longer piece (an `awk` program, say) as a further argument that the script runs from `$1`. Test the manifest against these three rules in a unit test, and install the plugin in the real app before reporting it working (`plugins/agent-skills-highlighter` is the example, and its `NOTES.md` tells how it was found).
+
+Add to this list whenever the installed app refuses something the browser did not.
