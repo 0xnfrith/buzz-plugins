@@ -42,6 +42,41 @@ Every person, chat and message in the screenshots is made up: they come from the
 2. Open Settings, Beeper. Paste the token and press **Save to Keychain** (on a Mac; elsewhere **Save token**). The plugin asks Beeper first, and keeps the token only if Beeper accepts it. The card says "Connected to Beeper Desktop…" and where the token is kept. If macOS asks whether Buzz may use the Keychain item, that is the system asking about the item the plugin made.
 3. Open the **Beeper** page in the sidebar.
 
+<details>
+<summary>Step-by-step with screenshots</summary>
+
+The screenshots are from the Buzz desktop app on Linux, in the light theme, in a new profile with nothing in it. macOS and Windows look a little different and are not shown. Steps 1 to 4 are the same for every plugin in this repository.
+
+**1. Open Settings, then Plugins, then Manage plugins, and press Add.**
+
+![Settings open on Manage plugins, with the Add button at the top right](../../assets/install/1-manage-plugins.png)
+
+**2. Choose how to load it.** The Add a plugin window has a folder on the left (drop one in, or press **Browse**) and a Git or GitHub repository on the right. The repository is the easier way: there is nothing to download first.
+
+![The Add a plugin window: on the left a drop area with a Browse button for a folder, on the right a box for a Git or GitHub repository with a Find button](../../assets/install/2-add-a-plugin.png)
+
+**3. Type `https://github.com/0xnfrith/buzz-plugins` and press Find.** Leave Branch or tag empty. If you have cloned this repository, use **Browse** instead and choose the folder `plugins/beeper`. With **Browse** there is no step 4: the review in step 5 opens straight away.
+
+![The repository address typed into the Git or GitHub repository box, with Find ready to press](../../assets/install/3-git-address.png)
+
+**4. Pick Beeper and press Continue.** Buzz lists every plugin in the repository with its folder and id.
+
+![The Choose a plugin window listing Artifacts, Beeper, Key probe (test tool, do not install), Linear and Vim mode, none picked yet](../../assets/install/4-choose-a-plugin.png)
+
+**5. Read the review and press Install plugin.** Beeper asks to run programs on your computer: `curl` twice and `security` three times. Open a row to see the program and every argument it will always be run with. **Enable plugin** is on, so it is turned on as it is installed.
+
+![The Review plugin access window for Beeper: Computer access, Run curl twice, Run security three times, Enable plugin switched on, and the Install plugin button](screenshots/install/1-review.png)
+
+**6. It is installed and turned on.** Search Manage plugins for it: **Disable** on its row means it is on. It now has a page in the sidebar and a card in Settings.
+
+![Manage plugins searched for beeper: Beeper is listed with a Disable button, which means it is on](screenshots/install/2-installed.png)
+
+**7. Give it your token.** Open Settings, then **Beeper**, paste the access token you made in Beeper Desktop and press the button under it. This computer is Linux, so the button says **Save token** and the card says the token is kept in the app's profile as plain text; on a Mac the button says **Save to Keychain** and the token goes to the Keychain. No token is typed in this shot.
+
+![The Beeper card in Settings: an empty box for the Beeper access token, a Save token button, and what the card says about where the token is kept](screenshots/install/3-settings-card.png)
+
+</details>
+
 ### How it reaches Beeper
 
 Beeper Desktop's API speaks plain HTTP on `localhost:23373`. Buzz's two ways for a plugin to reach the network do not allow that: `host.request` accepts only HTTPS, and the page's content security policy blocks `fetch` to anything but a short list of hosts. What Buzz does allow is a program that the plugin's manifest declares in advance, with its arguments fixed there. So the plugin declares `curl` and gives it each request on its standard input, as a curl configuration (the address, the `Authorization` header, the body). Everything about how `curl` runs is fixed in `manifest.json`: no user configuration file (`-q`), plain `http` only (`--proto =http`), no proxy (`--noproxy '*'`), a connect timeout of 2 s and a total of 4 s (Buzz's own limit is 5 s), and the status code written after the reply.

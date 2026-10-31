@@ -39,11 +39,51 @@ No address is built in. You add, rename and remove your own in **Settings → Ar
 
 ## How to install
 
-1. Get the files: clone this repository.
-2. In Buzz: **Settings → Plugins → Manage plugins → Add**, choose a **folder**, pick `plugins/artifacts`.
-3. Review, press **Install plugin**, make sure it is enabled.
+1. In Buzz: **Settings → Plugins → Manage plugins → Add**. Enter `https://github.com/0xnfrith/buzz-plugins` as the Git or GitHub repository, press **Find**, pick **Artifacts** and press **Continue**. (Or clone this repository, press **Browse** instead and choose the folder `plugins/artifacts`.)
+2. Review, press **Install plugin**, make sure it is enabled.
 
 Then add your pages: open **Settings**, find the **Artifacts** card, type a name and an `https://` address, and press **Add page**. Every step, from the default page to pinning a page to the top bar, is under "Using it", below.
+
+<details>
+<summary>Step-by-step with screenshots</summary>
+
+The screenshots are from the Buzz desktop app on Linux, in the light theme, in a new profile with nothing in it. macOS and Windows look a little different and are not shown. Steps 1 to 4 are the same for every plugin in this repository.
+
+**1. Open Settings, then Plugins, then Manage plugins, and press Add.**
+
+![Settings open on Manage plugins, with the Add button at the top right](../../assets/install/1-manage-plugins.png)
+
+**2. Choose how to load it.** The Add a plugin window has a folder on the left (drop one in, or press **Browse**) and a Git or GitHub repository on the right. The repository is the easier way: there is nothing to download first.
+
+![The Add a plugin window: on the left a drop area with a Browse button for a folder, on the right a box for a Git or GitHub repository with a Find button](../../assets/install/2-add-a-plugin.png)
+
+**3. Type `https://github.com/0xnfrith/buzz-plugins` and press Find.** Leave Branch or tag empty. If you have cloned this repository, use **Browse** instead and choose the folder `plugins/artifacts`. With **Browse** there is no step 4: the review in step 5 opens straight away.
+
+![The repository address typed into the Git or GitHub repository box, with Find ready to press](../../assets/install/3-git-address.png)
+
+**4. Pick Artifacts and press Continue.** Buzz lists every plugin in the repository with its folder and id.
+
+![The Choose a plugin window listing Artifacts, Beeper, Key probe (test tool, do not install), Linear and Vim mode, none picked yet](../../assets/install/4-choose-a-plugin.png)
+
+**5. Read the review and press Install plugin.** Artifacts declares no commands and no network addresses, so the review lists nothing beyond what every plugin gets: "No additional capabilities declared". **Enable plugin** is on, so it is turned on as it is installed.
+
+![The Review plugin access window for a plugin that declares nothing: Computer access, no additional capabilities declared, Enable plugin switched on, and the Install plugin button](../../assets/install/review-no-capabilities.png)
+
+Open **Computer access** to read what the review means by it: plugins are not sandboxed, so the list says what a plugin asks Buzz to do, not what its code can do. Install only plugins you trust.
+
+![The Computer access row opened: Plugins aren't sandboxed, they can access your computer beyond these declarations, even when no additional capabilities are listed](../../assets/install/5-review-not-sandboxed.png)
+
+**6. It is installed and turned on.** Search Manage plugins for it: **Disable** on its row means it is on, and it now has a page in the sidebar and a card in Settings.
+
+![Manage plugins searched for artifacts: Artifacts is listed with a Disable button, which means it is on, and Artifacts has an entry in the Settings list](screenshots/install/1-installed.png)
+
+**7. Add a page.** Open Settings, then **Artifacts**. Type a name and an `https://` address (this one is only an example) and press **Add page**.
+
+![The Artifacts card in Settings with the name Example page and the address https://example.com/ typed in, ready for Add page](screenshots/install/2-add-a-page.png)
+
+![The Artifacts card after Add page: Example page is listed as the default page, with Rename, Pin to top bar and Remove](screenshots/install/3-page-added.png)
+
+</details>
 
 ## What it looks like
 
