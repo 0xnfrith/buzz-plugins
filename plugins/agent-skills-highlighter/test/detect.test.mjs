@@ -30,6 +30,9 @@ const yes = [
   ["/x", ["/x"]],
   ["a /a.b skill", ["/a.b"]],
   ["🔥/brainstorming", ["/brainstorming"]],
+  ["完了。/brainstorming", ["/brainstorming"]], // punctuation of another script is not a word
+  ["日本語 /brainstorming", ["/brainstorming"]],
+  ["«/brainstorming»", ["/brainstorming"]],
 ];
 for (const [text, want] of yes) test(`finds ${JSON.stringify(text)}`, () => assert.deepEqual(slices(text), want));
 
@@ -73,6 +76,15 @@ const no = [
   "/brainstorming%20x",
   "/brainstorming|x",
   "/brainstorming<b>",
+  // A letter, number or mark of any script before the slash makes it part of a word or a path (it was only ASCII letters before)
+  "é/brainstorming",
+  "日本/brainstorming",
+  "ключ/brainstorming",
+  "𠀀/brainstorming", // a letter outside the first plane: two UTF-16 units
+  "٣/brainstorming", // an Arabic-Indic digit
+  "e\u0301/brainstorming", // a letter and a combining accent
+  "see é/brainstorming and 日本/plan-review",
+  "/brainstorming日本",
 ];
 for (const text of no) test(`leaves ${JSON.stringify(text)} alone`, () => assert.deepEqual(slices(text), []));
 

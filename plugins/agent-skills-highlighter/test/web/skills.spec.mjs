@@ -168,6 +168,68 @@ test("Esc with the card open closes the card and nothing else: the thread behind
   await expect(reply).toBeHidden();
 });
 
+test("Esc with a card the pointer opened while the focus is elsewhere closes the card and still reaches the page; with the focus on the skill it does not", async ({ page, app }) => {
+  await arrange(page, app);
+  await say(page, "see /brainstorming");
+  // What gets as far as the page after the plugin's own listener (which is on the window, in the capture phase).
+  await page.evaluate(() => {
+    window.__esc = [];
+    document.addEventListener("keydown", (event) => event.key === "Escape" && window.__esc.push(event.defaultPrevented));
+  });
+  await composer(page).click();
+  await token(page, "brainstorming").hover();
+  await expect(card(page)).toBeVisible();
+  expect(await page.evaluate(() => document.activeElement?.getAttribute("role") === "textbox" || document.activeElement?.isContentEditable), "the focus is in the composer").toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(card(page)).toBeHidden();
+  expect(await page.evaluate(() => window.__esc), "the key reached the page, and nobody had prevented it").toEqual([false]);
+  // The same card with the focus on its skill: the plugin keeps the key.
+  await token(page, "brainstorming").focus();
+  await expect(card(page)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(card(page)).toBeHidden();
+  expect(await page.evaluate(() => window.__esc), "the second Esc did not reach the page").toEqual([false]);
+});
+
+test("a card whose skill is unmounted while it is open closes by itself, with no mouse-out to wait for", async ({ page, app }) => {
+  await arrange(page, app);
+  await say(page, "see /brainstorming");
+  await token(page, "brainstorming").hover();
+  await expect(card(page)).toBeVisible();
+  // As an edited or a deleted message would do: the node goes, the pointer stays where it was, and no mouseleave is ever sent to it.
+  await token(page, "brainstorming").evaluate((el) => el.remove());
+  await expect(card(page)).toBeHidden({ timeout: 3000 });
+  // And it opens again for the next skill.
+  await say(page, "and again /plan-review");
+  await expect(token(page, "plan-review")).toHaveCount(1);
+  await token(page, "plan-review").hover();
+  await expect(card(page)).toBeVisible();
+});
+
+test("a skill is a button for a screen reader: a role, a hint, and whether its card is open", async ({ page, app }) => {
+  await arrange(page, app);
+  await say(page, "run /brainstorming now");
+  const button = page.getByRole("button", { name: "/brainstorming", exact: true });
+  await expect(button).toHaveCount(1);
+  await expect(button).toHaveAttribute("data-skill", "brainstorming");
+  await expect(button).toHaveAttribute("aria-description", /Press Enter or Space/);
+  await expect(button).toHaveAttribute("aria-expanded", "false");
+  await button.focus();
+  await expect(card(page)).toBeVisible();
+  await expect(button).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("Escape");
+  await expect(button).toHaveAttribute("aria-expanded", "false");
+  // Enter and Space, which the role promises, open it.
+  for (const key of ["Enter", " "]) {
+    await page.keyboard.press(key);
+    await expect(card(page)).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(card(page)).toBeHidden();
+  }
+  // The words are still the message's own.
+  await expect(button).toHaveText("/brainstorming");
+});
+
 test("a long description is clamped to a fixed number of lines and ends in an ellipsis; one of a real size shows whole", async ({ page, app }) => {
   const words = Array.from({ length: 125 }, (_, i) => `word${String(i).padStart(3, "0")}`).join(" "); // 999 characters
   const real = Array.from({ length: 55 }, (_, i) => `real${String(i).padStart(2, "0")}`).join(" "); // 329 characters
@@ -468,6 +530,10 @@ test("the Settings card shows what was found, takes an extra folder through the 
   await expect(dialog.locator(".megatech-skills-set__status")).toContainText("skill names known");
   await expect(dialog.locator(".megatech-skills-set__status")).toContainText("1 from your skills folder");
   expect(state.calls[0]).toEqual({ command: "skills", input: "\n" });
+  // Square corners here too: not one element of the card has a radius, and the input and the buttons are in it.
+  const radii = await dialog.locator(".megatech-skills-set").evaluate((root) => [root, ...root.querySelectorAll("*")].map((el) => `${el.className || el.tagName}:${getComputedStyle(el).borderRadius}`));
+  expect(radii.filter((entry) => !entry.endsWith(":0px")), "every element of the Settings card has square corners").toEqual([]);
+  expect(radii.filter((entry) => entry.startsWith("megatech-skills-set__")).length).toBeGreaterThanOrEqual(4);
   const field = dialog.getByRole("textbox", { name: "Extra folder (optional)" });
   await field.fill("skills");
   await dialog.getByRole("button", { name: "Save", exact: true }).click();

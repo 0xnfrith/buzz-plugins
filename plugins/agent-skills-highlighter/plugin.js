@@ -6,8 +6,9 @@
 // ---- Detection ---------------------------------------------------------------------------------------------------------------
 
 const SKILL_START = /\/([A-Za-z0-9][A-Za-z0-9._:-]*)/g;
-// A `/` that follows one of these is part of a path, a URL, a host name or a word, not the start of a skill.
-const BEFORE_BLOCKS = /[A-Za-z0-9_/\\.:~@#$%&=+-]/;
+// A `/` that follows one of these is part of a path, a URL, a host name or a word, not the start of a skill: an ASCII path or word mark, or a
+// letter, a number or a combining mark of any script (`é/deploy`, `日本/deploy`).
+const BEFORE_BLOCKS = /[A-Za-z0-9_/\\.:~@#$%&=+-]|[\p{L}\p{N}\p{M}]/u;
 // What may follow a skill: the end, a space, or closing punctuation. Never `/`, a letter or a digit, `-`, `_`, `.ext`.
 const AFTER_ALLOWED = /[\s,;!?)\]}'"…”’»—]/;
 
@@ -18,7 +19,7 @@ export function findSkills(text, known) {
   SKILL_START.lastIndex = 0;
   for (let match; (match = SKILL_START.exec(text)); ) {
     const start = match.index;
-    if (start > 0 && BEFORE_BLOCKS.test(text[start - 1])) continue;
+    if (start > 0 && BEFORE_BLOCKS.test([...text.slice(Math.max(0, start - 2), start)].at(-1))) continue; // the code point before, whole
     const next = text[start + match[0].length];
     if (next !== undefined && !AFTER_ALLOWED.test(next)) continue;
     const name = match[1].replace(/[.:]+$/, "");
@@ -345,10 +346,10 @@ export const CSS = `
 .megatech-skills-set__status{padding:10px 12px;border:1px solid var(--border-standard,#2a3a42);border-left:3px solid var(--megatech-skills-edge);font:400 13px/1.45 var(--font-sans,ui-sans-serif,system-ui,sans-serif);color:var(--text-standard,inherit)}
 .megatech-skills-set__status[data-state="error"]{border-left-color:#c2362b}
 .megatech-skills-set__row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.megatech-skills-set__input{flex:1 1 260px;min-width:0;padding:8px 10px;border:1px solid var(--border-standard,#2a3a42);border-radius:3px;background:transparent;color:inherit;font:13px/1.3 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.megatech-skills-set__input{flex:1 1 260px;min-width:0;padding:8px 10px;border:1px solid var(--border-standard,#2a3a42);border-radius:0;background:transparent;color:inherit;font:13px/1.3 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 .megatech-skills-set__input:focus{outline:none;border-color:var(--megatech-skills-edge);box-shadow:0 0 0 1px var(--megatech-skills-edge)}
 .megatech-skills-set__input[aria-invalid="true"]{border-color:#c2362b}
-.megatech-skills-set__btn{padding:8px 12px;border:1px solid var(--megatech-skills-edge);border-radius:3px;background:transparent;color:inherit;font:600 12px/1 var(--font-sans,ui-sans-serif,system-ui,sans-serif);cursor:pointer}
+.megatech-skills-set__btn{padding:8px 12px;border:1px solid var(--megatech-skills-edge);border-radius:0;background:transparent;color:inherit;font:600 12px/1 var(--font-sans,ui-sans-serif,system-ui,sans-serif);cursor:pointer}
 .megatech-skills-set__btn:focus-visible{outline:2px solid var(--border-focus,var(--megatech-skills-edge));outline-offset:2px}
 .megatech-skills-set__error{color:#c2362b}
 `;
@@ -357,6 +358,7 @@ export const CSS = `
 
 const OPEN_DELAY = 140;
 const CLOSE_DELAY = 110;
+const WATCH_EVERY = 200;
 
 /** The card is plain DOM on <body> (API v1 has no overlay service); text goes in with textContent only. */
 function createCard({ store, doc, win }) {
@@ -364,6 +366,7 @@ function createCard({ store, doc, win }) {
   let anchor;
   let openTimer;
   let closeTimer;
+  let watchTimer;
   let counter = 0;
   const id = `megatech-skills-card-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -405,9 +408,11 @@ function createCard({ store, doc, win }) {
   const close = () => {
     clearTimeout(openTimer);
     clearTimeout(closeTimer);
+    clearInterval(watchTimer);
     if (anchor) {
       anchor.removeAttribute("data-skill-open");
       anchor.removeAttribute("aria-describedby");
+      anchor.setAttribute("aria-expanded", "false");
     }
     anchor = undefined;
     if (card) card.hidden = true;
@@ -430,7 +435,11 @@ function createCard({ store, doc, win }) {
     card.style.animation = "";
     target.setAttribute("data-skill-open", "");
     target.setAttribute("aria-describedby", id);
+    target.setAttribute("aria-expanded", "true");
     position();
+    // A token that is unmounted while its card is open (an edited or deleted message under the pointer) never gets a `mouseleave`: look for it.
+    clearInterval(watchTimer);
+    watchTimer = setInterval(() => anchor && !anchor.isConnected && close(), WATCH_EVERY);
   };
   return {
     hover(target, name) {
@@ -450,6 +459,11 @@ function createCard({ store, doc, win }) {
     blur: () => close(),
     close,
     isOpen: () => !!anchor,
+    /** The focus is on the skill the card is open for, or inside the card. */
+    holdsFocus: () => {
+      const active = doc.activeElement;
+      return !!active && (active === anchor || !!card?.contains(active));
+    },
     dispose() {
       close();
       card?.remove();
@@ -478,9 +492,13 @@ export function apply(ctx) {
     document.head.append(style);
     const onKey = (event) => {
       if (event.key !== "Escape" || !card.isOpen()) return;
-      // Esc closes the card and goes no further: passed on, it would also close the thread (or whatever else Esc is for) behind it.
-      event.preventDefault();
-      event.stopImmediatePropagation();
+      // With the focus on the skill (or in the card) Esc closes the card and goes no further: passed on, it would also close the thread behind
+      // it. With the focus elsewhere (a card opened by the pointer while the composer is in Vim's INSERT) it is not ours: close the card and
+      // let the key through, so that the host and Vim still get it.
+      if (card.holdsFocus()) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
       card.close();
     };
     const onScroll = () => card.isOpen() && card.close();
@@ -508,6 +526,9 @@ export function apply(ctx) {
       {
         className: "megatech-skills__token",
         tabIndex: 0,
+        role: "button",
+        "aria-expanded": "false",
+        "aria-description": "Agent skill. Press Enter or Space to see what it is.",
         "data-skill": name,
         onMouseEnter: (event) => card.hover(event.currentTarget, name),
         onMouseLeave: () => card.leave(),

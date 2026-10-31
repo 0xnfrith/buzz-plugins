@@ -28,7 +28,7 @@ Taken in the Buzz desktop app on Linux, with made-up skills (a skills folder, a 
 | Hover: the card (name, description, where from, a line of lore). The highlight is the dim tint with a dither; `/usr/local/bin/deploy`, `a/deploy`, the URL and `/deploy.md` are left alone | The same in light: the plate, text and border are Buzz's own |
 | ![Tab to /brainstorming: a focus ring and the card](screenshots/focus-dark.png) | ![Tab to /plan-review in light mode](screenshots/focus-light.png) |
 | Keyboard: Tab onto a skill opens its card, and the app's focus ring shows where you are | The same in light |
-| ![A thread: the card of a skill in a reply](screenshots/thread-dark.png) | ![Settings, Agent skills: 9 names found, one from the extra folder](screenshots/settings.png) |
+| ![A thread: the card of a skill in a reply](screenshots/thread-dark.png) | ![Settings, Agent skills: 10 names found, one from the extra folder](screenshots/settings.png) |
 | In a thread; a skill that wraps across two lines is highlighted on both | Settings, **Agent Skills**: what was found and from where, and the extra folder |
 | ![The install review: Run sh, with its arguments](screenshots/install-review.png) | ![The decloak on hover, then Tab through two skills](screenshots/hover.gif) |
 | The review the app shows before it installs or updates the plugin lists the one program, `sh`, and its arguments (the script). (This is the update dialog, so the source folder, which is a path on the test machine, is hidden) | The hover decloak (a scan beam and a cyan and magenta split for 0.4 s), the card of a plugin's skill, then Tab |
@@ -38,15 +38,15 @@ Taken in the Buzz desktop app on Linux, with made-up skills (a skills folder, a 
 A `/name` is highlighted only when **all** of these hold:
 
 1. `name` is a skill the plugin found, spelled exactly (capitals count). A skill from a plugin is known as `plugin:skill` and, unless you have a skill of that name yourself, as `skill`.
-2. The `/` starts a word: the character before it is not a letter, digit, `_`, `/`, `\`, `.`, `:`, `~`, `@`, `#`, `$`, `%`, `&`, `=`, `+` or `-`. So paths, URLs, hosts and `and/or` are left alone.
+2. The `/` starts a word: the character before it is not a letter, a number or a combining mark of any script (`é/deploy` and `日本/deploy` are left alone), nor `_`, `/`, `\`, `.`, `:`, `~`, `@`, `#`, `$`, `%`, `&`, `=`, `+` or `-`. So paths, URLs, hosts and `and/or` are left alone.
 3. What follows the name is the end of the text, a space, or one of `, ; ! ? ) ] } ' " … ” ’ » —`. A trailing `.` or `:` is not part of the name (`run /deploy.` highlights `/deploy`). `/deploy/prod`, `/deploy.sh` and `/deploy-now` are not `/deploy`.
 4. The text is Markdown prose. Buzz does not offer code, inline code, links, images or HTML to a plugin, so `` `/deploy` `` and `[x](/deploy)` stay as they are.
 
-`test/detect.test.mjs` is the table: 23 texts that match and 39 that do not.
+`test/detect.test.mjs` is the table: 26 texts that match and 47 that do not.
 
 ## The card
 
-Hover a highlighted skill for a moment, or Tab to it (every highlight is a tab stop, like a link). The card shows the skill's **name**, its **description** from the skill file, **where it comes from** (your skills folder, the extra folder, or a plugin's name), and a line of lore that changes each time. The description shows up to **12 lines, about 575 characters** at the card's width (measured with a monospace face in the desktop app and in the browser build), and a longer one ends in an ellipsis (`…`) instead of being cut off. Real descriptions are shorter: eleven real `SKILL.md` files found on a machine that builds this plugin had descriptions of 44 to 439 characters, and all of them show whole.
+Hover a highlighted skill for a moment, or Tab to it (every highlight is a tab stop, like a link, and a button for a screen reader: `role="button"`, a hint that says to press Enter or Space, and `aria-expanded` for whether its card is open). The card shows the skill's **name**, its **description** from the skill file, **where it comes from** (your skills folder, the extra folder, or a plugin's name), and a line of lore that changes each time. The description shows up to **12 lines, about 575 characters** at the card's width (measured with a monospace face in the desktop app and in the browser build), and a longer one ends in an ellipsis (`…`) instead of being cut off. Real descriptions are shorter: eleven real `SKILL.md` files found on a machine that builds this plugin had descriptions of 44 to 439 characters, and all of them show whole.
 
 | Do this | What happens |
 | --- | --- |
@@ -54,9 +54,10 @@ Hover a highlighted skill for a moment, or Tab to it (every highlight is a tab s
 | Tab to it | The card opens at once |
 | Move the pointer off, onto the card | The card stays while the pointer is on the skill or the card |
 | Move the pointer off both | The card closes after a moment |
-| `Esc` | The card closes, and that is all it does: focus stays on the skill and a thread open behind it stays open (the next `Esc`, with no card, is the app's own again) |
+| `Esc` | With the focus on the skill, the card closes and that is all `Esc` does: focus stays on the skill and a thread open behind it stays open (the next `Esc`, with no card, is the app's own again). With the focus somewhere else (a card the pointer opened while you type in the composer), the card closes and the key goes on to the app and to Vim mode as usual |
 | `Enter` or `Space` on the skill | The card opens again |
 | Scroll, click elsewhere, Tab away, or leave the window | The card closes |
+| Its message is edited or deleted, so the skill leaves the page | The card closes within a fifth of a second (a removed skill never gets a mouse-out) |
 
 ## Where the skills come from
 
@@ -171,13 +172,17 @@ Cloaked at rest, charged on contact.
 
 Highlighting must not slow the message list, so it was measured: a channel of 2,400 messages, one in five holding two skills a few times over (a far denser mix than real talk), loaded and scrolled in Buzz's own browser build with the plugin off and on.
 
-| Same list, same machine, same run | Plugin off | Plugin on |
-| --- | --- | --- |
-| Time to load the whole history (335,000 px) | 36.2 s | 37.6 s |
-| Frame time while scrolling it, half a screen a frame: median | 31.3 ms | 31.7 ms |
-| Frame time, 95th percentile | 66.2 ms | 62.4 ms |
+Frame time while scrolling it, half a screen a frame (the middle value of three passes), plugin off then on, the same list on the same machine in the same run. Three pairs, from three runs on two machines (the second is one pass on another machine):
 
-That is the middle value of three passes each, on a 2-CPU machine where run-to-run noise is about ±10%: no measurable difference. A spec (`test/web/perf.spec.mjs`) asserts that the load time and the median and 95th-percentile frame times stay within a fifth, plus a small allowance, of the same list without the plugin. The frames are slow in both columns because the test machine is small and the rows are tall; the point is the pair.
+| Run | Median | 95th percentile | 99th percentile |
+| --- | --- | --- | --- |
+| First run, an earlier build | 31.3 → 31.7 ms (+1%) | 66.2 → 62.4 ms (−6%) | not recorded |
+| Second run, another machine | 22.0 → 22.8 ms (+4%) | 49.6 → 53.7 ms (+8%) | 75.4 → 92.8 ms (+23%) |
+| Third run, this build | 23.6 → 24.0 ms (+2%) | 46.7 → 54.3 ms (+16%) | 79.8 → 82.7 ms (+4%) |
+
+**This is within the run-to-run noise of the test, not a measured cost, and not a proof of none.** The median is 1 to 4% slower with the plugin on in all three pairs, which is less than the spread between the three passes inside one run (23, 24 and 27 ms in the last run's "off" half). The tails move more, both ways, and by less than that spread too (95th percentile of 46, 47 and 69 ms in the same passes). The 99th percentile is reported, not asserted: with 400 frames in a pass it is the fourth-worst frame. The times to load the history (28 to 38 s with the plugin off or on) are not in the table: the first run of a session loads far slower than the second (74 s against 31 s in the last pair), whichever of the two it is. The frames are slow in all rows because the test machine is small and the rows are tall; the point is the pair.
+
+A spec (`test/web/perf.spec.mjs`) asserts that the load time and the median and 95th-percentile frame times stay within a fifth, plus a small allowance, of the same list without the plugin. The stronger evidence is Vim mode's own key-latency suite, run on the same list with the plugin off and on, four runs in a row on one runner (Vim only, both, Vim only, both): the key rows' median and 99th percentile were within 3% of Vim mode alone and within the 3% the same variant drifted by, and its gate (99th percentile at most 50 ms) did not fail in any of 12 runs. That table is in the pull request.
 
 The matcher is checked on its own too: `node test/bench.mjs` (about 2 to 3 microseconds per message that holds a slash, against a set of 300 names). Messages with no `/` cost one `includes` call.
 
@@ -199,7 +204,7 @@ Not used, and why: wrapping the words in the host's DOM (React owns those text n
 
 ```sh
 # from a clone of this repository, with no package.json above the plugin's folder:
-node --test plugins/agent-skills-highlighter/test/*.test.mjs                   # 125 unit tests: detection, parsing, the store, the real script on made-up folders, the look
+node --test plugins/agent-skills-highlighter/test/*.test.mjs                   # 136 unit tests: detection, parsing, the store, the real script on made-up folders, the look
 node plugins/agent-skills-highlighter/test/bench.mjs                           # the matcher's speed
 plugins/agent-skills-highlighter/test/run.sh /path/to/block/buzz-app/checkout  # the browser tests, in Buzz's own web build
 SKILLS_PERF=1 plugins/agent-skills-highlighter/test/run.sh /path/to/block/buzz-app/checkout -g "2,400 messages|highlighter's cost"   # the speed comparison (minutes)
@@ -211,17 +216,17 @@ The browser tests run the production web build, a fixture relay and headless Chr
 
 Checked:
 
-- **Node tests (125):** detection (the table above), parsing a `SKILL.md` (plain, quoted, folded and literal values), the store and the settings, **the real program** run as the manifest declares it (`sh -c`) against made-up folders (what it prints, that it prints nothing else, the caps, quiet skips, names with spaces and `$(…)`, an extra folder that is not absolute, folders whose names have control characters, that every file it read is unchanged afterwards), the stylesheet against the design tokens (colours, where magenta may appear, that every shadow of the highlight is inset) and the guard that every workflow building the app names the same Buzz commit (`.github/check-app-ref.sh`, run on made-up workflows too), and the manifest against the limits the app applies when it installs a plugin (see `NOTES.md`).
-- **Browser tests (15)**, in Buzz's own production web build (commit `d92bfb2c` of block/buzz-app, headless Chromium): a skill is drawn in a channel, a thread and a DM, and a path, a URL, code and an unknown name are left alone; hover opens the card, mouse-out and the card itself; keyboard (tab stops, Esc); Esc with the card open closes the card and not the thread behind it; a long description is clamped with an ellipsis; the glitch stays inside the highlight; scrolling and clicking away; the text and its box do not move; reduced motion; contrast in both themes; the card's tokens (dark) and the host's plate and text (light), square corners; Settings (the extra folder, a failed read keeps the last list); reading again; disabling and enabling leaves nothing behind. The DM is checked in the browser build only: sending a message to a real person to see one was not worth it.
+- **Node tests (136):** detection (the table above), parsing a `SKILL.md` (plain, quoted, folded and literal values), the store and the settings, **the real program** run as the manifest declares it (`sh -c`) against made-up folders (what it prints, that it prints nothing else, the caps, quiet skips, names with spaces and `$(…)`, an extra folder that is not absolute, folders whose names have control characters, that every file it read is unchanged afterwards), the stylesheet against the design tokens (colours, where magenta may appear, that every shadow of the highlight is inset) and the guard that every workflow building the app names the same Buzz commit (`.github/check-app-ref.sh`, run on made-up workflows too), and the manifest against the limits the app applies when it installs a plugin (see `NOTES.md`).
+- **Browser tests (18)**, in Buzz's own production web build (commit `d92bfb2c` of block/buzz-app, headless Chromium): a skill is drawn in a channel, a thread and a DM, and a path, a URL, code and an unknown name are left alone; hover opens the card, mouse-out and the card itself; keyboard (tab stops, Esc); Esc with the card open closes the card and not the thread behind it, but a card the pointer opened while the focus is elsewhere lets the key through; a long description is clamped with an ellipsis; the glitch stays inside the highlight; a card whose skill is removed closes by itself; a skill is a button (role, hint, `aria-expanded`); scrolling and clicking away; the text and its box do not move; reduced motion; contrast in both themes; the card's tokens (dark) and the host's plate and text (light), square corners, in the Settings card too; Settings (the extra folder, a failed read keeps the last list); reading again; disabling and enabling leaves nothing behind. The DM is checked in the browser build only: sending a message to a real person to see one was not worth it.
 - **Speed** (above), in the browser build.
-- **The installed Buzz 1.0 desktop app on Linux** (`0.0.0-preview.156.1`, WebKitGTK): the plugin is installed from this folder (the review lists `sh` and its arguments); the real `sh -c` reads a made-up Claude config folder (set with `CLAUDE_CONFIG_DIR`: four skills, a made-up plugin install with two skills, and an extra folder entered in Settings); the skills are highlighted in a channel and in a thread; a path, a URL, a file name, code and an unknown name are not; the card opens on hover and on Tab, and closes on Esc, in dark and in light; Settings says what was found; and with Vim mode on, `j` and `k` still move its cursor while a skill has the focus. The screenshots above are from it.
+- **The installed Buzz 1.0 desktop app on Linux** (`0.0.0-preview.156.1`, WebKitGTK): the plugin is installed from this folder (the review lists `sh` and its arguments); the real `sh -c` reads a made-up Claude config folder (set with `CLAUDE_CONFIG_DIR`: four skills, a made-up plugin install with two skills, and an extra folder entered in Settings); the skills are highlighted in a channel and in a thread; a path, a URL, a file name, code and an unknown name are not; the card opens on hover and on Tab, and closes on Esc, in dark and in light; Settings says what was found; with Vim mode on, `j` and `k` still move its cursor while a skill has the focus; with Vim mode on in the thread pane, `Esc` closes the card (opened by hover or by a click) and nothing else, a second `Esc` closes the thread; typing in the composer (INSERT) with a card the pointer opened, `Esc` closes the card and Vim still goes to NORMAL; a 999-character description is clamped to 12 lines and ends in an ellipsis; a skills folder named like a forged header line is not listed. The screenshots above are from it (the build as pushed).
 
 Not checked:
 
 - **macOS and Windows.** The plugin runs on whichever web view Buzz uses; the shell script uses only `sh`, `read`, `printf`, `grep`, `sed`, `head` and `awk`, and has been run here only with Linux's (dash, GNU grep, sed and awk).
 - **A real Claude Code plugin install.** The folder layout read from `installed_plugins.json` is the one Claude Code's documentation and binary describe (V1 and V2 files, `installPath`, `skills/<name>/SKILL.md`, `.claude-plugin/plugin.json`). The tests and the real-app check build that layout; they cannot show that a real install has the same files.
 - **The Chakra Petch and Share Tech Mono faces.** The card was looked at with the system faces only.
-- **Reduced motion and a DM in the real app.** Both are covered by the browser tests only.
+- **Reduced motion and a DM in the real app.** Both are covered by the browser tests only. A DM would have meant messaging a person. Reduced motion cannot be switched on in the Linux app on a bare display: its web view ignores the GTK animations-off setting (switching it off changed none of the 17 distinct frames of the decloak that were captured), so nobody should expect to see it there.
 
 ## License
 

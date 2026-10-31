@@ -30,7 +30,9 @@ test("the old red is gone and magenta is only ever the thin split edge: named on
 });
 
 test("corners are square and the glow is the design system's, on dark only", () => {
-  assert.ok(!/border-radius:\s*[1-9]/.test(withoutKeyframes.split(".megatech-skills-set")[0]), "the highlight and the card have no rounded corners");
+  assert.ok(!/border-radius:\s*[1-9]/.test(withoutKeyframes), "the highlight, the card and the Settings card have no rounded corners");
+  assert.ok(!/border-radius:\s*[^0;}]/.test(withoutKeyframes), "every radius written is 0");
+  assert.ok((withoutKeyframes.match(/border-radius:0/g) ?? []).length >= 5, "the Settings card's input and buttons say 0 outright");
   assert.ok(CSS.includes("--megatech-skills-glow:0 0 0 1px rgba(0,212,255,.12),0 12px 40px rgba(0,0,0,.6),0 0 34px rgba(0,212,255,.12);"));
   assert.ok(/data-color-mode="light"\] \.megatech-skills__card\{[^}]*--megatech-skills-glow:0 0 0 0 transparent/.test(CSS), "no glow in light");
 });
