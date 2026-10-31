@@ -1,7 +1,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../../assets/headers/key-probe-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="../../assets/headers/key-probe-light.svg">
-  <img alt="Key probe (measuring only)" src="../../assets/headers/key-probe-dark.svg" width="100%">
+  <img alt="Key probe (test tool, do not install)" src="../../assets/headers/key-probe-dark.svg" width="100%">
 </picture>
 
 ## What it is

@@ -1,5 +1,6 @@
 {
   "id": "megatech.key-probe",
-  "name": "Key probe (measuring only)",
-  "apiVersion": 1
+  "name": "Key probe (test tool, do not install)",
+  "apiVersion": 1,
+  "description": "A measuring tool for testing other plugins. It adds nothing to Buzz and nobody needs it to use any plugin: do not install it."
 }
