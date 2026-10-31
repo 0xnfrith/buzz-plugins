@@ -63,7 +63,7 @@ The screenshots are from the Buzz desktop app on Linux, in the light theme, in a
 
 **4. Pick Artifacts and press Continue.** Buzz lists every plugin in the repository with its folder and id.
 
-![The Choose a plugin window listing Artifacts, Beeper, Key probe, Linear and Vim mode, none picked yet](../../assets/install/4-choose-a-plugin.png)
+![The Choose a plugin window listing Artifacts, Beeper, Key probe (test tool, do not install), Linear and Vim mode, none picked yet](../../assets/install/4-choose-a-plugin.png)
 
 **5. Read the review and press Install plugin.** Artifacts declares no commands and no network addresses, so the review lists nothing beyond what every plugin gets: "No additional capabilities declared". **Enable plugin** is on, so it is turned on as it is installed.
 

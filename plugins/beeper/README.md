@@ -61,7 +61,7 @@ The screenshots are from the Buzz desktop app on Linux, in the light theme, in a
 
 **4. Pick Beeper and press Continue.** Buzz lists every plugin in the repository with its folder and id.
 
-![The Choose a plugin window listing Artifacts, Beeper, Key probe, Linear and Vim mode, none picked yet](../../assets/install/4-choose-a-plugin.png)
+![The Choose a plugin window listing Artifacts, Beeper, Key probe (test tool, do not install), Linear and Vim mode, none picked yet](../../assets/install/4-choose-a-plugin.png)
 
 **5. Read the review and press Install plugin.** Beeper asks to run programs on your computer: `curl` twice and `security` three times. Open a row to see the program and every argument it will always be run with. **Enable plugin** is on, so it is turned on as it is installed.
 

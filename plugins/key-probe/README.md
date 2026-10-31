@@ -46,7 +46,7 @@ The screenshots are from the Buzz desktop app on Linux, in the light theme, in a
 
 **4. Pick Key probe (test tool, do not install) and press Continue.** Buzz lists every plugin in the repository with its folder and id.
 
-![The Choose a plugin window listing Artifacts, Beeper, Key probe, Linear and Vim mode, none picked yet](../../assets/install/4-choose-a-plugin.png)
+![The Choose a plugin window listing Artifacts, Beeper, Key probe (test tool, do not install), Linear and Vim mode, none picked yet](../../assets/install/4-choose-a-plugin.png)
 
 **5. Read the review.** The Key probe declares no commands and no network addresses, so the review lists nothing beyond what every plugin gets. Press **Install plugin** only if you are measuring key latency.
 
