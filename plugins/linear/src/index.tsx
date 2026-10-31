@@ -1,6 +1,6 @@
 import type { Context } from "./buzz";
 import { createClient } from "./linear/client";
-import { createKeyStore } from "./linear/keys";
+import { createKeyStore, detectStore } from "./linear/keys";
 import { createBoardStore } from "./linear/store";
 import { provideReact } from "./react";
 import { createBoardPage } from "./ui/Board";
@@ -13,9 +13,22 @@ export const inject = ["react", "pages", "settingsCards", "navigation", "host"];
 export function apply(ctx: Context) {
   provideReact(ctx.react);
 
-  const keys = createKeyStore(window.localStorage);
-  // `ctx.host.request` is the only way out of the plugin; its origin is the one the manifest declares.
-  const client = createClient((request) => ctx.host.request(request), () => keys.read());
+  // The Keychain is macOS's and the Secret Service is Linux's. Where the system has neither, the key can only be kept in the profile,
+  // and the settings card says so.
+  const keys = createKeyStore(window.localStorage, {
+    store: detectStore(navigator.platform, navigator.userAgent),
+    run: (command, input) => ctx.host.runCommand(command, input),
+  });
+  // `ctx.host.request` is the only way to Linear; its origin is the one the manifest declares. `ctx.host.runCommand` runs only the
+  // `security` and `secret-tool` commands the manifest declares, for the system's store. A request waits for the first look at where
+  // the key is kept.
+  const client = createClient(
+    (request) => ctx.host.request(request),
+    async () => {
+      await keys.ready;
+      return keys.read();
+    },
+  );
   const store = createBoardStore(client, window.localStorage);
 
   ctx.effect(() => {
@@ -26,8 +39,14 @@ export function apply(ctx: Context) {
     style.dataset.megatechLinear = "";
     style.textContent = CSS;
     document.head.append(style);
-    // A saved, replaced or removed key means a different Linear: forget the old board.
-    const unsubscribe = keys.subscribe(() => store.reset());
+    // A saved, replaced or removed key means a different Linear: forget the old board. (The first look at the Keychain, and moving the
+    // same key between places, do not.)
+    let seen = keys.version();
+    const unsubscribe = keys.subscribe(() => {
+      if (keys.version() === seen) return;
+      seen = keys.version();
+      store.reset();
+    });
     return () => {
       unsubscribe();
       style.remove();

@@ -38,7 +38,8 @@ type GraphQLBody = {
  */
 export function createClient(
   transport: Transport,
-  readKey: () => string | undefined,
+  /** The saved key; a promise lets a request wait for the first look at where the key is kept. */
+  readKey: () => string | undefined | Promise<string | undefined>,
   now: () => number = Date.now,
 ) {
   return {
@@ -49,7 +50,7 @@ export function createClient(
       /** A key to try instead of the saved one, to check a new key before it is kept. */
       candidate?: string,
     ): Promise<T> {
-      const key = candidate ?? readKey();
+      const key = candidate ?? (await readKey());
       if (!key) throw new LinearError("no-key", "No Linear API key is saved.");
       let response: HostResponse;
       try {

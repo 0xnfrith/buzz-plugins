@@ -1,23 +1,104 @@
-# Artifacts
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/headers/artifacts-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../assets/headers/artifacts-light.svg">
+  <img alt="Artifacts" src="../../assets/headers/artifacts-dark.svg" width="100%">
+</picture>
+
+## What it is
 
 A sidebar page in Buzz with your saved web pages. Click one and it opens in Buzz's built-in browser, with the sign-in kept between restarts. It was made for Claude artifact links (`https://claude.ai/artifact/<id>`), and it takes any `https://` address. Pin a saved page and it also gets its own entry in Buzz's top bar, next to Messages, Reminders, Agents and Workflows: one click opens that page.
 
 No address is built in. You add, rename and remove your own in **Settings → Artifacts**.
 
-## Needs
+<img src="../../assets/cards/artifacts.svg" width="560" alt="Placeholder frame: no screenshot of this plugin exists yet">
+
+<sub>A placeholder: no screenshot of this plugin is in the repository yet. It needs a run in the macOS app.</sub>
+
+## Platforms
+
+| macOS | Linux | Windows |
+| --- | --- | --- |
+| should work, untested | not supported | not supported |
+
+- **macOS:** the built-in browser exists only in the macOS desktop app, and keeping the sign-in needs macOS 14 or later. The browser itself has not run anywhere yet. Sources: "Needs" and "What was and was not checked", below.
+- **Linux:** the page, the Settings card and pinning to the top bar run in the Buzz 1.0 Linux app, checked by hand, but the browser is not there: the page says it needs macOS and opens nothing. Source: "What was and was not checked", below.
+- **Windows:** the same as Linux: the page says so and opens nothing. Not run. Source: "Needs", below.
+
+<details>
+<summary><b>Needs, in full: the Buzz versions it relies on</b></summary>
+
+### Needs
 
 - **The Buzz desktop app on macOS 14 or later.** The built-in browser (`ctx.browser`) exists only in the macOS desktop app. On the web, Windows and Linux the page says so and opens nothing.
 - **block/buzz-app at b86b9f3c (2026-10-23) or later**, the commit that added the `storage` option to `browser.View` (block/buzz-app #1340). The first release tag that contains it is `desktop-v0.7.0-beta.1`. On macOS earlier than 14, or on a Buzz without the option, pages still open but each open is a private session, so you sign in again every time.
 - **For pinning to the top bar: block/buzz-app at d5d414d4 (2026-10-08) or later**, the commit that added `placement` to `ctx.pages.register` (block/buzz-app #762; first release tag `v0.0.0-preview.120.1`). The commit above for `storage` already contains it. On a Buzz older than that, the docs say `placement` is ignored and a pinned page shows in the sidebar instead of the top bar; everything else works.
 - The page and the settings card have run in the Buzz 1.0 Linux app; the browser itself has not run anywhere yet. See "What was and was not checked".
 
-## Install
+</details>
 
-1. Get the files: clone this repository.
-2. In Buzz: **Settings → Plugins → Manage plugins → Add**, choose a **folder**, pick `plugins/artifacts`.
-3. Review, press **Install plugin**, make sure it is enabled.
 
-## Use
+## How to install
+
+1. In Buzz: **Settings → Plugins → Manage plugins → Add**. Enter `https://github.com/0xnfrith/buzz-plugins` as the Git or GitHub repository, press **Find**, pick **Artifacts** and press **Continue**. (Or clone this repository, press **Browse** instead and choose the folder `plugins/artifacts`.)
+2. Review, press **Install plugin**, make sure it is enabled.
+
+Then add your pages: open **Settings**, find the **Artifacts** card, type a name and an `https://` address, and press **Add page**. Every step, from the default page to pinning a page to the top bar, is under "Using it", below.
+
+<details>
+<summary>Step-by-step with screenshots</summary>
+
+The screenshots are from the Buzz desktop app on Linux, in the light theme, in a new profile with nothing in it. macOS and Windows look a little different and are not shown. Steps 1 to 4 are the same for every plugin in this repository.
+
+**1. Open Settings, then Plugins, then Manage plugins, and press Add.**
+
+![Settings open on Manage plugins, with the Add button at the top right](../../assets/install/1-manage-plugins.png)
+
+**2. Choose how to load it.** The Add a plugin window has a folder on the left (drop one in, or press **Browse**) and a Git or GitHub repository on the right. The repository is the easier way: there is nothing to download first.
+
+![The Add a plugin window: on the left a drop area with a Browse button for a folder, on the right a box for a Git or GitHub repository with a Find button](../../assets/install/2-add-a-plugin.png)
+
+**3. Type `https://github.com/0xnfrith/buzz-plugins` and press Find.** Leave Branch or tag empty. If you have cloned this repository, use **Browse** instead and choose the folder `plugins/artifacts`. With **Browse** there is no step 4: the review in step 5 opens straight away.
+
+![The repository address typed into the Git or GitHub repository box, with Find ready to press](../../assets/install/3-git-address.png)
+
+**4. Pick Artifacts and press Continue.** Buzz lists every plugin in the repository with its folder and id.
+
+![The Choose a plugin window listing Artifacts, Beeper, Key probe (test tool, do not install), Linear and Vim mode, none picked yet](../../assets/install/4-choose-a-plugin.png)
+
+**5. Read the review and press Install plugin.** Artifacts declares no commands and no network addresses, so the review lists nothing beyond what every plugin gets: "No additional capabilities declared". **Enable plugin** is on, so it is turned on as it is installed.
+
+![The Review plugin access window for a plugin that declares nothing: Computer access, no additional capabilities declared, Enable plugin switched on, and the Install plugin button](../../assets/install/review-no-capabilities.png)
+
+Open **Computer access** to read what the review means by it: plugins are not sandboxed, so the list says what a plugin asks Buzz to do, not what its code can do. Install only plugins you trust.
+
+![The Computer access row opened: Plugins aren't sandboxed, they can access your computer beyond these declarations, even when no additional capabilities are listed](../../assets/install/5-review-not-sandboxed.png)
+
+**6. It is installed and turned on.** Search Manage plugins for it: **Disable** on its row means it is on, and it now has a page in the sidebar and a card in Settings.
+
+![Manage plugins searched for artifacts: Artifacts is listed with a Disable button, which means it is on, and Artifacts has an entry in the Settings list](screenshots/install/1-installed.png)
+
+**7. Add a page.** Open Settings, then **Artifacts**. Type a name and an `https://` address (this one is only an example) and press **Add page**.
+
+![The Artifacts card in Settings with the name Example page and the address https://example.com/ typed in, ready for Add page](screenshots/install/2-add-a-page.png)
+
+![The Artifacts card after Add page: Example page is listed as the default page, with Rename, Pin to top bar and Remove](screenshots/install/3-page-added.png)
+
+</details>
+
+## What it looks like
+
+No screenshots yet. The ones to take:
+
+- the Artifacts page open on a saved page, with the chip bar (macOS app);
+- a page pinned to the top bar, open (macOS app);
+- the Settings card, in light and in dark (the Linux app shows it too).
+
+## Details
+
+<details>
+<summary><b>Using it: adding, the default page, renaming, removing and pinning</b></summary>
+
+### Use
 
 1. Open **Settings** and find the **Artifacts** card (group Plugins). Type a name (optional) and an `https://` address, press **Add page**. The first page you add is your **default**. An address that cannot be saved is not saved: its field turns red and a message says why.
 2. Open **Artifacts** in the sidebar. It opens on the default page at once, with no click. Your pages are chips along the top, the default one marked with a star (its accessible name ends in "(default)"). Click another chip to look at that page instead.
@@ -33,7 +114,12 @@ Buzz owns the top bar: it lists its own pages first and the rest by name, and wh
 
 Only `https://` addresses are saved, with no user name or password in them, up to 2,048 bytes (Buzz's own limit).
 
-## How it works
+</details>
+
+<details>
+<summary><b>How it works</b></summary>
+
+### How it works
 
 | Part | How |
 | --- | --- |
@@ -50,7 +136,7 @@ Only `https://` addresses are saved, with no user name or password in them, up t
 | Colours | Surfaces, text and borders come from the host's tokens (`--text-standard`, `--text-subtle`, `--text-metadata`, `--surface-panel`, `--border-standard`, `--border-focus`), each with a fallback. The Settings card adds its own accents as named custom properties on its root (see below) |
 | Manifest | `id`, `name`, `apiVersion`, `description`, `discovery`. No `host` block: the plugin declares no command and no network origin |
 
-### The look of the Settings card
+#### The look of the Settings card
 
 The card keeps the host's surfaces, text and borders, so light and dark follow **Settings → Appearance** with no listener, and wears a look of its own on top: a charged cyan **Add page** button, a cyan bar and ★ mark on the default page, a magenta mark on pages in the top bar, hairlines, square corners, **Chakra Petch** headings, and addresses and labels in the system monospace in small capitals with wide tracking.
 
@@ -60,23 +146,28 @@ The card keeps the host's surfaces, text and borders, so light and dark follow *
 - **A narrow Settings window.** The card is a size container, and two container queries stack the add row and tighten the cards below 600 px and 420 px of card width.
 - **Class and variable names** all begin `megatech-artifacts`.
 
-### Fonts
+#### Fonts
 
 One font is embedded: **Chakra Petch Bold**, the headings' face, in `plugin.js` as a data URL (a plugin may not load anything). It is the latin subset published by the Fontsource project (`@fontsource/chakra-petch` 5.x), about 13 KB of base64, and it is licensed under the **SIL Open Font License 1.1**; its copyright notice and the licence text are in [`licenses/`](licenses/). It declares no Reserved Font Name. Addresses and labels use the system monospace (`ui-monospace` and its fallbacks). No second face is embedded: the monospace the look was drawn with carries a licence that reserves its name, which an embedded subset would strictly need permission to keep. Without the embedded font, the headings fall back to the system sans (`ui-sans-serif`).
 
-### The icon
+#### The icon
 
 The plugin gives no `icon` to any page. Buzz draws a page's `icon` as an `<img>` of a `data:` image, and an SVG inside an `<img>` cannot see the app's theme, so a plugin icon comes out in a fixed colour (black for this plugin's earlier one) next to Buzz's own entries, which follow the theme. With no `icon`, Buzz draws its own icon for the page, in the same colour as its other entries in light and dark, for the sidebar entry and for every pinned top-bar entry. Sources are in `NOTES.md`.
 
-### The no-network rule
+#### The no-network rule
 
 [`docs/building.md` §4](../../docs/building.md) forbids `fetch`, WebSocket and remote media from a plugin. This plugin does none of that. Opening an address in `ctx.browser.View` is the host's browser panel loading the page, not the plugin making a request: the plugin only hands the host a string, and the host's native view loads it, without Buzz's IPC bridge. So no connector exception and no `host.networkOrigins` are needed, and the manifest asks for no permission. A test checks that `plugin.js` contains no `fetch`, WebSocket, `eval` or host-command call.
 
-### One thing to know about the sign-in
+#### One thing to know about the sign-in
 
 Every page opens with the same named storage, `claude`, because that is what keeps a claude.ai sign-in. Pages from other sites opened through this plugin therefore share cookies with it. Buzz keeps that storage apart from its own, but names separate storages, not plugins, and plugins run as trusted code ([`docs/building.md`](../../docs/building.md)). Save only sites you are happy to keep signed in together.
 
-## Tests
+</details>
+
+<details>
+<summary><b>Tests</b></summary>
+
+### Tests
 
 ```
 node --test plugins/artifacts/test/*.test.mjs
@@ -92,7 +183,12 @@ plugins/artifacts/test/run.sh /path/to/block/buzz-app
 
 It checks that after Remove and confirm the focus is on the next page's Rename, else the one before, else the first field of the add form; that Keep and the rename field have the focus when they appear; and that Esc leaves the rename field or the question without closing Settings, and closes Settings when neither is open. The web build has no built-in browser, so the page itself is not driven. The repository's CI runs it too, in its own workflow (`artifacts-browser-tests.yml`, which checks out block/buzz-app at the same commit as the Vim workflows), next to the node tests.
 
-## What was and was not checked
+</details>
+
+<details>
+<summary><b>What was and was not checked</b></summary>
+
+### What was and was not checked
 
 - Checked, in Node: the list, default and pin logic, and `apply` on a stand-in React and registry (the tests above; 64 tests, and 39 single changes to `plugin.js`, each caught by a failing test).
 - Checked, in the Buzz 1.0 Linux app (`0.0.0-preview.156.1`, installed from this folder): the plugin installs with no capabilities requested; the Artifacts page from the sidebar opens with the default chip marked and current and no click; the default changed from the Settings card, and from the page's **Make default** control, shows in both places and in the page opened again; removing the default makes the first page left the default; the default survives quitting and starting the app.
@@ -100,3 +196,5 @@ It checks that after Remove and confirm the focus is on the next page's Rename, 
 - Checked, in the same Linux app, for the redesigned Settings card (light and dark, the real Settings dialog; three sample pages): the list with a default page that is also in the top bar, one only in the top bar and a plain one; the add form and its counts; Rename in place with Save, Cancel and Esc (Esc leaves Settings open); Remove asking once, with Keep and with Esc; a bad address (red field, "Not saved" and the reason); the empty message; Make default on the chip bar by keyboard, after which the focus ring is on that page's chip; the embedded font drawing the headings; and a narrow window (760 px and 560 px wide), where the add row stacks and the buttons wrap. Measured from the screenshots, the lowest contrast of a line that means something is 3.11:1 (the top-bar mark's border in dark), 3.27:1 for a button's edge in dark, 3.42:1 in light; the default's border and bar are 5.56:1 in light and 3.64:1 and 9.60:1 in dark; input edges 4.58:1 and 6.37:1.
 - Checked, in the same Linux app (`0.0.0-preview.156.1`, installed from this folder), before and after the change to `plugin.js`: in the Settings card with three saved pages, **Remove** on the middle one, Shift+Tab to the question's **Remove** and Enter. Before, nothing had the focus afterwards and the dialog's view jumped back to the top; after, the focus ring is on the next page's **Rename**. Removing the last page puts the ring on the **Rename** of the page before it, and removing the only page left puts the caret in the add form's first field, **Name (optional)**, under the empty message.
 - Not checked: the browser itself. `ctx.browser.available` is false on Linux, so there the page shows its macOS-only message under the chip bar and never loads a website. That the default page's website loads on open, that its sign-in is kept, the look of the page, and the macOS 14 behaviour are covered only by the `apply` test (it renders `browser.View` with the default's address and `storage: "claude"`); they need a run in the macOS app. Also not checked: a Buzz older than d5d414d4 (the sidebar fallback is from Buzz's documentation, not from a run); more than a handful of pins; the top bar on macOS; the Settings card's fonts and look on macOS and Windows; a Settings window narrower than 560 px.
+
+</details>

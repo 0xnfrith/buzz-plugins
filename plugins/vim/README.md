@@ -1,15 +1,88 @@
-# Vim mode
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/headers/vim-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../assets/headers/vim-light.svg">
+  <img alt="Vim mode" src="../../assets/headers/vim-dark.svg" width="100%">
+</picture>
+
+## What it is
 
 Move through Buzz with vim keys: normal and insert modes, `j` and `k` through messages and channels, `h` and `l` between the channel list, the message list and a thread, `{` and `}` between communities, `gt` between pages, `r` and `m` on a message, and `o`, `q`, `zc`, `>` and `<` for threads. It began as a concept, built to learn what the plugin API reaches. `NOTES.md` has the findings.
 
-## Getting started
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="screenshots/normal-cursor-dark.png">
+  <img alt="NORMAL, the cursor on a message: its bubble lifted, with a thin accent outline" src="screenshots/normal-cursor-light.png">
+</picture>
 
-1. In the desktop app open Settings, Plugins, Manage plugins, Load from folder, and choose this folder (the one that contains `manifest.json` and `plugin.js`). Install it, and enable **Vim mode** if it is not already on.
+## Platforms
+
+| macOS | Linux | Windows |
+| --- | --- | --- |
+| should work, untested | **works, tested** | should work, untested |
+
+- **Linux:** run by hand in the Buzz desktop app on Linux (WebKitGTK), and in the browser tests in Buzz's own web build, in headless Chromium. Sources: `NOTES.md`, "What was and was not verified" and "Measuring the plugin".
+- **macOS:** not run in a Mac's web view (WKWebView), where key handling, focus after clicks and `Selection.modify` can differ. The Mac key bindings are tested in Chromium with the platform reported as a Mac. Source: `NOTES.md`, "Not verified".
+- **Windows:** not run. The notes do not mention it.
+
+
+## How to install
+
+1. In the desktop app open Settings, Plugins, Manage plugins, Add. Enter `https://github.com/0xnfrith/buzz-plugins` as the Git or GitHub repository, press **Find** and pick **Vim mode**; or press **Browse** and choose this folder (the one that contains `manifest.json` and `plugin.js`). Install it with **Enable plugin** on (it is on by default).
 2. Open Messages and a channel with some history. A small `-- NORMAL --  main` label appears in the window's bottom-right corner (it says the mode and which pane has the keys), and the sidebar shows a **Vim mode** page with an `N` badge.
 3. Work through the checklist below.
 4. To stop at any time press Cmd+Shift+E (Ctrl+Shift+E elsewhere), or disable the plugin in Settings.
 
-## Screenshots
+<details>
+<summary>Step-by-step with screenshots</summary>
+
+The screenshots are from the Buzz desktop app on Linux, in the light theme, in a new profile with nothing in it. macOS and Windows look a little different and are not shown. Steps 1 to 4 are the same for every plugin in this repository.
+
+**1. Open Settings, then Plugins, then Manage plugins, and press Add.**
+
+![Settings open on Manage plugins, with the Add button at the top right](../../assets/install/1-manage-plugins.png)
+
+**2. Choose how to load it.** The Add a plugin window has a folder on the left (drop one in, or press **Browse**) and a Git or GitHub repository on the right. The repository is the easier way: there is nothing to download first.
+
+![The Add a plugin window: on the left a drop area with a Browse button for a folder, on the right a box for a Git or GitHub repository with a Find button](../../assets/install/2-add-a-plugin.png)
+
+**3. Type `https://github.com/0xnfrith/buzz-plugins` and press Find.** Leave Branch or tag empty. If you have cloned this repository, use **Browse** instead and choose the folder `plugins/vim`. With **Browse** there is no step 4: the review in step 5 opens straight away.
+
+![The repository address typed into the Git or GitHub repository box, with Find ready to press](../../assets/install/3-git-address.png)
+
+**4. Pick Vim mode and press Continue.** Buzz lists every plugin in the repository with its folder and id.
+
+![The Choose a plugin window listing Artifacts, Beeper, Key probe (test tool, do not install), Linear and Vim mode, none picked yet](../../assets/install/4-choose-a-plugin.png)
+
+**5. Read the review and press Install plugin.** Vim mode declares no commands and no network addresses, so the review lists nothing beyond what every plugin gets. **Enable plugin** is on, so it is turned on as it is installed.
+
+![The Review plugin access window for a plugin that declares nothing: Computer access, no additional capabilities declared, Enable plugin switched on, and the Install plugin button](../../assets/install/review-no-capabilities.png)
+
+**6. It is installed and turned on.** Search Manage plugins for it: **Disable** on its row means it is on.
+
+![Manage plugins searched for vim: Vim mode is listed with a Disable button, which means it is on](screenshots/install/1-installed.png)
+
+**7. See that it works.** Close Settings. The small label in the window's bottom-right corner is the mode and the pane that has the keys. Press **Esc** and it says `-- NORMAL --`; in a message box or a field it says `-- INSERT --`. This profile has no community, so the label is shown on the start screen instead of in a channel.
+
+![The bottom-right corner of the window with the label -- NORMAL -- main](screenshots/install/2-normal-label.png)
+
+Press **?** to open the key list, and **Esc** to close it. (This one was opened on the start screen as well.)
+
+![The Vim keys window: a short list of the keys, starting with j and k for the next and previous message or channel](screenshots/install/3-key-list.png)
+
+</details>
+
+## What it looks like
+
+| | |
+| --- | --- |
+| ![A thread beside the channel: the pane that has the keys has an accent line under its header](screenshots/thread-pane-dark.png) | ![VISUAL mode in the message box](screenshots/box-visual-dark.png) |
+| A thread beside the channel: the pane that has the keys has a 2 px accent line under its header | VISUAL: a motion grows the highlight |
+| ![The channel list has the keys](screenshots/channel-list-light.png) | ![The key list, opened with ?](screenshots/help-dark.png) |
+| The channel list has the keys: a ring on the current channel | The key list, opened with `?` |
+
+<details>
+<summary><b>All screenshots, light and dark</b></summary>
+
+### Screenshots
 
 Taken in Buzz's own browser test harness with its fixture data (`test/screenshots.spec.mjs`), in light and dark mode.
 
@@ -26,7 +99,14 @@ Taken in Buzz's own browser test harness with its fixture data (`test/screenshot
 | ![The channel list has the keys](screenshots/channel-list-light.png) | ![The key list, opened with ?](screenshots/help-dark.png) |
 | The channel list has the keys: a ring on the current channel | The key list, opened with `?` |
 
-## Try this
+</details>
+
+## Details
+
+<details>
+<summary><b>Try this: every key, step by step</b></summary>
+
+### Try this
 
 | Step | Keys | Expected |
 | --- | --- | --- |
@@ -73,11 +153,21 @@ Taken in Buzz's own browser test harness with its fixture data (`test/screenshot
 
 **Visual mode** in the message box: type a few lines (Shift+Enter makes a new line), press Esc, then `v` and the label says `VISUAL` with the character under the cursor highlighted. every motion above (`e`, `W`, `fx`, `3l`, `G` ...) stretches the highlight, `y` copies it to the clipboard, `d` or `x` deletes it, `c` deletes it and goes to insert mode, and Esc (or `v` again) leaves. `V` does the same by whole lines (`Vd` removes the lines and their newline). Switch between the two with `v` and `V`. There is no `p`: paste with Cmd+V.
 
-## What to report
+</details>
+
+<details>
+<summary><b>What to report</b></summary>
+
+### What to report
 
 Which steps behaved differently, and for any that did nothing, whether the label changed. If the app has a developer console, any red errors that mention `megatech.vim-mode`.
 
-## For developers
+</details>
+
+<details>
+<summary><b>For developers</b></summary>
+
+### For developers
 
 The source is TypeScript in `src/`, one module per concern (see "Source layout" in `NOTES.md`). The app loads only the built `plugin.js` next to the manifest and never runs a build, so the built file is committed with the source.
 
@@ -87,9 +177,14 @@ The source is TypeScript in `src/`, one module per concern (see "Source layout" 
 - **Measuring**: `test/perf.sh`, `test/real-app/` and "Measuring the plugin" in `NOTES.md`.
 - **Screenshots**: `SPEC=screenshots.spec.mjs test/perf.sh PATH_TO_BLOCK_BUZZ_APP_CHECKOUT with 1` writes the pictures above into `SHOTS_DIR`.
 
+</details>
+
 ## Key latency budget
 
 Every key the plugin handles has to answer within a frame or two, in a channel with thousands of messages as well as in an empty one. `test/budget.spec.mjs` holds that for the keys it presses ("What is pressed", below, and the keys it does not press yet): it presses them on the surfaces listed there in headless Chromium, against the production web build of Buzz's own browser harness (the checkout `test/run.sh` also uses), and prints p50, p95, p99 and the maximum per surface and key.
+
+<details>
+<summary><b>How it is measured, what is pressed, how to run it and how to read the table</b></summary>
 
 **The budget.** The **gate** is p99 ≤ 50 ms: a row over it in all three attempts fails the test, and the GitHub job (`.github/workflows/vim-latency.yml`) fails the pull request. The **target** is p95 ≤ 16 ms, one frame at 60 Hz: it is reported, the rows over it are marked, and it does not fail anything.
 
@@ -126,3 +221,5 @@ plugins/vim/test/budget.sh PATH_TO_BLOCK_BUZZ_APP_CHECKOUT
 The table goes to the terminal, to `/tmp/vim-budget.md` and to `/tmp/vim-budget.json` (`BUDGET_OUT` changes the prefix). A full run takes 20 to 25 minutes on a two-core machine; `BUDGET_ONLY=thread,settings` runs some surfaces (`sidebar`, `list`, `thread`, `box-text`, `box-mentions`, `reminders`, `agents`, `workflows`, `settings`), `BUDGET_REPS` and `BUDGET_ATTEMPTS` shorten it. Close everything else, the Buzz app included: on a machine with 4 GB, the app alone was enough to double the numbers. Numbers from a small machine are for comparing two builds (below); the gate is the CI job's, on its own runner, and a local run can go red on rows that are green there. `BUDGET_PLUGIN=/path/plugin.js` measures another build of the plugin (the one on `main`, to compare a branch with it), and `BUDGET_TRACE=full` turns on the plugin's own trace, so each row also says how long each of the plugin's handlers ran per press and which DOM calls it made (those milliseconds are for finding where the time goes; the trace wraps DOM methods and distorts them).
 
 **Adding a key.** A pull request that adds or changes a key adds it to the rows of every surface where it does something (`moves`, `boxRows` and the `surface(...)` blocks of `test/budget.spec.mjs`), in the same pull request; a new page or dialog gets a `surface(...)` of its own. If the new key is slow because of what the app does, add a control row that does the same work from the page, and put the key in `budget.baseline.json` only if the control is over 50 ms too.
+
+</details>
