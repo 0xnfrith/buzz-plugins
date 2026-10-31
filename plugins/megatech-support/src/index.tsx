@@ -30,10 +30,11 @@ export function wire(ctx: Context) {
   const support = createSupport({ client, identity });
   const flag = createSwitch(profileStorage());
 
-  // Off until the user turns it on, and read once, here: the agent type and the tools are added only when the saved switch is on as Buzz
-  // starts (an agent session lists its tools when it starts, and a changed list replaces it). The card says a restart is needed.
+  // Off until the user turns it on, and read once, here: the agent type and the tools are added only when the saved switch is on as the
+  // plugin starts (Buzz starting, or the plugin turned off and on or updated; an agent session lists its tools when it starts, and a
+  // changed list replaces it). The card says so, and that running agents start their sessions over.
   const agent: AgentStatus = { startedOn: flag.get(), problems: [] };
-  // Each call still asks the saved switch, so turning it off stops the tools at once, though they stay listed until the restart.
+  // Each call still asks the saved switch, so turning it off stops the tools at once, though they stay listed until the plugin starts again.
   const enabled = () => flag.get();
   if (agent.startedOn) agent.problems = registerAgent(ctx.agents, createAgentType({ support, enabled }), createTools({ support, enabled }));
 

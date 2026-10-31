@@ -29,6 +29,9 @@ export function createSupportPage({ identity, support, relay }: { identity: Iden
     // came from, so pressing the button again cannot make a second ticket, and the answer is there when the tab is back.
     const [asked, setAsked] = React.useState<Asked | undefined>();
     const [opened, setOpened] = React.useState<Opened | undefined>();
+    // Whether a request is out is the page's too: coming back to a tab whose request has not ended must not offer the button again.
+    const [asking, setAsking] = React.useState(false);
+    const [opening, setOpening] = React.useState(false);
     const tabs = React.useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
     const was = React.useRef(state.status);
     React.useEffect(() => {
@@ -79,9 +82,19 @@ export function createSupportPage({ identity, support, relay }: { identity: Iden
                 ))}
               </div>
               <div role="tabpanel" id="mts-panel" aria-labelledby={`mts-tab-${tab}`} className="mts-tabpanel">
-                {tab === "ask" && <AskTab support={support} question={question} setQuestion={setQuestion} result={asked} setResult={setAsked} />}
+                {tab === "ask" && <AskTab support={support} question={question} setQuestion={setQuestion} result={asked} setResult={setAsked} busy={asking} setBusy={setAsking} />}
                 {tab === "open" && (
-                  <OpenTab support={support} subject={subject} setSubject={setSubject} body={body} setBody={setBody} result={opened} setResult={setOpened} />
+                  <OpenTab
+                    support={support}
+                    subject={subject}
+                    setSubject={setSubject}
+                    body={body}
+                    setBody={setBody}
+                    result={opened}
+                    setResult={setOpened}
+                    busy={opening}
+                    setBusy={setOpening}
+                  />
                 )}
                 {tab === "tickets" && <TicketsTab support={support} />}
               </div>
@@ -145,15 +158,18 @@ function AskTab({
   setQuestion,
   result,
   setResult,
+  busy,
+  setBusy,
 }: {
   support: Support;
   question: string;
   setQuestion: (text: string) => void;
   result: Asked | undefined;
   setResult: (result: Asked | undefined) => void;
+  busy: boolean;
+  setBusy: (busy: boolean) => void;
 }) {
   const alive = useAlive();
-  const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | undefined>();
   const send = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -169,7 +185,7 @@ function AskTab({
     } catch (failure) {
       if (alive.current) setError(words(failure));
     } finally {
-      if (alive.current) setBusy(false);
+      setBusy(false);
     }
   };
   return (
@@ -214,6 +230,8 @@ function OpenTab({
   setBody,
   result: opened,
   setResult: setOpened,
+  busy,
+  setBusy,
 }: {
   support: Support;
   subject: string;
@@ -222,9 +240,10 @@ function OpenTab({
   setBody: (text: string) => void;
   result: Opened | undefined;
   setResult: (result: Opened | undefined) => void;
+  busy: boolean;
+  setBusy: (busy: boolean) => void;
 }) {
   const alive = useAlive();
-  const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | undefined>();
   const send = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -241,7 +260,7 @@ function OpenTab({
     } catch (failure) {
       if (alive.current) setError(words(failure));
     } finally {
-      if (alive.current) setBusy(false);
+      setBusy(false);
     }
   };
   return (

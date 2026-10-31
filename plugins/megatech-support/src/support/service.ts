@@ -42,7 +42,9 @@ export function createSupport({ client, identity, newKey = () => crypto.randomUU
     return done;
   };
   return {
-    /** The key the identity is verified for, while it is. */
+    /** Whether a session is held, whether or not Buzz can say right now which key is signed in. */
+    verified: (): boolean => identity.verified(),
+    /** The key the identity is verified for, while it is and Buzz confirms it. */
     verifiedKey: (): string | undefined => identity.verifiedKey(),
     /** Asks, which opens a ticket if the service has no answer within the call. */
     async askOrOpen(question: string): Promise<Asked> {

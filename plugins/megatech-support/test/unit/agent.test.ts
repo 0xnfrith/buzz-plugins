@@ -4,6 +4,7 @@ import {
   ASK_TOOL,
   NOT_ENABLED,
   MAX_POSTED,
+  NOT_READY,
   NOT_VERIFIED,
   NOT_YOURS,
   STATUS_DEFINITION,
@@ -122,6 +123,19 @@ describe("megatech_support_ask_or_open", () => {
     await expect(call(off.ask, AGENT, { question: "hi" }, "b".repeat(64))).rejects.toThrow(new Error(NOT_ENABLED));
     const unverified = await tools(false);
     await expect(call(unverified.ask, AGENT, { question: "hi" }, "b".repeat(64))).rejects.toThrow(new Error(NOT_VERIFIED));
+  });
+
+  it("refuse, with their own words, while Buzz does not say which account is signed in, and work again when it does", async () => {
+    const { w, ask, status } = await tools();
+    const { ticket_id } = JSON.parse(await call(ask, AGENT, { question: "hi" }));
+    const before = w.fake.log.length;
+    w.setViewer(undefined);
+    await expect(call(ask, AGENT, { question: "hi again" })).rejects.toThrow(new Error(NOT_READY));
+    await expect(call(status, AGENT, { ticket_id })).rejects.toThrow(new Error(NOT_READY));
+    expect(w.fake.log.length).toBe(before);
+    // The session was kept, so the same key coming back is all it takes.
+    w.setViewer(w.user.pubkey);
+    await expect(call(status, AGENT, { ticket_id })).resolves.toContain(ticket_id);
   });
 
   it("follow the key the session is verified for: when Buzz's signed-in key changes, an agent of the old one is refused", async () => {
@@ -291,6 +305,18 @@ describe("the agent type", () => {
     }
     expect(asked(w)).toHaveLength(asks);
     expect(w.fake.ticketsOf(w.user.pubkey)).toHaveLength(before);
+  });
+
+  it("treats a sentence that only ends in a ticket as a question: 'status' and 'ticket' must start it", async () => {
+    const { w, type } = await typeOf();
+    for (const text of ["How do I close ticket T-9", "please check status T-9", "what is the ticket T-9?", "my ticket T-9 is late, status T-9"]) {
+      const before = asked(w).length;
+      const delivery = mention(text);
+      await type.run!(delivery as never);
+      expect(asked(w)).toHaveLength(before + 1);
+      expect((asked(w).at(-1) as unknown as { body: unknown }).body).toEqual({ question: text });
+      expect(posted(delivery)[0]?.content).toMatch(/^I opened ticket T-\d+\./);
+    }
   });
 
   it("asks the question without the real mention link in it", async () => {

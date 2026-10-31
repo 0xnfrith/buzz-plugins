@@ -12,6 +12,7 @@ export const STATUS_TOOL = "megatech_support_ticket_status";
 /** What an agent is told when the switch is off, and when nobody has verified the identity. Fixed text. */
 export const NOT_ENABLED = "Megatech support is switched off. The owner turns it on in Buzz, Settings, Plugins, Megatech support.";
 export const NOT_VERIFIED = "Megatech support is not verified. The owner verifies it in Buzz, Settings, Plugins, Megatech support.";
+export const NOT_READY = "Buzz has not said which account is signed in just now (it may be reconnecting). Try again in a moment.";
 export const NOT_YOURS = "This agent does not belong to the person who verified Megatech support, so it may not use it.";
 
 /** What an agent posts of support's answer into a channel; the rest is on the ticket. */
@@ -76,8 +77,10 @@ export function createTools({ support, enabled }: { support: Support; enabled: (
   /** The switch, then the identity, then whose agent it is: each with its own fixed words, before any request. */
   const allowed = (client: BuzzClient) => {
     if (!enabled()) throw new Error(NOT_ENABLED);
+    if (!support.verified()) throw new Error(NOT_VERIFIED);
+    // A session is held, but Buzz does not say whose key is signed in (it is reconnecting): nothing is trusted until it does.
     const key = support.verifiedKey();
-    if (!key) throw new Error(NOT_VERIFIED);
+    if (!key) throw new Error(NOT_READY);
     if (client.owner !== key) throw new Error(NOT_YOURS);
   };
   return [

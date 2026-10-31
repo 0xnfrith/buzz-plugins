@@ -240,6 +240,7 @@ var STATUS_TOOL = "megatech_support_ticket_status";
 /** What an agent is told when the switch is off, and when nobody has verified the identity. Fixed text. */
 var NOT_ENABLED = "Megatech support is switched off. The owner turns it on in Buzz, Settings, Plugins, Megatech support.";
 var NOT_VERIFIED = "Megatech support is not verified. The owner verifies it in Buzz, Settings, Plugins, Megatech support.";
+var NOT_READY = "Buzz has not said which account is signed in just now (it may be reconnecting). Try again in a moment.";
 var NOT_YOURS = "This agent does not belong to the person who verified Megatech support, so it may not use it.";
 /** What an agent posts of support's answer into a channel; the rest is on the ticket. */
 var MAX_POSTED = 4e3;
@@ -299,8 +300,9 @@ function createTools({ support, enabled }) {
 	/** The switch, then the identity, then whose agent it is: each with its own fixed words, before any request. */
 	const allowed = (client) => {
 		if (!enabled()) throw new Error(NOT_ENABLED);
+		if (!support.verified()) throw new Error(NOT_VERIFIED);
 		const key = support.verifiedKey();
-		if (!key) throw new Error(NOT_VERIFIED);
+		if (!key) throw new Error(NOT_READY);
 		if (client.owner !== key) throw new Error(NOT_YOURS);
 	};
 	return [{
@@ -528,7 +530,8 @@ function createIdentity({ client, relay, prove, now = Date.now, signWaitMs = SIG
 			client.logout();
 			return;
 		}
-		if (relay.snapshot().viewer !== viewer) {
+		const signedIn = relay.snapshot().viewer;
+		if (signedIn !== void 0 && signedIn !== viewer) {
 			client.logout();
 			set({
 				status: "unverified",
@@ -550,9 +553,15 @@ function createIdentity({ client, relay, prove, now = Date.now, signWaitMs = SIG
 		verifiedFor = void 0;
 		set(next);
 	};
-	/** Drops the session when Buzz's signed-in key is no longer the one it was verified for; true if it did. */
+	/**
+	* Drops the session when a **different** key is signed in than the one it was verified for; true if it did. No key at all is not
+	* a different key: Buzz's snapshot has no `viewer` while the relay connects, after a disconnect and in some error states, so a
+	* sleep, a dropped network or a community switch must not end the session. While the key is unknown the session is kept and
+	* `verifiedKey` gives nothing, so no tool is trusted until it is back.
+	*/
 	const checkViewer = () => {
-		if (state.status !== "verified" || relay.snapshot().viewer === verifiedFor) return false;
+		const signedIn = relay.snapshot().viewer;
+		if (state.status !== "verified" || signedIn === void 0 || signedIn === verifiedFor) return false;
 		client.logout();
 		end({
 			status: "unverified",
@@ -570,8 +579,8 @@ function createIdentity({ client, relay, prove, now = Date.now, signWaitMs = SIG
 		},
 		/** Whether a request may be made now. */
 		verified,
-		/** The key the session is verified for, while it is; what a tool compares an agent's owner with. */
-		verifiedKey: () => verified() ? verifiedFor : void 0,
+		/** The key the session is verified for, while it is and Buzz says the same key is signed in; what a tool compares an agent's owner with. */
+		verifiedKey: () => verified() && relay.snapshot().viewer === verifiedFor ? verifiedFor : void 0,
 		/** Starts the check once; callers that arrive while one runs wait for it. */
 		verify() {
 			if (running) return running;
@@ -662,7 +671,9 @@ function createSupport({ client, identity, newKey = () => crypto.randomUUID() })
 		return done;
 	};
 	return {
-		/** The key the identity is verified for, while it is. */
+		/** Whether a session is held, whether or not Buzz can say right now which key is signed in. */
+		verified: () => identity.verified(),
+		/** The key the identity is verified for, while it is and Buzz confirms it. */
 		verifiedKey: () => identity.verifiedKey(),
 		/** Asks, which opens a ticket if the service has no answer within the call. */
 		async askOrOpen(question) {
@@ -857,6 +868,8 @@ function createSupportPage({ identity, support, relay }) {
 		const [body, setBody] = React.useState("");
 		const [asked, setAsked] = React.useState();
 		const [opened, setOpened] = React.useState();
+		const [asking, setAsking] = React.useState(false);
+		const [opening, setOpening] = React.useState(false);
 		const tabs = React.useRef({});
 		const was = React.useRef(state.status);
 		React.useEffect(() => {
@@ -906,7 +919,9 @@ function createSupportPage({ identity, support, relay }) {
 			question,
 			setQuestion,
 			result: asked,
-			setResult: setAsked
+			setResult: setAsked,
+			busy: asking,
+			setBusy: setAsking
 		}), tab === "open" && /* @__PURE__ */ React.createElement(OpenTab, {
 			support,
 			subject,
@@ -914,7 +929,9 @@ function createSupportPage({ identity, support, relay }) {
 			body,
 			setBody,
 			result: opened,
-			setResult: setOpened
+			setResult: setOpened,
+			busy: opening,
+			setBusy: setOpening
 		}), tab === "tickets" && /* @__PURE__ */ React.createElement(TicketsTab, { support })))));
 	};
 }
@@ -948,9 +965,8 @@ function useAlive() {
 	}, []);
 	return alive;
 }
-function AskTab({ support, question, setQuestion, result, setResult }) {
+function AskTab({ support, question, setQuestion, result, setResult, busy, setBusy }) {
 	const alive = useAlive();
-	const [busy, setBusy] = React.useState(false);
 	const [error, setError] = React.useState();
 	const send = async (event) => {
 		event.preventDefault();
@@ -965,7 +981,7 @@ function AskTab({ support, question, setQuestion, result, setResult }) {
 		} catch (failure) {
 			if (alive.current) setError(words(failure));
 		} finally {
-			if (alive.current) setBusy(false);
+			setBusy(false);
 		}
 	};
 	return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("form", {
@@ -991,9 +1007,8 @@ function AskTab({ support, question, setQuestion, result, setResult }) {
 		"aria-label": "Support's reply"
 	}, /* @__PURE__ */ React.createElement("span", { className: "mts-muted" }, "Ticket ", /* @__PURE__ */ React.createElement("span", { className: "mts-id" }, result.ticket_id)), result.answer ? /* @__PURE__ */ React.createElement("p", { className: "mts-answer" }, result.answer) : /* @__PURE__ */ React.createElement("p", null, "No answer yet: a ticket is open and Megatech support will reply there. Find it under My tickets.")));
 }
-function OpenTab({ support, subject, setSubject, body, setBody, result: opened, setResult: setOpened }) {
+function OpenTab({ support, subject, setSubject, body, setBody, result: opened, setResult: setOpened, busy, setBusy }) {
 	const alive = useAlive();
-	const [busy, setBusy] = React.useState(false);
 	const [error, setError] = React.useState();
 	const send = async (event) => {
 		event.preventDefault();
@@ -1009,7 +1024,7 @@ function OpenTab({ support, subject, setSubject, body, setBody, result: opened, 
 		} catch (failure) {
 			if (alive.current) setError(words(failure));
 		} finally {
-			if (alive.current) setBusy(false);
+			setBusy(false);
 		}
 	};
 	return /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("form", {

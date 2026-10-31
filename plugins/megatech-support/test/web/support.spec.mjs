@@ -225,6 +225,37 @@ test("an Ask that ends after its tab was left still clears the box, so pressing 
   expect(keys).toHaveLength(1);
 });
 
+test("coming back to a tab whose request is still out does not offer its button again", async ({ page, app }) => {
+  const fake = await verified(page, app);
+  fake.delays.set("/v1/ask", 2000);
+  await page.getByLabel("Your question").fill("My order is late");
+  await page.getByRole("button", { name: "Ask support" }).click();
+  await expect(page.getByRole("button", { name: "Asking…" })).toBeDisabled();
+  await page.getByRole("tab", { name: "Open a ticket" }).click();
+  await page.getByRole("tab", { name: "Ask" }).click();
+  // The text is still there (the request has not ended) and the button is still off: a second press cannot happen.
+  await expect(page.getByLabel("Your question")).toHaveValue("My order is late");
+  await expect(page.getByRole("button", { name: "Asking…" })).toBeDisabled();
+  await expect(page.getByRole("status", { name: "Support's reply" })).toContainText(/Ticket T-\d+/);
+  await expect(page.getByRole("button", { name: "Ask support" })).toBeDisabled();
+  expect(fake.log.filter((entry) => entry.path === "/v1/ask")).toHaveLength(1);
+  expect(fake.ticketsOf(fake.user.pubkey)).toHaveLength(1);
+
+  // The same for opening a ticket.
+  await page.getByRole("tab", { name: "Open a ticket" }).click();
+  await page.getByLabel("Subject").fill("Printer on fire");
+  await page.getByLabel("What happened").fill("It started at noon.");
+  fake.delays.set("/v1/tickets", 2000);
+  await page.getByRole("button", { name: "Open ticket" }).click();
+  await expect(page.getByRole("button", { name: "Opening…" })).toBeDisabled();
+  await page.getByRole("tab", { name: "Ask" }).click();
+  await page.getByRole("tab", { name: "Open a ticket" }).click();
+  await expect(page.getByRole("button", { name: "Opening…" })).toBeDisabled();
+  await expect(page.getByRole("status", { name: "Ticket opened" })).toContainText(/Ticket T-\d+ is open/);
+  expect(fake.log.filter((entry) => entry.path === "/v1/tickets" && entry.method === "POST")).toHaveLength(1);
+  expect(fake.ticketsOf(fake.user.pubkey)).toHaveLength(2);
+});
+
 test("a slow answer for a ticket that was left does not replace the ticket now open", async ({ page, app }) => {
   const fake = await verified(page, app);
   await page.getByRole("tab", { name: "Open a ticket" }).click();
@@ -408,7 +439,7 @@ test("with the switch on at start the agent type and both tools are there, and a
   const unverified = await callTool(page, ASK, { question: "hi" });
   expect(unverified.error).toBe("Megatech support is not verified. The owner verifies it in Buzz, Settings, Plugins, Megatech support.");
   expect(fake.log).toEqual([]);
-  // Verified, any agent of the user's can ask and read a ticket's status.
+  // Verified, the user's own agents can ask and read a ticket's status.
   await verifyButton(page).click();
   await expect(page.getByRole("tab", { name: "Ask" })).toBeVisible();
   const asked = await callTool(page, ASK, { question: "My order is late" }, "b".repeat(64));

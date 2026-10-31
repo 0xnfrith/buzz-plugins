@@ -153,8 +153,9 @@ export function createIdentity({ client, relay, prove, now = Date.now, signWaitM
       void client.logout();
       return;
     }
-    if (relay.snapshot().viewer !== viewer) {
-      // The signed-in key changed while the check ran: the session is for the wrong account.
+    const signedIn = relay.snapshot().viewer;
+    if (signedIn !== undefined && signedIn !== viewer) {
+      // Another key was signed in while the check ran: the session is for the wrong account.
       void client.logout();
       set({ status: "unverified", ended: true });
       return;
@@ -172,9 +173,15 @@ export function createIdentity({ client, relay, prove, now = Date.now, signWaitM
     set(next);
   };
 
-  /** Drops the session when Buzz's signed-in key is no longer the one it was verified for; true if it did. */
+  /**
+   * Drops the session when a **different** key is signed in than the one it was verified for; true if it did. No key at all is not
+   * a different key: Buzz's snapshot has no `viewer` while the relay connects, after a disconnect and in some error states, so a
+   * sleep, a dropped network or a community switch must not end the session. While the key is unknown the session is kept and
+   * `verifiedKey` gives nothing, so no tool is trusted until it is back.
+   */
   const checkViewer = (): boolean => {
-    if (state.status !== "verified" || relay.snapshot().viewer === verifiedFor) return false;
+    const signedIn = relay.snapshot().viewer;
+    if (state.status !== "verified" || signedIn === undefined || signedIn === verifiedFor) return false;
     void client.logout();
     end({ status: "unverified", ended: true });
     return true;
@@ -191,8 +198,8 @@ export function createIdentity({ client, relay, prove, now = Date.now, signWaitM
     },
     /** Whether a request may be made now. */
     verified,
-    /** The key the session is verified for, while it is; what a tool compares an agent's owner with. */
-    verifiedKey: (): string | undefined => (verified() ? verifiedFor : undefined),
+    /** The key the session is verified for, while it is and Buzz says the same key is signed in; what a tool compares an agent's owner with. */
+    verifiedKey: (): string | undefined => (verified() && relay.snapshot().viewer === verifiedFor ? verifiedFor : undefined),
     /** Starts the check once; callers that arrive while one runs wait for it. */
     verify(): Promise<void> {
       if (running) return running;
