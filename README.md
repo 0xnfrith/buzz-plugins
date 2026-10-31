@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/block/buzz-app"><img alt="Works with Buzz 1.0" src="https://img.shields.io/badge/works%20with-Buzz%201.0-00d4ff?style=flat-square&labelColor=12161c"></a>
-  <a href="#the-plugins"><img alt="4 plugins, 1 coming soon" src="https://img.shields.io/badge/plugins-4%20%2B%201%20soon-00d4ff?style=flat-square&labelColor=12161c"></a>
+  <a href="#the-plugins"><img alt="4 plugins, 1 cooking" src="https://img.shields.io/badge/plugins-4%20%2B%201%20cooking-00d4ff?style=flat-square&labelColor=12161c"></a>
   <a href="LICENSE"><img alt="Apache License 2.0" src="https://img.shields.io/badge/license-Apache%202.0-00d4ff?style=flat-square&labelColor=12161c"></a>
   <br>
   <a href="https://megatech.systems"><b>megatech.systems</b></a>
@@ -44,7 +44,7 @@
   <tr>
     <td width="50%" valign="top">
       <a href="plugins/agent-skills-highlighter"><img src="assets/cards/agent-skills-highlighter.svg" width="100%" alt="Agent Skills Highlighter: a highlighted skill and its card"></a>
-      <br><b><a href="plugins/agent-skills-highlighter">Agent Skills Highlighter</a></b> · <i>coming soon</i>
+      <br><b><a href="plugins/agent-skills-highlighter">Agent Skills Highlighter</a></b> · 🍳 <i>cooking</i>
       <br>A <code>/skill-name</code> in a message lights up, and its card says what the skill is.
     </td>
     <td width="50%" valign="top">
@@ -55,7 +55,7 @@
   </tr>
 </table>
 
-<sub>Agent Skills Highlighter is not merged yet, so its link opens once it is. Also here: <a href="plugins/key-probe"><code>plugins/key-probe</code></a>, a measuring tool for the vim tests. You do not need it.</sub>
+<sub>🍳 cooking means a work in progress: it runs and is tested, and it will still change. Also here: <a href="plugins/key-probe"><code>plugins/key-probe</code></a>, a measuring tool for the vim tests. You do not need it.</sub>
 
 ## Install in 3 steps
 
@@ -78,11 +78,11 @@ Some plugins need one more step, such as pasting your own token or key: each plu
 | [Beeper](plugins/beeper) | should work, untested | **works, tested** ¹ | should work, untested |
 | [Linear](plugins/linear) | should work, untested | **works, tested** | should work, untested ² |
 | [Artifacts](plugins/artifacts) | should work, untested ³ | not supported | not supported |
-| Agent Skills Highlighter (soon) | should work, untested | **works, tested** | not supported ⁴ |
+| [Agent Skills Highlighter](plugins/agent-skills-highlighter) 🍳 | **works, tested** ⁵ | **works, tested** | not supported ⁴ |
 
 "Tested" means run by hand in the Buzz 1.0 desktop app on that system. Every plugin is also tested in Buzz's own web build, in headless Chromium, and each plugin's page says what was and was not checked.
 
-<sub>¹ Against a fake Beeper Desktop; it has not been run against a real one yet. ² Windows has no key store the plugin can reach, so the key is kept in the app's profile as plain text, and the plugin says so. ³ Needs macOS 14 or later. The built-in browser it opens pages in has not been run yet; its page and Settings card have, on Linux. ⁴ It needs <code>sh</code>, which Windows does not have.</sub>
+<sub>¹ Against a fake Beeper Desktop; it has not been run against a real one yet. ² Windows has no key store the plugin can reach, so the key is kept in the app's profile as plain text, and the plugin says so. ³ Needs macOS 14 or later. The built-in browser it opens pages in has not been run yet; its page and Settings card have, on Linux. ⁴ It needs <code>sh</code>, which Windows does not have. ⁵ On a Mac, the highlight, the card, its description and its source line were run; the rest of its checks ran on Linux and in the browser tests.</sub>
 
 ## For builders
 
@@ -99,6 +99,7 @@ plugins/              plugins you can install, one folder each
   beeper/             your Beeper inbox inside Buzz
   linear/             your Linear board inside Buzz
   artifacts/          your saved web pages in a sidebar page, opened in Buzz's browser
+  agent-skills-highlighter/  /skill names in messages, highlighted, with a card that says what each is
   key-probe/          a measuring tool used by the vim tests
 docs/
   building.md         how we build plugins
@@ -119,7 +120,7 @@ CONTRIBUTING.md       how to send a change (and the key-latency rule for vim mod
 | Beeper | Your Beeper chats inside Buzz: a list of chats with network, unread count and time, a chat with its recent messages, and a reply box, read and sent through Beeper Desktop's local API on the same computer. Each person pastes their own access token | [`plugins/beeper`](plugins/beeper) | Built and tested against a fake Beeper; not yet run against a real one |
 | Linear | Your Linear board inside Buzz: a column for each workflow state, in Linear's order, with cards like Linear's own. Drag a card to another column to change its state; click one for details and an Open in Linear link. Each person pastes their own personal API key | [`plugins/linear`](plugins/linear) | Tested against a fake Linear and by hand against a throwaway real workspace; see its notes for what is still unchecked |
 | Artifacts | A sidebar page with your saved web pages (for example Claude artifact links), opened in Buzz's built-in browser with the sign-in kept between restarts. You add, rename and remove the links in Settings; no address is built in. Needs the macOS desktop app, macOS 14 or later | [`plugins/artifacts`](plugins/artifacts) | Prototype; the page and the Settings card have run in the Buzz 1.0 Linux app, the built-in browser has not run yet |
-| Agent Skills Highlighter | A `/skill-name` in a message is highlighted when it matches a skill file on your computer (your Claude Code skills folder, installed Claude Code plugins, and one extra folder you may add); hover it or tab to it and a card says what the skill is. The message's text never changes or moves. Reads the skill files with one declared `sh` program that only reads; the script is printed in its README | [`plugins/agent-skills-highlighter`](plugins/agent-skills-highlighter) | Unit- and browser-tested, speed-checked on a 2,400-message channel, looked at in the Linux desktop app; not run on macOS or Windows |
+| Agent Skills Highlighter 🍳 | A `/skill-name` in a message is highlighted when it matches a skill file on your computer (your Claude Code skills folder, installed Claude Code plugins, and one extra folder you may add); hover it or tab to it and a card says what the skill is. The message's text never changes or moves. Reads the skill files with one declared `sh` program that only reads; the script is printed in its README | [`plugins/agent-skills-highlighter`](plugins/agent-skills-highlighter) | Cooking (work in progress). Unit- and browser-tested, speed-checked on a 2,400-message channel, run by hand in the Linux desktop app and on a Mac (the highlight, the card, its description and source); not run on Windows |
 | Key probe | Times every key from press to paint, for measuring other plugins. Not needed to use anything | [`plugins/key-probe`](plugins/key-probe) | Tool for the vim tests |
 
 </details>
