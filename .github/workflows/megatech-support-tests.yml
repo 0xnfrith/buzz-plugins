@@ -1,0 +1,53 @@
+# Type check, unit tests and build check of the Megatech support plugin (plugins/megatech-support/test/unit). The browser suite is a
+# separate workflow (megatech-support-browser-tests.yml): it needs a block/buzz-app checkout.
+name: Megatech support tests
+
+on:
+  pull_request:
+    paths:
+      - "plugins/megatech-support/**"
+      - ".github/workflows/megatech-support-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - "plugins/megatech-support/**"
+      - ".github/workflows/megatech-support-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Megatech support type check, unit tests and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: plugins/megatech-support
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@12.16.1 --activate
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Type check
+        run: pnpm exec tsc
+      - name: Unit tests
+        # A run that finds no tests passes too, so the machine-readable result says it: some tests ran, every one passed, none was skipped.
+        run: |
+          pnpm exec vitest run --reporter=json --outputFile="$RUNNER_TEMP/unit.json"
+          jq -e '.numTotalTests > 0 and .numPassedTests == .numTotalTests and .numFailedTests == 0 and .numPendingTests == 0' "$RUNNER_TEMP/unit.json"
+          jq '{tests: .numTotalTests, passed: .numPassedTests, failed: .numFailedTests, skipped: .numPendingTests}' "$RUNNER_TEMP/unit.json"
+      - name: plugin.js is the build of the source
+        # Buzz loads the committed plugin.js and never runs a build: it has to be what this source builds to.
+        run: |
+          pnpm run build
+          git diff --exit-code -- plugin.js || { echo "::error::plugin.js is not the build of src/: run 'pnpm run build' in plugins/megatech-support and commit it"; exit 1; }
