@@ -7,7 +7,7 @@ import { open } from "./timeline.mjs";
 import { hoverMessage } from "./message-actions.mjs";
 import { openSettings, selectSettingsSection, settingsDialog, settingsSections } from "./navigation.mjs";
 import { setPluginEnabled } from "./plugin-settings.mjs";
-import { LORE } from "../fixtures/agent-skills-highlighter/plugin.js";
+import { DESCRIPTION_LINES, LORE } from "../fixtures/agent-skills-highlighter/plugin.js";
 
 test.use({ pluginFixtures: true, productionBroker: true, dmLabels: true, historyCounts: { alpha: 12, beta: 3 } });
 
@@ -138,6 +138,82 @@ test("by keyboard: a skill is a tab stop, focus opens the card, Esc closes it, m
   await expect(card(page)).toBeHidden();
 });
 
+test("Esc with the card open closes the card and nothing else: the thread behind it stays open, and the next Esc closes the thread", async ({ page, app }) => {
+  await arrange(page, app);
+  await say(page, "a message to reply to");
+  const row = page.locator("[data-message-scroller] [data-message-id]").last();
+  await hoverMessage(row);
+  await row.getByRole("button", { name: "Reply", exact: true }).click();
+  const reply = page.getByRole("textbox", { name: "Reply to thread", exact: true });
+  await expect(reply).toBeFocused();
+  await page.keyboard.insertText("try /brainstorming here");
+  await page.keyboard.press("Enter");
+  await expect(tokens(page)).toHaveCount(1); // the only skill on the page is in the thread
+  // Opened by keyboard focus: Esc closes the card, the thread stays, and the skill keeps the focus.
+  await token(page, "brainstorming").focus();
+  await expect(card(page)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(card(page)).toBeHidden();
+  await expect(reply).toBeVisible();
+  await expect(token(page, "brainstorming")).toBeFocused();
+  // Opened by the pointer: the same.
+  await token(page, "brainstorming").hover();
+  await expect(card(page)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(card(page)).toBeHidden();
+  await expect(reply).toBeVisible();
+  // With no card open Esc is the app's again, and it closes the thread: the check that the test above could have failed.
+  await page.mouse.move(2, 2);
+  await page.keyboard.press("Escape");
+  await expect(reply).toBeHidden();
+});
+
+test("a long description is clamped to a fixed number of lines and ends in an ellipsis; one of a real size shows whole", async ({ page, app }) => {
+  const words = Array.from({ length: 125 }, (_, i) => `word${String(i).padStart(3, "0")}`).join(" "); // 999 characters
+  const real = Array.from({ length: 55 }, (_, i) => `real${String(i).padStart(2, "0")}`).join(" "); // 329 characters
+  const longest = Array.from({ length: 73 }, (_, i) => `rl${String(i).padStart(3, "0")}`).join(" "); // 437 characters: the longest of the real descriptions found
+  await arrange(page, app, ["@@@\tuser\t\tlong", "name: long", `description: ${words}`, "@@@\tuser\t\treal", "name: real", `description: ${real}`, "@@@\tuser\t\tlongest", "name: longest", `description: ${longest}`, ""].join("\n"));
+  await say(page, "/long /real /longest");
+  await expect(tokens(page)).toHaveCount(3);
+  const desc = card(page).locator(".megatech-skills__desc");
+  const read = () =>
+    desc.evaluate((el) => {
+      const style = getComputedStyle(el);
+      const text = el.firstChild;
+      const range = document.createRange();
+      const bottom = el.getBoundingClientRect().bottom;
+      let shown = 0;
+      for (let at = 0; at < text.length; at++) {
+        range.setStart(text, at);
+        range.setEnd(text, at + 1);
+        const rect = range.getClientRects()[0];
+        if (rect && rect.bottom > bottom + 1) break;
+        shown = at + 1;
+      }
+      return { clamp: style.webkitLineClamp, lines: Math.round(el.clientHeight / parseFloat(style.lineHeight)), clipped: el.scrollHeight > el.clientHeight + 1, shown, length: text.length };
+    });
+  await token(page, "long").hover();
+  await expect(card(page).locator(".megatech-skills__name")).toHaveText("/long");
+  const clamped = await read();
+  console.log(`CLAMP long ${JSON.stringify(clamped)}`);
+  expect(clamped.clamp).toBe(String(DESCRIPTION_LINES));
+  expect(clamped.lines).toBe(DESCRIPTION_LINES);
+  expect(clamped.clipped, "the description is longer than the card shows").toBe(true);
+  expect(clamped.shown, "what shows is a part of it").toBeLessThan(clamped.length);
+  expect(clamped.shown, "and a good part: more than the longest real description").toBeGreaterThan(437);
+  await token(page, "real").hover();
+  await expect(card(page).locator(".megatech-skills__name")).toHaveText("/real");
+  const whole = await read();
+  expect(whole.clipped).toBe(false);
+  expect(whole.shown).toBe(whole.length);
+  await token(page, "longest").hover();
+  await expect(card(page).locator(".megatech-skills__name")).toHaveText("/longest");
+  const longestShown = await read();
+  console.log(`CLAMP longest ${JSON.stringify(longestShown)}`);
+  expect(longestShown.clipped, "the longest real description fits").toBe(false);
+  expect(longestShown.shown).toBe(longestShown.length);
+});
+
 test("scrolling the list closes the card, and so does a click elsewhere", async ({ page, app }) => {
   await arrange(page, app);
   await say(page, "see /brainstorming");
@@ -185,6 +261,50 @@ test("the text never changes or moves: no padding, margin or border, the same ty
   expect(during.spacing).toEqual(before.spacing);
   // The page's text is the message's text, whole, with or without the marks.
   expect(before.text).toContain("before /brainstorming after");
+});
+
+test("the glitch stays inside the highlight, behind its own letters: every shadow is inset, and the neighbouring letters are the same pixels in every frame", async ({ page, app }) => {
+  await arrange(page, app);
+  await say(page, "see(/brainstorming) now");
+  const mark = token(page, "brainstorming");
+  await expect(mark).toHaveCount(1);
+  // The two strips of page either side of the highlight, which hold "(" and ")": what is drawn there must not change.
+  const strips = async () => {
+    const box = await mark.boundingBox();
+    const clip = (x) => ({ x, y: box.y - 2, width: 9, height: box.height + 4 });
+    return [await page.screenshot({ clip: clip(box.x - 9) }), await page.screenshot({ clip: clip(box.x + box.width) })];
+  };
+  // The pointer rests on the message (its own row has a hover state) but not on the highlight.
+  const box = await mark.boundingBox();
+  await page.mouse.move(box.x + box.width + 60, box.y + box.height / 2);
+  const [leftAtRest, rightAtRest] = await strips();
+  // Each frame of the decloak, held still: a negative delay picks the moment, `paused` stops it there.
+  for (const at of [0, 40, 80, 120, 160, 200, 280, 360, 399]) {
+    const shadow = await mark.evaluate((el, ms) => {
+      el.style.animation = "megatech-skills-decloak .4s steps(10,end) 1 paused";
+      el.style.animationDelay = `-${ms}ms`;
+      return getComputedStyle(el).boxShadow;
+    }, at);
+    const layers = shadow.split(/,\s(?![^(]*\))/);
+    expect(layers.length, shadow).toBeGreaterThanOrEqual(2);
+    for (const layer of layers) expect(layer, `at ${at} ms: ${shadow}`).toContain("inset");
+    const [left, right] = await strips();
+    expect(left.equals(leftAtRest), `the letter before the highlight is as it was at ${at} ms`).toBe(true);
+    expect(right.equals(rightAtRest), `the letter after the highlight is as it was at ${at} ms`).toBe(true);
+  }
+  await mark.evaluate((el) => {
+    el.style.animation = "";
+    el.style.animationDelay = "";
+  });
+  // And the hovered, open state once the decloak is over: the ring is inside, too. (The pixels beside it are not compared here: the open card's
+  // own glow, the design system's, falls on the line.)
+  await mark.hover();
+  await expect(card(page)).toBeVisible();
+  await pageTimer(page, 600);
+  const open = await mark.evaluate((el) => ({ shadow: getComputedStyle(el).boxShadow, animation: getComputedStyle(el).animationName }));
+  const openLayers = open.shadow.split(/,\s(?![^(]*\))/);
+  expect(openLayers.length, open.shadow).toBeGreaterThanOrEqual(2);
+  for (const layer of openLayers) expect(layer, open.shadow).toContain("inset");
 });
 
 test("reduced motion: a still brighter highlight and a card that simply appears; otherwise the decloak and the card's glitch run, and nothing moves at rest", async ({ page, app }) => {
@@ -253,8 +373,13 @@ for (const mode of ["dark", "light"]) {
       const read = (name) => style.getPropertyValue(name).trim();
       const tint = read("--megatech-skills-tint");
       const layer = (colour, alpha) => pixel(`color-mix(in srgb, ${colour} ${Number(alpha) * 100}%, transparent)`);
-      // The worst frame: the base, the darkest cell of the dither and the middle of the scan beam, all on the same pixel.
-      const worst = (base) => ratio(ink, over(layer(read("--megatech-skills-beam-color"), read("--megatech-skills-a-scan")), over(layer(tint, read("--megatech-skills-a-dither")), over(layer(tint, base), ground))));
+      // The worst frame: the base, the darkest cell of the dither and the middle of the scan beam, all on the same pixel; and, at the first and last
+      // letters, the glitch's magenta or cyan band as well (it is drawn behind the letters, inside the highlight).
+      const worst = (base) => {
+        const under = over(layer(read("--megatech-skills-beam-color"), read("--megatech-skills-a-scan")), over(layer(tint, read("--megatech-skills-a-dither")), over(layer(tint, base), ground)));
+        const split = (colour) => ratio(ink, over(layer(read(colour), read("--megatech-skills-a-split")), under));
+        return Math.min(ratio(ink, under), split("--megatech-skills-magenta"), split("--megatech-skills-cyan"));
+      };
       const el = document.querySelector(".megatech-skills__plate");
       const plate = over(pixel(getComputedStyle(el).backgroundColor), { r: 255, g: 255, b: 255, a: 1 });
       // Every line of the card against its plate.

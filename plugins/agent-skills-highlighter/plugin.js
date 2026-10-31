@@ -32,6 +32,9 @@ export function findSkills(text, known) {
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const LABEL = /^[A-Za-z0-9._-]{1,64}$/;
 const MAX_DESCRIPTION = 1000;
+// The card shows this many lines of a description and ends the last with an ellipsis when there is more: about 575 characters at the card's width.
+// Eleven real SKILL.md files, found on a machine that builds the plugin, had descriptions of 44 to 439 characters.
+export const DESCRIPTION_LINES = 12;
 
 /** `name` and `description` from the lines of a SKILL.md frontmatter (the lines between the `---` fences): plain, quoted, folded and literal values. */
 export function parseFrontmatter(text) {
@@ -248,10 +251,10 @@ export const ditherTile = (rgb, top) =>
 // with all of it at its strongest at once (a test adds them up): the base, the dither's darkest cell and the middle of the scan beam. The
 // light theme has more room, because its letters are dark and the tint is a dark teal.
 const BEHIND = {
-  dark: { tint: "#00d4ff", beam: "#4aeaff", rest: 0.12, hot: 0.16, dither: 0.12, scan: 0.1 },
-  light: { tint: "#00708f", beam: "#00708f", rest: 0.2, hot: 0.3, dither: 0.28, scan: 0.2 },
+  dark: { tint: "#00d4ff", beam: "#4aeaff", rest: 0.12, hot: 0.16, dither: 0.12, scan: 0.1, split: 0.14 },
+  light: { tint: "#00708f", beam: "#00708f", rest: 0.2, hot: 0.26, dither: 0.2, scan: 0.2, split: 0.12 },
 };
-const behind = (mode) => `--megatech-skills-tint:${BEHIND[mode].tint};--megatech-skills-beam-color:${BEHIND[mode].beam};--megatech-skills-a-rest:${BEHIND[mode].rest};--megatech-skills-a-hot:${BEHIND[mode].hot};--megatech-skills-a-dither:${BEHIND[mode].dither};--megatech-skills-a-scan:${BEHIND[mode].scan};--megatech-skills-dither:${ditherTile(BEHIND[mode].tint, BEHIND[mode].dither)};--megatech-skills-frame:${ditherTile(BEHIND[mode].tint, 0.95)};`;
+const behind = (mode) => `--megatech-skills-tint:${BEHIND[mode].tint};--megatech-skills-beam-color:${BEHIND[mode].beam};--megatech-skills-a-rest:${BEHIND[mode].rest};--megatech-skills-a-hot:${BEHIND[mode].hot};--megatech-skills-a-dither:${BEHIND[mode].dither};--megatech-skills-a-scan:${BEHIND[mode].scan};--megatech-skills-a-split:${BEHIND[mode].split};--megatech-skills-dither:${ditherTile(BEHIND[mode].tint, BEHIND[mode].dither)};--megatech-skills-frame:${ditherTile(BEHIND[mode].tint, 0.95)};`;
 const share = (colour, alpha) => `color-mix(in srgb,${colour} calc(var(--${alpha}) * 100%),transparent)`;
 
 export const CSS = `
@@ -286,20 +289,21 @@ export const CSS = `
 .megatech-skills__token:focus{outline:none}
 .megatech-skills__token:focus-visible{outline:2px solid var(--border-focus,var(--megatech-skills-edge));outline-offset:1px}
 /* Cloaked at rest: a still, dim tint and dither, with nothing animating (a moving highlight on every token cost the list's scrolling dearly: see NOTES.md).
-   Decloak on hover or focus: a scan beam through the highlight and an RGB split on its edge, in the space behind and around the letters. */
+   Decloak on hover or focus: a scan beam through the highlight and an RGB split on its edge, behind the letters. Every shadow
+   here is inset: an outside one would be drawn over the neighbouring words. */
 .megatech-skills__token:hover,.megatech-skills__token:focus-visible,.megatech-skills__token[data-skill-open]{
   background-image:linear-gradient(100deg,transparent 0 38%,${share("var(--megatech-skills-beam-color)", "megatech-skills-a-scan")} 50%,transparent 62% 100%),var(--megatech-skills-dither);
   background-size:300% 100%,4px 4px;background-position:130% 0,0 0;
   background-color:${share("var(--megatech-skills-tint)", "megatech-skills-a-hot")};
-  box-shadow:inset 0 -2px 0 var(--megatech-skills-ink),0 0 0 1px color-mix(in srgb,var(--megatech-skills-edge) 80%,transparent);
+  box-shadow:inset 0 -2px 0 var(--megatech-skills-ink),inset 0 0 0 1px color-mix(in srgb,var(--megatech-skills-edge) 80%,transparent);
   animation:megatech-skills-decloak .4s steps(10,end) 1;
 }
 @keyframes megatech-skills-decloak{
-  0%{background-position:130% 0,0 0;box-shadow:-3px 0 0 var(--megatech-skills-magenta),3px 0 0 var(--megatech-skills-cyan),inset 0 -2px 0 var(--megatech-skills-ink)}
-  20%{box-shadow:3px 0 0 var(--megatech-skills-magenta),-3px 0 0 var(--megatech-skills-cyan),inset 0 -2px 0 var(--megatech-skills-ink)}
-  35%{box-shadow:-2px 0 0 var(--megatech-skills-magenta),2px 0 0 var(--megatech-skills-cyan),inset 0 -2px 0 var(--megatech-skills-ink)}
-  55%{box-shadow:1px 0 0 var(--megatech-skills-magenta),-1px 0 0 var(--megatech-skills-cyan),inset 0 -2px 0 var(--megatech-skills-ink)}
-  100%{background-position:-30% 0,0 0;box-shadow:inset 0 -2px 0 var(--megatech-skills-ink),0 0 0 1px color-mix(in srgb,var(--megatech-skills-edge) 80%,transparent)}
+  0%{background-position:130% 0,0 0;box-shadow:inset 3px 0 0 ${share("var(--megatech-skills-magenta)", "megatech-skills-a-split")},inset -3px 0 0 ${share("var(--megatech-skills-cyan)", "megatech-skills-a-split")},inset 0 -2px 0 var(--megatech-skills-ink)}
+  20%{box-shadow:inset -3px 0 0 ${share("var(--megatech-skills-magenta)", "megatech-skills-a-split")},inset 3px 0 0 ${share("var(--megatech-skills-cyan)", "megatech-skills-a-split")},inset 0 -2px 0 var(--megatech-skills-ink)}
+  35%{box-shadow:inset 2px 0 0 ${share("var(--megatech-skills-magenta)", "megatech-skills-a-split")},inset -2px 0 0 ${share("var(--megatech-skills-cyan)", "megatech-skills-a-split")},inset 0 -2px 0 var(--megatech-skills-ink)}
+  55%{box-shadow:inset -1px 0 0 ${share("var(--megatech-skills-magenta)", "megatech-skills-a-split")},inset 1px 0 0 ${share("var(--megatech-skills-cyan)", "megatech-skills-a-split")},inset 0 -2px 0 var(--megatech-skills-ink)}
+  100%{background-position:-30% 0,0 0;box-shadow:inset 0 -2px 0 var(--megatech-skills-ink),inset 0 0 0 1px color-mix(in srgb,var(--megatech-skills-edge) 80%,transparent)}
 }
 /* The card: a dithered frame around a solid plate, so the words sit on a plain surface. Square corners, as in the design system. */
 .megatech-skills__card{
@@ -316,7 +320,7 @@ export const CSS = `
 .megatech-skills__head{display:flex;align-items:center;gap:10px;margin:0 0 8px}
 .megatech-skills__name{font:700 14px/1.2 "Chakra Petch",ui-sans-serif,system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--megatech-skills-name);overflow-wrap:anywhere}
 .megatech-skills__tag{margin-left:auto;font:400 10px/1 "Share Tech Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.26em;text-transform:uppercase;padding:3px 3px 3px 6px;border:1px solid var(--megatech-skills-name);color:var(--megatech-skills-name)}
-.megatech-skills__desc{margin:0 0 10px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:12em;overflow:hidden}
+.megatech-skills__desc{margin:0 0 10px;white-space:pre-wrap;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:${DESCRIPTION_LINES};line-clamp:${DESCRIPTION_LINES};overflow:hidden}
 .megatech-skills__from{margin:0 0 10px;font-size:10px;line-height:1.3;letter-spacing:.26em;text-transform:uppercase;color:var(--megatech-skills-muted)}
 .megatech-skills__lore{margin:0;padding-top:10px;border-top:1px solid var(--megatech-skills-hair);font-size:12px;line-height:1.55;letter-spacing:.16em;color:var(--megatech-skills-status)}
 .megatech-skills__lore::before{content:"SYS:: "}
@@ -473,7 +477,11 @@ export function apply(ctx) {
     style.textContent = CSS;
     document.head.append(style);
     const onKey = (event) => {
-      if (event.key === "Escape" && card.isOpen()) card.close();
+      if (event.key !== "Escape" || !card.isOpen()) return;
+      // Esc closes the card and goes no further: passed on, it would also close the thread (or whatever else Esc is for) behind it.
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      card.close();
     };
     const onScroll = () => card.isOpen() && card.close();
     const onPointerDown = (event) => {

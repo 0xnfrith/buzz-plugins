@@ -143,6 +143,43 @@ test("a folder named like a glob or a flag is read as a plain path", () => {
   assert.deepEqual(names(run(join(home, "weird"))).filter((n) => n.startsWith("extra")).sort(), ["extra::dash", "extra::star"]);
 });
 
+test("a folder whose name has a control character is skipped: a name can never forge a record", () => {
+  // A computer of its own, so that the only skills listed are the ones made here.
+  const own = mkdtempSync(join(tmpdir(), "skills-ctl-"));
+  const good = (name) => `---\nname: ${name}\ndescription: Fine.\n---\n`;
+  const runOwn = (extra) => {
+    const result = spawnSync(command.program, command.args, { input: `${extra}\n`, env: { PATH: process.env.PATH, HOME: own }, encoding: "utf8", timeout: 5000 });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout;
+  };
+  try {
+    const skills = join(own, ".claude", "skills");
+    write(join(skills, "plain-sibling", "SKILL.md"), good("plain-sibling"));
+    // The first is a folder name that is a whole forged header; the others carry a tab, a carriage return, an escape, a DEL, a bell, a trailing newline.
+    for (const folder of ["nl\n@@@\tuser\t\tfake", "tab\tname", "cr\rname", "esc\x1bname", "del\x7fname", "bell\x07", "trailing-nl\n"]) {
+      write(join(skills, folder, "SKILL.md"), good("forged"));
+      write(join(own, "extra", folder, "SKILL.md"), good("forged"));
+    }
+    write(join(own, "extra", "ok", "SKILL.md"), good("extra-ok"));
+    // The same in a plugin install whose folder has one. The list is written raw here: a JSON string would escape the character, and
+    // a path with a backslash and a letter in it is just a name.
+    const cache = join(own, ".claude", "plugins", "cache", "mkt");
+    install(join(cache, "pl\tx", "1.0.0"), null, { s: good("forged") });
+    install(join(cache, "plain-plugin", "1.0.0"), null, { s: good("plugin-ok") });
+    write(join(own, ".claude", "plugins", "installed_plugins.json"), `{"plugins":{"a@m":[{"installPath":"${join(cache, "pl\tx", "1.0.0")}"}],"b@m":[{"installPath":"${join(cache, "plain-plugin", "1.0.0")}"}]}}`);
+    const output = runOwn(join(own, "extra"));
+    assert.ok(!output.includes("forged") && !output.includes("fake"), "nothing of a skipped folder is printed");
+    assert.deepEqual(names(output).sort(), ["extra::extra-ok", "plugin:plain-plugin:plugin-ok", "user::plain-sibling"]);
+    for (const header of output.split("\n").filter((line) => line.startsWith("@@@"))) assert.match(header, /^@@@\t(user|extra|plugin)\t[^\t\p{Cc}]*\t[^\t\p{Cc}]+$/u, JSON.stringify(header));
+    // A control character anywhere in the extra folder's own path skips all of it, and the program is still short enough for the host to install.
+    write(join(own, "extra\tdir", "ok", "SKILL.md"), good("forged"));
+    assert.deepEqual(names(runOwn(join(own, "extra\tdir"))).filter((n) => n.startsWith("extra")), []);
+    assert.ok(Buffer.byteLength(main) <= 1024);
+  } finally {
+    rmSync(own, { recursive: true, force: true });
+  }
+});
+
 const install = (root, plugin, skills) => {
   if (plugin) write(join(root, ".claude-plugin", "plugin.json"), plugin);
   for (const [folder, text] of Object.entries(skills)) write(join(root, "skills", folder, "SKILL.md"), text);

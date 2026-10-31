@@ -7,7 +7,9 @@ case $b in /*) ;; *) exit 0 ;; esac
 r() {
   for f in "$3"/*/SKILL.md; do
     [ "$n" -lt 400 ] && [ -f "$f" ] && [ -r "$f" ] || continue
-    n=$((n + 1)); g=${f%/SKILL.md}
+    g=${f%/SKILL.md}
+    case $g$2 in *[[:cntrl:]]*) continue ;; esac
+    n=$((n + 1))
     printf '@@@\t%s\t%s\t%s\n' "$1" "$2" "${g##*/}"
     LC_ALL=C awk "$A" "$f" 2>/dev/null
   done

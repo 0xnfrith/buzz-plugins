@@ -46,7 +46,7 @@ A `/name` is highlighted only when **all** of these hold:
 
 ## The card
 
-Hover a highlighted skill for a moment, or Tab to it (every highlight is a tab stop, like a link). The card shows the skill's **name**, its **description** from the skill file, **where it comes from** (your skills folder, the extra folder, or a plugin's name), and a line of lore that changes each time.
+Hover a highlighted skill for a moment, or Tab to it (every highlight is a tab stop, like a link). The card shows the skill's **name**, its **description** from the skill file, **where it comes from** (your skills folder, the extra folder, or a plugin's name), and a line of lore that changes each time. The description shows up to **12 lines, about 575 characters** at the card's width (measured with a monospace face in the desktop app and in the browser build), and a longer one ends in an ellipsis (`…`) instead of being cut off. Real descriptions are shorter: eleven real `SKILL.md` files found on a machine that builds this plugin had descriptions of 44 to 439 characters, and all of them show whole.
 
 | Do this | What happens |
 | --- | --- |
@@ -54,7 +54,7 @@ Hover a highlighted skill for a moment, or Tab to it (every highlight is a tab s
 | Tab to it | The card opens at once |
 | Move the pointer off, onto the card | The card stays while the pointer is on the skill or the card |
 | Move the pointer off both | The card closes after a moment |
-| `Esc` | The card closes; focus stays on the skill |
+| `Esc` | The card closes, and that is all it does: focus stays on the skill and a thread open behind it stays open (the next `Esc`, with no card, is the app's own again) |
 | `Enter` or `Space` on the skill | The card opens again |
 | Scroll, click elsewhere, Tab away, or leave the window | The card closes |
 
@@ -89,12 +89,12 @@ Buzz checks a declaration when a plugin is installed and refuses an argument lon
 What the program is allowed to do, and what tests check about it (`test/script.test.mjs` runs the manifest's own program against real folders):
 
 - **It only reads.** It writes no file, makes no network call, runs nothing that it reads, and builds no command from data. The only programs it runs are `read`, `printf`, `grep`, `sed`, `head` and `awk`.
-- **The extra folder arrives on standard input**, as one line, and is used only as a path, always quoted. A path that is not absolute is ignored. Names with spaces, `*`, `$(…)` or a leading `-` are just names.
-- **It prints only each skill's `name` and `description` lines**, and for each skill where it came from (`user`, `extra` or `plugin`, and the plugin's name). Nothing else of a file leaves it: not the other lines of the frontmatter, not the body. A line of a file can never pose as the header of another skill.
+- **The extra folder arrives on standard input**, as one line, and is used only as a path, always quoted. A path that is not absolute is ignored. Names with spaces, `*`, `$(…)` or a leading `-` are just names. A name with a **control character** (a newline, tab, carriage return, escape, and the like) is not: the names go into the header line the plugin reads back, so a folder whose name, or whose plugin's name, or whose path has one is skipped, and no folder name can forge a header.
+- **It prints only each skill's `name` and `description` lines**, and for each skill where it came from (`user`, `extra` or `plugin`, and the plugin's name). Nothing else of a file leaves it: not the other lines of the frontmatter, not the body. A line of a file can never pose as the header of another skill, and neither can a folder's name (above).
 - **It is bounded.** 400 files; a file's output stops at 2,000 bytes (a line is printed whole or left out; it is never cut in the middle of a letter); the whole output stays under the 1 MiB Buzz allows a program to print. Buzz also stops it after 5 seconds.
 - **Unreadable files are skipped without a word**, and it always ends with exit code 0.
 
-How it reads: the first line of standard input is the extra folder (`~/` is expanded; anything that is not an absolute path is dropped). The base folder is `$CLAUDE_CONFIG_DIR`, or `~/.claude` when that is not set. The function `r KIND PLUGIN DIR` goes through `DIR/*/SKILL.md`: for each readable file (400 at most in all) it prints a header line, `@@@`, a tab, the kind, a tab, the plugin's name, a tab and the skill's folder name, then runs the `awk` program on the file. The `awk` program prints the `name:` and `description:` lines of the frontmatter, with their indented continuation lines, and stops at the closing `---`, at line 80, or at 2,000 bytes. The script reads your skills folder first, then the extra folder, then the install folders named in `installed_plugins.json` (`grep` and `sed` take the `installPath` values and `awk` drops repeats), taking a plugin's name from its `.claude-plugin/plugin.json` or, without one, from the folder above the version.
+How it reads: the first line of standard input is the extra folder (`~/` is expanded; anything that is not an absolute path is dropped). The base folder is `$CLAUDE_CONFIG_DIR`, or `~/.claude` when that is not set. The function `r KIND PLUGIN DIR` goes through `DIR/*/SKILL.md`: for each readable file (400 at most in all) whose path has no control character it prints a header line, `@@@`, a tab, the kind, a tab, the plugin's name, a tab and the skill's folder name, then runs the `awk` program on the file. The `awk` program prints the `name:` and `description:` lines of the frontmatter, with their indented continuation lines, and stops at the closing `---`, at line 80, or at 2,000 bytes. The script reads your skills folder first, then the extra folder, then the install folders named in `installed_plugins.json` (`grep` and `sed` take the `installPath` values and `awk` drops repeats), taking a plugin's name from its `.claude-plugin/plugin.json` or, without one, from the folder above the version.
 
 `reader/main.sh`, the argument of `sh -c`:
 
@@ -108,7 +108,9 @@ case $b in /*) ;; *) exit 0 ;; esac
 r() {
   for f in "$3"/*/SKILL.md; do
     [ "$n" -lt 400 ] && [ -f "$f" ] && [ -r "$f" ] || continue
-    n=$((n + 1)); g=${f%/SKILL.md}
+    g=${f%/SKILL.md}
+    case $g$2 in *[[:cntrl:]]*) continue ;; esac
+    n=$((n + 1))
     printf '@@@\t%s\t%s\t%s\n' "$1" "$2" "${g##*/}"
     LC_ALL=C awk "$A" "$f" 2>/dev/null
   done
@@ -145,8 +147,8 @@ The plugin's own code then reads those lines (`parseSkillOutput` in `plugin.js`)
 Cloaked at rest, charged on contact.
 
 - **At rest** a skill has a still, dim cyan tint with an ordered (Bayer) dither and a thin underline, behind the letters. Nothing moves. (A shimmer at rest was tried and dropped: on a long channel, with a skill in one message in five, it slowed scrolling too much. See `NOTES.md`.)
-- **On hover or focus** it decloaks for 0.4 seconds: a scan beam crosses the highlight and a thin cyan and magenta split flickers at its edges. Then it stays brighter while the card is open. The card arrives with the same split on its edge.
-- **The letters never glitch.** Only what is behind and beside them changes; the message's own text keeps its font, size, colour and place, and a test compares the position and size of every word before and after.
+- **On hover or focus** it decloaks for 0.4 seconds: a scan beam crosses the highlight and a thin cyan and magenta split flickers at its left and right edges, inside the highlight and behind its own first and last letters (a translucent band, so the words stay readable; nothing is drawn outside the highlight, on the words beside it). Then it stays brighter while the card is open. The card arrives with the same split on its edge.
+- **The letters never glitch.** Only what is behind them, inside the highlight, changes; every shadow of the highlight is an inset one, and a test holds the decloak at nine frames and compares the pixels of the words either side of it with the same words at rest. The message's own text keeps its font, size, colour and place, and a test compares the position and size of every word before and after.
 - **The card** is the Megatech design system's: a gunmetal plate, ink text, a hair border, a dithered frame, square corners; the name in capitals in the display face; a status line that starts `SYS::` in cyan-dim. The fonts are not downloaded (a plugin cannot): the display and mono faces are named first and the system's sans and mono faces follow, so on a computer without Chakra Petch and Share Tech Mono it reads in the system's.
 - **Magenta** (`#ff2bd6`) appears only as the thin split edge, never as a fill, a border or text. A test checks where it is used.
 
@@ -161,7 +163,7 @@ Cloaked at rest, charged on contact.
 
 **Light theme.** The tokens above are dark-only. In light the card's plate, text and border are Buzz's own (`--surface-popover`, `--text-standard`, `--text-subtle`, `--border-standard`), so the card matches whatever theme and accent you chose, there is no glow, and the cyan is darkened to `#00708f` (5.6:1 on white; the bright cyan is 1.8:1) wherever it carries text or a line. Magenta stays, as an edge that nothing depends on.
 
-**Contrast.** The message's own words stay at 4.5:1 or better on the highlight even in its brightest frame (the base, the darkest cell of the dither and the middle of the beam, all at once): 5.8:1 on dark and 4.7:1 on light, in the worst frame. Every line of the card is checked against its plate in both themes (a browser test reads the computed colours).
+**Contrast.** The message's own words stay at 4.5:1 or better on the highlight even in its brightest frame (the base, the darkest cell of the dither and the middle of the beam, all at once, and at the first and last letters the glitch's magenta or cyan band as well): 4.7:1 on dark and 4.7:1 on light, in the worst frame. Every line of the card is checked against its plate in both themes (a browser test reads the computed colours).
 
 **Reduced motion.** With *prefers-reduced-motion* the highlight does not animate on hover, and the card simply appears. Both stay highlighted and dithered.
 
@@ -197,7 +199,7 @@ Not used, and why: wrapping the words in the host's DOM (React owns those text n
 
 ```sh
 # from a clone of this repository, with no package.json above the plugin's folder:
-node --test plugins/agent-skills-highlighter/test/*.test.mjs                   # 115 unit tests: detection, parsing, the store, the real script on made-up folders, the look
+node --test plugins/agent-skills-highlighter/test/*.test.mjs                   # 125 unit tests: detection, parsing, the store, the real script on made-up folders, the look
 node plugins/agent-skills-highlighter/test/bench.mjs                           # the matcher's speed
 plugins/agent-skills-highlighter/test/run.sh /path/to/block/buzz-app/checkout  # the browser tests, in Buzz's own web build
 SKILLS_PERF=1 plugins/agent-skills-highlighter/test/run.sh /path/to/block/buzz-app/checkout -g "2,400 messages|highlighter's cost"   # the speed comparison (minutes)
@@ -209,8 +211,8 @@ The browser tests run the production web build, a fixture relay and headless Chr
 
 Checked:
 
-- **Node tests (115):** detection (the table above), parsing a `SKILL.md` (plain, quoted, folded and literal values), the store and the settings, **the real program** run as the manifest declares it (`sh -c`) against made-up folders (what it prints, that it prints nothing else, the caps, quiet skips, names with spaces and `$(…)`, an extra folder that is not absolute, that every file it read is unchanged afterwards), and the manifest against the limits the app applies when it installs a plugin (see `NOTES.md`).
-- **Browser tests (12)**, in Buzz's own production web build (commit `d92bfb2c` of block/buzz-app, headless Chromium): a skill is drawn in a channel, a thread and a DM, and a path, a URL, code and an unknown name are left alone; hover opens the card, mouse-out and the card itself; keyboard (tab stops, Esc); scrolling and clicking away; the text and its box do not move; reduced motion; contrast in both themes; the card's tokens (dark) and the host's plate and text (light), square corners; Settings (the extra folder, a failed read keeps the last list); reading again; disabling and enabling leaves nothing behind. The DM is checked in the browser build only: sending a message to a real person to see one was not worth it.
+- **Node tests (125):** detection (the table above), parsing a `SKILL.md` (plain, quoted, folded and literal values), the store and the settings, **the real program** run as the manifest declares it (`sh -c`) against made-up folders (what it prints, that it prints nothing else, the caps, quiet skips, names with spaces and `$(…)`, an extra folder that is not absolute, folders whose names have control characters, that every file it read is unchanged afterwards), the stylesheet against the design tokens (colours, where magenta may appear, that every shadow of the highlight is inset) and the guard that every workflow building the app names the same Buzz commit (`.github/check-app-ref.sh`, run on made-up workflows too), and the manifest against the limits the app applies when it installs a plugin (see `NOTES.md`).
+- **Browser tests (15)**, in Buzz's own production web build (commit `d92bfb2c` of block/buzz-app, headless Chromium): a skill is drawn in a channel, a thread and a DM, and a path, a URL, code and an unknown name are left alone; hover opens the card, mouse-out and the card itself; keyboard (tab stops, Esc); Esc with the card open closes the card and not the thread behind it; a long description is clamped with an ellipsis; the glitch stays inside the highlight; scrolling and clicking away; the text and its box do not move; reduced motion; contrast in both themes; the card's tokens (dark) and the host's plate and text (light), square corners; Settings (the extra folder, a failed read keeps the last list); reading again; disabling and enabling leaves nothing behind. The DM is checked in the browser build only: sending a message to a real person to see one was not worth it.
 - **Speed** (above), in the browser build.
 - **The installed Buzz 1.0 desktop app on Linux** (`0.0.0-preview.156.1`, WebKitGTK): the plugin is installed from this folder (the review lists `sh` and its arguments); the real `sh -c` reads a made-up Claude config folder (set with `CLAUDE_CONFIG_DIR`: four skills, a made-up plugin install with two skills, and an extra folder entered in Settings); the skills are highlighted in a channel and in a thread; a path, a URL, a file name, code and an unknown name are not; the card opens on hover and on Tab, and closes on Esc, in dark and in light; Settings says what was found; and with Vim mode on, `j` and `k` still move its cursor while a skill has the focus. The screenshots above are from it.
 

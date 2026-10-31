@@ -25,7 +25,7 @@ test("the old red is gone and magenta is only ever the thin split edge: named on
   assert.equal((CSS.match(/--megatech-skills-magenta:#ff2bd6/g) ?? []).length, 1);
   assert.equal((withoutKeyframes.match(/var\(--megatech-skills-magenta\)/g) ?? []).length, 0, "no fill, border, text or shadow outside the keyframes uses it");
   for (const frame of CSS.match(/@keyframes [\w-]+\{(?:[^{}]*\{[^{}]*\})*\s*\}/g)) {
-    for (const shadow of frame.match(/-?\d+px 0 0 var\(--megatech-skills-magenta\)/g) ?? []) assert.ok(Math.abs(parseInt(shadow, 10)) <= 4, `a split wider than 4px: ${shadow}`);
+    for (const shadow of frame.match(/-?\d+px 0 0 (?:var\(--megatech-skills-magenta\)|color-mix\(in srgb,var\(--megatech-skills-magenta\))/g) ?? []) assert.ok(Math.abs(parseInt(shadow, 10)) <= 4, `a split wider than 4px: ${shadow}`);
   }
 });
 
@@ -45,4 +45,30 @@ test("the card's name is in the display face in capitals; the status line starts
   assert.ok(/\.megatech-skills__name\{[^}]*Chakra Petch[^}]*text-transform:uppercase/.test(CSS));
   assert.ok(/\.megatech-skills__lore::before\{content:"SYS:: "\}/.test(CSS));
   assert.ok(/--megatech-skills-status:var\(--megatech-skills-dim\)/.test(CSS));
+});
+
+// The layers of every `box-shadow` declared in a piece of CSS, split at the commas that are not inside brackets.
+const shadowLayers = (css) =>
+  [...css.matchAll(/box-shadow:([^;}]*)/g)].flatMap(([, value]) => {
+    const layers = [];
+    let depth = 0;
+    let from = 0;
+    [...value].forEach((char, at) => {
+      if (char === "(") depth++;
+      else if (char === ")") depth--;
+      else if (char === "," && depth === 0) {
+        layers.push(value.slice(from, at).trim());
+        from = at + 1;
+      }
+    });
+    layers.push(value.slice(from).trim());
+    return layers;
+  });
+
+test("the highlight's shadows are all inset, so the split and the ring stay inside it, behind its own letters, and never touch the neighbouring words", () => {
+  const decloak = CSS.match(/@keyframes megatech-skills-decloak\{(?:[^{}]*\{[^{}]*\})*\s*\}/)[0];
+  const tokenRules = [...withoutKeyframes.matchAll(/([^{}]*megatech-skills__token[^{}]*)\{([^{}]*)\}/g)].map((m) => m[2]).join("\n");
+  const layers = [...shadowLayers(decloak), ...shadowLayers(tokenRules)];
+  assert.ok(layers.length >= 15, `${layers.length} shadow layers read`);
+  assert.deepEqual(layers.filter((layer) => !layer.startsWith("inset ")), []);
 });
