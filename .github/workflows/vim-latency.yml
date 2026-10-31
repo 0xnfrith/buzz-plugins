@@ -46,13 +46,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: BUZZ_APP_REF is the same in every workflow that builds the app
-        run: |
-          # Every workflow file that names a BUZZ_APP_REF must name the same 40-character commit.
-          lines=$(grep -h -E '^  BUZZ_APP_REF:' .github/workflows/*.yml)
-          [ "$(grep -c -E '^  BUZZ_APP_REF: [0-9a-f]{40}( .*)?$' <<<"$lines")" = "$(grep -c . <<<"$lines")" ] \
-            && [ "$(sed -E 's/^  BUZZ_APP_REF: ([0-9a-f]{40}).*/\1/' <<<"$lines" | sort -u | wc -l)" = 1 ] \
-            || { echo "::error::BUZZ_APP_REF is not the same 40-character commit in every workflow that names it: change them together"; exit 1; }
+      - name: BUZZ_APP_REF is defined, and the same, in every workflow that builds the app
+        run: .github/check-app-ref.sh
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: block/buzz-app
