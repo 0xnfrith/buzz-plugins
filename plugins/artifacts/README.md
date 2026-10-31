@@ -57,7 +57,7 @@ The screenshots are from the Buzz desktop app on Linux, in the light theme, in a
 
 ![The Add a plugin window: on the left a drop area with a Browse button for a folder, on the right a box for a Git or GitHub repository with a Find button](../../assets/install/2-add-a-plugin.png)
 
-**3. Type `https://github.com/0xnfrith/buzz-plugins` and press Find.** Leave Branch or tag empty. If you have cloned this repository, use **Browse** instead and choose the folder `plugins/artifacts`.
+**3. Type `https://github.com/0xnfrith/buzz-plugins` and press Find.** Leave Branch or tag empty. If you have cloned this repository, use **Browse** instead and choose the folder `plugins/artifacts`. With **Browse** there is no step 4: the review in step 5 opens straight away.
 
 ![The repository address typed into the Git or GitHub repository box, with Find ready to press](../../assets/install/3-git-address.png)
 
@@ -67,7 +67,7 @@ The screenshots are from the Buzz desktop app on Linux, in the light theme, in a
 
 **5. Read the review and press Install plugin.** Artifacts declares no commands and no network addresses, so the review lists nothing beyond what every plugin gets: "No additional capabilities declared". **Enable plugin** is on, so it is turned on as it is installed.
 
-![The Review plugin access window for Artifacts: Computer access, no additional capabilities declared, Enable plugin switched on, and the Install plugin button](screenshots/install/1-review.png)
+![The Review plugin access window for a plugin that declares nothing: Computer access, no additional capabilities declared, Enable plugin switched on, and the Install plugin button](../../assets/install/review-no-capabilities.png)
 
 Open **Computer access** to read what the review means by it: plugins are not sandboxed, so the list says what a plugin asks Buzz to do, not what its code can do. Install only plugins you trust.
 
@@ -75,13 +75,13 @@ Open **Computer access** to read what the review means by it: plugins are not sa
 
 **6. It is installed and turned on.** Search Manage plugins for it: **Disable** on its row means it is on, and it now has a page in the sidebar and a card in Settings.
 
-![Manage plugins searched for artifacts: Artifacts is listed with a Disable button, which means it is on, and Artifacts has an entry in the Settings list](screenshots/install/2-installed.png)
+![Manage plugins searched for artifacts: Artifacts is listed with a Disable button, which means it is on, and Artifacts has an entry in the Settings list](screenshots/install/1-installed.png)
 
 **7. Add a page.** Open Settings, then **Artifacts**. Type a name and an `https://` address (this one is only an example) and press **Add page**.
 
-![The Artifacts card in Settings with the name Example page and the address https://example.com/ typed in, ready for Add page](screenshots/install/3-add-a-page.png)
+![The Artifacts card in Settings with the name Example page and the address https://example.com/ typed in, ready for Add page](screenshots/install/2-add-a-page.png)
 
-![The Artifacts card after Add page: Example page is listed as the default page, with Rename, Pin to top bar and Remove](screenshots/install/4-page-added.png)
+![The Artifacts card after Add page: Example page is listed as the default page, with Rename, Pin to top bar and Remove](screenshots/install/3-page-added.png)
 
 </details>
 

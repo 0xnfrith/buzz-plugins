@@ -55,7 +55,7 @@ The screenshots are from the Buzz desktop app on Linux, in the light theme, in a
 
 ![The Add a plugin window: on the left a drop area with a Browse button for a folder, on the right a box for a Git or GitHub repository with a Find button](../../assets/install/2-add-a-plugin.png)
 
-**3. Type `https://github.com/0xnfrith/buzz-plugins` and press Find.** Leave Branch or tag empty. If you have cloned this repository, use **Browse** instead and choose the folder `plugins/beeper`.
+**3. Type `https://github.com/0xnfrith/buzz-plugins` and press Find.** Leave Branch or tag empty. If you have cloned this repository, use **Browse** instead and choose the folder `plugins/beeper`. With **Browse** there is no step 4: the review in step 5 opens straight away.
 
 ![The repository address typed into the Git or GitHub repository box, with Find ready to press](../../assets/install/3-git-address.png)
 

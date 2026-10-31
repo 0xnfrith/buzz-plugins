@@ -40,7 +40,7 @@ The screenshots are from the Buzz desktop app on Linux, in the light theme, in a
 
 ![The Add a plugin window: on the left a drop area with a Browse button for a folder, on the right a box for a Git or GitHub repository with a Find button](../../assets/install/2-add-a-plugin.png)
 
-**3. Type `https://github.com/0xnfrith/buzz-plugins` and press Find.** Leave Branch or tag empty. If you have cloned this repository, use **Browse** instead and choose the folder `plugins/key-probe`.
+**3. Type `https://github.com/0xnfrith/buzz-plugins` and press Find.** Leave Branch or tag empty. If you have cloned this repository, use **Browse** instead and choose the folder `plugins/key-probe`. With **Browse** there is no step 4: the review in step 5 opens straight away.
 
 ![The repository address typed into the Git or GitHub repository box, with Find ready to press](../../assets/install/3-git-address.png)
 
@@ -50,10 +50,10 @@ The screenshots are from the Buzz desktop app on Linux, in the light theme, in a
 
 **5. Read the review.** The Key probe declares no commands and no network addresses, so the review lists nothing beyond what every plugin gets. Press **Install plugin** only if you are measuring key latency.
 
-![The Review plugin access window for the key probe: Computer access, no additional capabilities declared, Enable plugin switched on, and the Install plugin button](screenshots/install/1-review.png)
+![The Review plugin access window for a plugin that declares nothing: Computer access, no additional capabilities declared, Enable plugin switched on, and the Install plugin button](../../assets/install/review-no-capabilities.png)
 
 **6. It is installed and turned on.** Search Manage plugins for it: its row says what it is, and **Disable** on the row means it is on. Its card has a **⋯** menu with **Delete**, which removes it.
 
-![Manage plugins searched for key probe: Key probe (test tool, do not install) is listed with its description and a Disable button](screenshots/install/2-installed.png)
+![Manage plugins searched for key probe: Key probe (test tool, do not install) is listed with its description and a Disable button](screenshots/install/1-installed.png)
 
 </details>

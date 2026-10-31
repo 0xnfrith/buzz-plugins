@@ -47,7 +47,7 @@ The screenshots are from the Buzz desktop app on Linux, in the light theme, in a
 
 ![The Add a plugin window: on the left a drop area with a Browse button for a folder, on the right a box for a Git or GitHub repository with a Find button](../../assets/install/2-add-a-plugin.png)
 
-**3. Type `https://github.com/0xnfrith/buzz-plugins` and press Find.** Leave Branch or tag empty. If you have cloned this repository, use **Browse** instead and choose the folder `plugins/linear`.
+**3. Type `https://github.com/0xnfrith/buzz-plugins` and press Find.** Leave Branch or tag empty. If you have cloned this repository, use **Browse** instead and choose the folder `plugins/linear`. With **Browse** there is no step 4: the review in step 5 opens straight away.
 
 ![The repository address typed into the Git or GitHub repository box, with Find ready to press](../../assets/install/3-git-address.png)
 
@@ -67,7 +67,7 @@ The screenshots are from the Buzz desktop app on Linux, in the light theme, in a
 
 ![The Linear card in Settings with a personal API key pasted in: the box shows only dots, and a Save key button is under it](screenshots/install/3-key-typed.png)
 
-Linear is asked first. When the key is accepted and the store has kept it, the card says so and offers **Test connection**, **Replace key** and **Remove key**. (Under this part the card also says who the key belongs to and in which workspace; that line is cropped out here.)
+Linear is asked first. When the key is accepted and the store has kept it, the card says so and offers **Test connection**, **Replace key** and **Remove key**. This is a Linux computer, so the card says the key is kept in the system secret store (Secret Service); on a Mac it says the key is kept in your Keychain. (Under this part the card also says who the key belongs to and in which workspace; that line is cropped out here.)
 
 ![The Linear card after Save key: Key saved, it is kept in the system secret store (Secret Service), it is not shown again, with Test connection, Replace key and Remove key](screenshots/install/4-key-saved.png)
 

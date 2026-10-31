@@ -44,7 +44,7 @@ The screenshots are from the Buzz desktop app on Linux, in the light theme, in a
 
 ![The Add a plugin window: on the left a drop area with a Browse button for a folder, on the right a box for a Git or GitHub repository with a Find button](../../assets/install/2-add-a-plugin.png)
 
-**3. Type `https://github.com/0xnfrith/buzz-plugins` and press Find.** Leave Branch or tag empty. If you have cloned this repository, use **Browse** instead and choose the folder `plugins/vim`.
+**3. Type `https://github.com/0xnfrith/buzz-plugins` and press Find.** Leave Branch or tag empty. If you have cloned this repository, use **Browse** instead and choose the folder `plugins/vim`. With **Browse** there is no step 4: the review in step 5 opens straight away.
 
 ![The repository address typed into the Git or GitHub repository box, with Find ready to press](../../assets/install/3-git-address.png)
 
@@ -54,19 +54,19 @@ The screenshots are from the Buzz desktop app on Linux, in the light theme, in a
 
 **5. Read the review and press Install plugin.** Vim mode declares no commands and no network addresses, so the review lists nothing beyond what every plugin gets. **Enable plugin** is on, so it is turned on as it is installed.
 
-![The Review plugin access window for Vim mode: Computer access, no additional capabilities declared, Enable plugin switched on, and the Install plugin button](screenshots/install/1-review.png)
+![The Review plugin access window for a plugin that declares nothing: Computer access, no additional capabilities declared, Enable plugin switched on, and the Install plugin button](../../assets/install/review-no-capabilities.png)
 
 **6. It is installed and turned on.** Search Manage plugins for it: **Disable** on its row means it is on.
 
-![Manage plugins searched for vim: Vim mode is listed with a Disable button, which means it is on](screenshots/install/2-installed.png)
+![Manage plugins searched for vim: Vim mode is listed with a Disable button, which means it is on](screenshots/install/1-installed.png)
 
 **7. See that it works.** Close Settings. The small label in the window's bottom-right corner is the mode and the pane that has the keys. Press **Esc** and it says `-- NORMAL --`; in a message box or a field it says `-- INSERT --`. This profile has no community, so the label is shown on the start screen instead of in a channel.
 
-![The bottom-right corner of the window with the label -- NORMAL -- main](screenshots/install/3-normal-label.png)
+![The bottom-right corner of the window with the label -- NORMAL -- main](screenshots/install/2-normal-label.png)
 
 Press **?** to open the key list, and **Esc** to close it. (This one was opened on the start screen as well.)
 
-![The Vim keys window: a short list of the keys, starting with j and k for the next and previous message or channel](screenshots/install/4-key-list.png)
+![The Vim keys window: a short list of the keys, starting with j and k for the next and previous message or channel](screenshots/install/3-key-list.png)
 
 </details>
 
