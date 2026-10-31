@@ -26,10 +26,49 @@ Move through Buzz with vim keys: normal and insert modes, `j` and `k` through me
 
 ## How to install
 
-1. In the desktop app open Settings, Plugins, Manage plugins, Load from folder, and choose this folder (the one that contains `manifest.json` and `plugin.js`). Install it, and enable **Vim mode** if it is not already on.
+1. In the desktop app open Settings, Plugins, Manage plugins, Add. Enter `https://github.com/0xnfrith/buzz-plugins` as the Git or GitHub repository, press **Find** and pick **Vim mode**; or press **Browse** and choose this folder (the one that contains `manifest.json` and `plugin.js`). Install it with **Enable plugin** on (it is on by default).
 2. Open Messages and a channel with some history. A small `-- NORMAL --  main` label appears in the window's bottom-right corner (it says the mode and which pane has the keys), and the sidebar shows a **Vim mode** page with an `N` badge.
 3. Work through the checklist below.
 4. To stop at any time press Cmd+Shift+E (Ctrl+Shift+E elsewhere), or disable the plugin in Settings.
+
+<details>
+<summary>Step-by-step with screenshots</summary>
+
+The screenshots are from the Buzz desktop app on Linux, in the light theme, in a new profile with nothing in it. macOS and Windows look a little different and are not shown. Steps 1 to 4 are the same for every plugin in this repository.
+
+**1. Open Settings, then Plugins, then Manage plugins, and press Add.**
+
+![Settings open on Manage plugins, with the Add button at the top right](../../assets/install/1-manage-plugins.png)
+
+**2. Choose how to load it.** The Add a plugin window has a folder on the left (drop one in, or press **Browse**) and a Git or GitHub repository on the right. The repository is the easier way: there is nothing to download first.
+
+![The Add a plugin window: on the left a drop area with a Browse button for a folder, on the right a box for a Git or GitHub repository with a Find button](../../assets/install/2-add-a-plugin.png)
+
+**3. Type `https://github.com/0xnfrith/buzz-plugins` and press Find.** Leave Branch or tag empty. If you have cloned this repository, use **Browse** instead and choose the folder `plugins/vim`.
+
+![The repository address typed into the Git or GitHub repository box, with Find ready to press](../../assets/install/3-git-address.png)
+
+**4. Pick Vim mode and press Continue.** Buzz lists every plugin in the repository with its folder and id.
+
+![The Choose a plugin window listing Artifacts, Beeper, Key probe, Linear and Vim mode, none picked yet](../../assets/install/4-choose-a-plugin.png)
+
+**5. Read the review and press Install plugin.** Vim mode declares no commands and no network addresses, so the review lists nothing beyond what every plugin gets. **Enable plugin** is on, so it is turned on as it is installed.
+
+![The Review plugin access window for Vim mode: Computer access, no additional capabilities declared, Enable plugin switched on, and the Install plugin button](screenshots/install/1-review.png)
+
+**6. It is installed and turned on.** Search Manage plugins for it: **Disable** on its row means it is on.
+
+![Manage plugins searched for vim: Vim mode is listed with a Disable button, which means it is on](screenshots/install/2-installed.png)
+
+**7. See that it works.** Close Settings. The small label in the window's bottom-right corner is the mode and the pane that has the keys. Press **Esc** and it says `-- NORMAL --`; in a message box or a field it says `-- INSERT --`. This profile has no community, so the label is shown on the start screen instead of in a channel.
+
+![The bottom-right corner of the window with the label -- NORMAL -- main](screenshots/install/3-normal-label.png)
+
+Press **?** to open the key list, and **Esc** to close it. (This one was opened on the start screen as well.)
+
+![The Vim keys window: a short list of the keys, starting with j and k for the next and previous message or channel](screenshots/install/4-key-list.png)
+
+</details>
 
 ## What it looks like
 

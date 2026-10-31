@@ -26,13 +26,52 @@ Your Linear board inside Buzz: one column for each workflow state, in Linear's o
 
 ## How to install
 
-1. Install it: Settings, Plugins, Manage plugins, Add, then load this folder or enter `https://github.com/0xnfrith/buzz-plugins` as the Git or GitHub repository and pick **Linear**. Review what it asks for (one network origin, `https://api.linear.app`) and install, then enable it.
+1. Install it: Settings, Plugins, Manage plugins, Add, then load this folder or enter `https://github.com/0xnfrith/buzz-plugins` as the Git or GitHub repository and pick **Linear**. Review what it asks for (one network origin, `https://api.linear.app`, and six commands for the key store: `security` three times and `secret-tool` three times) and install, then enable it.
 2. In Linear make a personal API key: Settings, Account, Security & access, Personal API keys. It needs the **Write** scope (Write is what lets a dragged card change state; it includes reading). If Linear lets you limit the key to certain teams, limit it to the teams you use.
 3. In Buzz open Settings, Plugins, **Linear**. Paste the key, press **Save key**. Linear is asked first: the card says who you are connected as. A key Linear refuses is not saved. If a key is already saved and Linear cannot be asked (it is unreachable, down or rate limiting), the saved key stays, nothing is saved, and the card says to try again, so a mistyped replacement never replaces a key that works. Only when there is no key yet is a key saved without being checked, and the card says so. On a Mac the key goes to your Keychain and on Linux to the system secret store (see below), and "saved" is said only once it has been read back from there.
 4. Open **Linear** in the page navigation. Pick a team, and if you like a project or one of the team's saved views.
 5. Drag a card to another column, or open it and use its **Status** menu. Cards can also be opened from the keyboard (Tab to a card, Enter).
 
 The board asks Linear whether anything changed once a minute while the page is open and when the window comes back to the front, and reloads only if something did. **Refresh** reads everything again.
+
+<details>
+<summary>Step-by-step with screenshots</summary>
+
+The screenshots are from the Buzz desktop app on Linux, in the light theme, in a new profile with nothing in it. macOS and Windows look a little different and are not shown. Steps 1 to 4 are the same for every plugin in this repository.
+
+**1. Open Settings, then Plugins, then Manage plugins, and press Add.**
+
+![Settings open on Manage plugins, with the Add button at the top right](../../assets/install/1-manage-plugins.png)
+
+**2. Choose how to load it.** The Add a plugin window has a folder on the left (drop one in, or press **Browse**) and a Git or GitHub repository on the right. The repository is the easier way: there is nothing to download first.
+
+![The Add a plugin window: on the left a drop area with a Browse button for a folder, on the right a box for a Git or GitHub repository with a Find button](../../assets/install/2-add-a-plugin.png)
+
+**3. Type `https://github.com/0xnfrith/buzz-plugins` and press Find.** Leave Branch or tag empty. If you have cloned this repository, use **Browse** instead and choose the folder `plugins/linear`.
+
+![The repository address typed into the Git or GitHub repository box, with Find ready to press](../../assets/install/3-git-address.png)
+
+**4. Pick Linear and press Continue.** Buzz lists every plugin in the repository with its folder and id.
+
+![The Choose a plugin window listing Artifacts, Beeper, Key probe, Linear and Vim mode, none picked yet](../../assets/install/4-choose-a-plugin.png)
+
+**5. Read the review and press Install plugin.** Linear asks for one network address, `https://api.linear.app`, and for six commands that keep your key in the system's secret store: `security` three times (the macOS Keychain) and `secret-tool` three times (the Linux secret store). A Mac only runs the first three and Linux the other three. Open a row to see the program and every argument. **Enable plugin** is on, so it is turned on as it is installed.
+
+![The Review plugin access window for Linear: Computer access, Run security three times, Run secret-tool three times, Connect to https://api.linear.app, Enable plugin switched on, and the Install plugin button](screenshots/install/1-review.png)
+
+**6. It is installed and turned on.** Search Manage plugins for it: **Disable** on its row means it is on. It now has a page in the sidebar and a card in Settings.
+
+![Manage plugins searched for linear: Linear is listed with a Disable button, which means it is on](screenshots/install/2-installed.png)
+
+**7. Paste your key.** Make a personal API key in Linear first (see step 2 above). Then open Settings, then **Linear**, paste it into **Personal API key** and press **Save key**. The box shows only dots.
+
+![The Linear card in Settings with a personal API key pasted in: the box shows only dots, and a Save key button is under it](screenshots/install/3-key-typed.png)
+
+Linear is asked first. When the key is accepted and the store has kept it, the card says so and offers **Test connection**, **Replace key** and **Remove key**. (Under this part the card also says who the key belongs to and in which workspace; that line is cropped out here.)
+
+![The Linear card after Save key: Key saved, it is kept in the system secret store (Secret Service), it is not shown again, with Test connection, Replace key and Remove key](screenshots/install/4-key-saved.png)
+
+</details>
 
 ## What it looks like
 
