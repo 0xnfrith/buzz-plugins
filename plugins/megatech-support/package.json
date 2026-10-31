@@ -1,0 +1,20 @@
+{
+  "name": "megatech.support",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc && vite build",
+    "typecheck": "tsc",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@noble/curves": "2.0.1",
+    "@types/react": "19.2.18",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "5.0.4"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
