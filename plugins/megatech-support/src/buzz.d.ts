@@ -87,7 +87,7 @@ export type AddedTool = Readonly<{
   name: string;
   description: string;
   inputSchema: Readonly<Record<string, unknown>>;
-  /** Runs it as the agent working in a conversation: any agent of the user's. A throw is a tool error for the agent to correct. */
+  /** Runs it as the agent working in a conversation: every agent's session gets the tool; the plugin refuses any agent that isn't the verified person's. A throw is a tool error for the agent to correct. */
   call(client: BuzzClient, context: Readonly<Record<string, unknown>>, args: Record<string, unknown>): Promise<string>;
 }>;
 
