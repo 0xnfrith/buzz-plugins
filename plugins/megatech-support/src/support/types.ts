@@ -1,7 +1,7 @@
 // The service's JSON contract, version 1 (proposed in the pull request; the service's team agrees it). Field names are the wire's.
 
 /** `POST /v1/identity/challenge` */
-/** `expires_in` is seconds from the reply (10 to 3600): a length of time, so the two clocks are never compared. */
+/** `expires_in` is seconds from the reply (10 to 600; the contract says 300): a length of time, so the two clocks are never compared. */
 export type Challenge = { challenge: string; expires_in: number };
 
 /** `POST /v1/identity/verify` */

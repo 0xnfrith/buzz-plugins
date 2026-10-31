@@ -80,8 +80,8 @@ export type AgentType = Readonly<{
   run?(delivery: Delivery): void | Promise<void>;
 }>;
 
-/** The agent a tool runs as. `pubkey` names it. */
-export type BuzzClient = Readonly<{ pubkey: string }>;
+/** The agent a tool runs as. `pubkey` names it, and `owner` is the owner Buzz records for it (absent when it does not know). */
+export type BuzzClient = Readonly<{ pubkey: string; owner?: string | undefined }>;
 
 export type AddedTool = Readonly<{
   name: string;

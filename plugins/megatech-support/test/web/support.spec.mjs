@@ -37,7 +37,13 @@ async function arrange(page, { app, saved, mode = "", missing = false } = {}) {
   const seen = { console: [], requests: [] };
   page.on("console", (message) => seen.console.push(message.text()));
   page.on("request", (request) => seen.requests.push(request.url()));
-  await page.exposeFunction("__supportRequest", (request) => fake.handle(request));
+  // `delays` makes the service slow for a path (milliseconds), so a test can leave a tab while its request is out.
+  fake.delays = new Map();
+  await page.exposeFunction("__supportRequest", async (request) => {
+    const wait = fake.delays.get(new URL(request.url).pathname);
+    if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+    return fake.handle(request);
+  });
   await page.exposeFunction("__supportAuthorize", (agent) => host.prepareRemoteAgentAuthorization(agent));
   await page.addInitScript(
     ([viewer, hostMissing]) => {
@@ -202,6 +208,47 @@ test("opening a ticket makes one ticket even when the first try failed", async (
   await shot(page, "05-opened");
 });
 
+test("an Ask that ends after its tab was left still clears the box, so pressing Ask again is not a second ticket", async ({ page, app }) => {
+  const fake = await verified(page, app);
+  fake.delays.set("/v1/ask", 1500);
+  await page.getByLabel("Your question").fill("My order is late");
+  await page.getByRole("button", { name: "Ask support" }).click();
+  await page.getByRole("tab", { name: "My tickets" }).click();
+  await expect.poll(() => fake.ticketsOf(fake.user.pubkey).length).toBe(1);
+  await page.getByRole("tab", { name: "Ask" }).click();
+  // The answer reaches the page after the tab was left: the box is empty and the result is there when the tab is back.
+  await expect(page.getByLabel("Your question")).toHaveValue("");
+  await expect(page.getByRole("status", { name: "Support's reply" })).toContainText(/Ticket T-\d+/);
+  await expect(page.getByRole("button", { name: "Ask support" })).toBeDisabled();
+  expect(fake.ticketsOf(fake.user.pubkey)).toHaveLength(1);
+  const keys = fake.log.filter((entry) => entry.path === "/v1/ask").map((entry) => entry.headers["idempotency-key"]);
+  expect(keys).toHaveLength(1);
+});
+
+test("a slow answer for a ticket that was left does not replace the ticket now open", async ({ page, app }) => {
+  const fake = await verified(page, app);
+  await page.getByRole("tab", { name: "Open a ticket" }).click();
+  for (const [subject, body] of [["First ticket", "one"], ["Second ticket", "two"]]) {
+    await page.getByLabel("Subject").fill(subject);
+    await page.getByLabel("What happened").fill(body);
+    await page.getByRole("button", { name: "Open ticket" }).click();
+    await expect(page.getByRole("status", { name: "Ticket opened" })).toContainText(subject === "First ticket" ? "T-1001" : "T-1002");
+  }
+  await page.getByRole("tab", { name: "My tickets" }).click();
+  const list = page.getByRole("list", { name: "Your tickets" });
+  await expect(list.getByRole("button")).toHaveCount(2);
+  fake.delays.set("/v1/tickets/T-1001", 2000);
+  await list.getByRole("button", { name: /T-1001/ }).click();
+  await page.getByRole("button", { name: "Back to my tickets" }).click();
+  await list.getByRole("button", { name: /T-1002/ }).click();
+  await expect(page.getByRole("region", { name: "Ticket T-1002" })).toContainText("two");
+  // The slow answer for the first ticket arrives now, and changes nothing.
+  await page.waitForTimeout(2500);
+  await expect(page.getByRole("region", { name: "Ticket T-1002" })).toContainText("two");
+  await expect(page.getByRole("region", { name: "Ticket T-1001" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Refresh" })).toBeEnabled();
+});
+
 test("My tickets lists them, opens one with its messages, and shows a reply after Refresh", async ({ page, app }) => {
   const fake = await verified(page, app);
   await page.getByRole("tab", { name: "Open a ticket" }).click();
@@ -290,6 +337,14 @@ test("the Settings card shows the identity and keeps the agent switch off until 
   const card = page.getByRole("region", { name: "Megatech support" });
   await expect(card.getByRole("status").first()).toHaveText(/Not verified/);
   await expect(card.getByRole("switch")).not.toBeChecked();
+  // The card's title is a heading, and its two sections are one level below it.
+  await expect(card.getByRole("heading", { level: 2, name: "Megatech support" })).toBeVisible();
+  await expect(card.getByRole("heading", { level: 3, name: "Identity" })).toBeVisible();
+  await expect(card.getByRole("heading", { level: 3, name: "Megatech support agent" })).toBeVisible();
+  await expect(card.getByRole("heading", { level: 2 })).toHaveCount(1);
+  // It says what the tools cannot do, and when they are added.
+  await expect(card.getByText("An agent cannot tell who asked it", { exact: false })).toBeVisible();
+  await expect(card.getByText("when Buzz starts, or when the plugin is turned off and on or updated", { exact: false })).toBeVisible();
   await shot(page, "08-settings-off");
   // Verify from the card.
   await card.getByRole("button", { name: "Verify with Megatech support" }).click();
@@ -324,20 +379,22 @@ test("with the switch off at start there is no agent type and no tool", async ({
   expect(added.types.filter((key) => key.startsWith("megatech.support/"))).toEqual([]);
 });
 
-const callTool = (page, name, args, pubkey = "a".repeat(64)) =>
+// `owner` is the owner Buzz records for the agent: by default the signed-in user ("viewer"), or another key, or none (null).
+const callTool = (page, name, args, pubkey = "a".repeat(64), owner = "viewer") =>
   page.evaluate(
-    async ([toolName, input, agent]) => {
+    async ([toolName, input, agent, who]) => {
       const tool = window.__supportCtx.agents.tools().find((entry) => entry.name === toolName);
+      const client = who === "viewer" ? { pubkey: agent, owner: window.__supportViewer } : who === null ? { pubkey: agent } : { pubkey: agent, owner: who };
       try {
-        return { ok: await tool.call({ pubkey: agent }, {}, input) };
+        return { ok: await tool.call(client, {}, input) };
       } catch (error) {
         return { error: error.message };
       }
     },
-    [name, args, pubkey],
+    [name, args, pubkey, owner],
   );
 
-test("with the switch on at start the agent type and both tools are there, and any of the user's agents may use them once verified", async ({ page, app }) => {
+test("with the switch on at start the agent type and both tools are there, and any of the user's own agents may use them once verified", async ({ page, app }) => {
   const fake = await arrange(page, { app, saved: "on" });
   await openPage(page, "Megatech support");
   const added = await page.evaluate(() => ({
@@ -359,6 +416,12 @@ test("with the switch on at start the agent type and both tools are there, and a
   expect(ticket_id).toMatch(/^T-\d+$/);
   expect(JSON.parse((await callTool(page, STATUS, { ticket_id }, "c".repeat(64))).ok)).toEqual({ ticket_id, status: "open" });
   expect(fake.ticketsOf(fake.user.pubkey)).toHaveLength(1);
+  // An agent that is not the verified person's own is refused with fixed words, and nothing reaches the service.
+  const before = fake.log.length;
+  const NOT_YOURS = "This agent does not belong to the person who verified Megatech support, so it may not use it.";
+  expect((await callTool(page, ASK, { question: "hi" }, "d".repeat(64), "e".repeat(64))).error).toBe(NOT_YOURS);
+  expect((await callTool(page, STATUS, { ticket_id }, "d".repeat(64), null)).error).toBe(NOT_YOURS);
+  expect(fake.log.length).toBe(before);
   // Turning the switch off stops them at once, though they stay listed until Buzz restarts.
   await page.evaluate((key) => localStorage.setItem(key, "off"), SWITCH_KEY);
   const off = await callTool(page, ASK, { question: "hi again" });

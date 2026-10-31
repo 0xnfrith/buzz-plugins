@@ -14,6 +14,7 @@
 //   GET /refuse/<on|off>      refuse every identity check
 //   GET /fail/<path>/<status> the next request to /<path> (e.g. v1/ask) answers with that status
 //   GET /forget               the service forgets every session
+//   GET /delay/<path>/<ms>    every request to /<path> (e.g. v1/ask) waits that long before the service answers; 0 ends it
 import { createServer as https } from "node:https";
 import { createServer as http } from "node:http";
 import { connect } from "node:net";
@@ -24,6 +25,7 @@ import { createFakeSupport } from "../fake-support/server.mjs";
 const dir = process.argv[2] ?? "out";
 const HOST = "support.megatech.invalid";
 const fake = createFakeSupport();
+const delays = new Map(); // path -> milliseconds, set from the control port
 
 const service = https({ key: readFileSync(join(dir, "leaf.key")), cert: readFileSync(join(dir, "leaf.crt")) }, (req, res) => {
   const chunks = [];
@@ -31,6 +33,8 @@ const service = https({ key: readFileSync(join(dir, "leaf.key")), cert: readFile
   req.on("end", async () => {
     try {
       const body = Buffer.concat(chunks).toString("utf8");
+      const wait = delays.get(req.url.split("?")[0]);
+      if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
       const answer = await fake.handle({ url: `https://${HOST}${req.url}`, method: req.method, headers: req.headers, ...(body ? { body } : {}) });
       res.writeHead(answer.status, answer.headers);
       res.end(answer.body);
@@ -69,6 +73,7 @@ const control = http((req, res) => {
     body = "ok";
   } else if (verb === "refuse") (fake.refuseVerify = a === "on"), (body = "ok");
   else if (verb === "fail") (fake.fail(`/${a}`, { status: Number(b), body: {} }), (body = "ok"));
+  else if (verb === "delay") (delays.set(`/${a}`, Number(b)), (body = "ok"));
   else if (verb === "forget") (fake.sessions.clear(), (body = "ok"));
   else body = "unknown";
   res.writeHead(200, { "content-type": "application/json" });

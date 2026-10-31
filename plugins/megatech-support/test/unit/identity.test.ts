@@ -361,6 +361,91 @@ describe("the identity check", () => {
     });
   });
 
+  describe("the key the session is for", () => {
+    const other = "c".repeat(64);
+    const sessionsOf = (w: ReturnType<typeof world>) => w.fake.sessions.size;
+
+    it("ends, with a reason, when Buzz's signed-in key is no longer the one verified, and the service is told", async () => {
+      const w = world();
+      await w.identity.verify();
+      expect(w.identity.verifiedKey()).toBe(w.user.pubkey);
+      w.relayState.viewer = other;
+      // Asked, before anyone is told: the answer is no, and the session goes.
+      expect(w.identity.verified()).toBe(false);
+      expect(w.identity.verifiedKey()).toBeUndefined();
+      expect(w.identity.state()).toEqual({ status: "unverified", ended: true });
+      expect(w.client.hasSession()).toBe(false);
+      await flush();
+      expect(sessionsOf(w)).toBe(0);
+      expect(calls(w, "/v1/identity/logout")).toHaveLength(1);
+      await expect(w.support.list()).rejects.toMatchObject({ kind: "no-session" });
+    });
+
+    it("ends as soon as Buzz says the key changed, without anyone asking", async () => {
+      const w = world();
+      await w.identity.verify();
+      let heard = 0;
+      w.identity.subscribe(() => heard++);
+      w.setViewer(other);
+      expect(heard).toBe(1);
+      expect(w.identity.state()).toEqual({ status: "unverified", ended: true });
+      await flush();
+      expect(sessionsOf(w)).toBe(0);
+    });
+
+    it("ends when there is no signed-in key any more, and stays when the same key is announced again", async () => {
+      const w = world();
+      await w.identity.verify();
+      w.setViewer(w.user.pubkey);
+      expect(w.identity.state().status).toBe("verified");
+      expect(w.identity.verifiedKey()).toBe(w.user.pubkey);
+      w.setViewer(undefined);
+      expect(w.identity.state()).toEqual({ status: "unverified", ended: true });
+    });
+
+    it("keeps nothing when the key changes while a check is running", async () => {
+      const w = world();
+      const gate = () => {
+        let open!: () => void;
+        return { wait: new Promise<void>((resolve) => (open = resolve)), open };
+      };
+      const signing = gate();
+      const real = hostProver(w.host);
+      const prove = Object.assign(async (...args: Parameters<typeof real>) => (await signing.wait, real(...args)), { available: () => true });
+      const identity = createIdentity({ client: w.client, relay: w.relay as never, prove, now: () => w.clock.t, signWaitMs: 60_000 });
+      const check = identity.verify();
+      await flush();
+      w.relayState.viewer = other;
+      signing.open();
+      await check;
+      expect(identity.state()).toEqual({ status: "unverified", ended: true });
+      expect(identity.verifiedKey()).toBeUndefined();
+      expect(w.client.hasSession()).toBe(false);
+      await flush();
+      expect(sessionsOf(w)).toBe(0);
+    });
+
+    it("is not watched any more once the plugin has gone", async () => {
+      const w = world();
+      expect(w.watching()).toBe(1);
+      await w.identity.verify();
+      w.identity.dispose();
+      expect(w.watching()).toBe(0);
+      const before = w.fake.log.length;
+      w.setViewer(other);
+      expect(w.fake.log.length).toBe(before);
+    });
+
+    it("has no key to give once the session's time has passed, though no clock has run to say so", async () => {
+      const w = world();
+      await w.identity.verify();
+      expect(w.identity.verifiedKey()).toBe(w.user.pubkey);
+      w.clock.t += 3_700_000;
+      expect(w.identity.verified()).toBe(false);
+      expect(w.identity.verifiedKey()).toBeUndefined();
+    });
+  });
+
   describe("telling the service", () => {
     it("asks it to end the session on Forget, with that session, and keeps nothing if it will not", async () => {
       const w = world();

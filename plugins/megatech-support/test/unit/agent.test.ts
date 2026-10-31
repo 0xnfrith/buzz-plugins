@@ -3,21 +3,28 @@ import {
   ASK_DEFINITION,
   ASK_TOOL,
   NOT_ENABLED,
+  MAX_POSTED,
   NOT_VERIFIED,
+  NOT_YOURS,
   STATUS_DEFINITION,
   STATUS_TOOL,
   TYPE_ID,
   createAgentType,
   createTools,
+  posted,
   questionOf,
   registerAgent,
+  rootOf,
 } from "../../src/support/agent";
 import { ERROR_TEXT } from "../../src/support/client";
+import { createUser } from "../fake-support/server.mjs";
 import { flush, world } from "./world";
 
-// Any agent of the user's may call the tools: these are two made-up ones, one of them with an empty key.
+// Any agent of the user's own may call the tools: these are two made-up ones, one of them with an empty key. The user is the one the
+// world's host signs for.
 const AGENT = "a".repeat(64);
 const SUPPORT_AGENT = AGENT;
+const OWNER_KEY = createUser().pubkey as string;
 
 async function tools(verify = true, enabled = true) {
   const w = world({ enabled });
@@ -25,7 +32,7 @@ async function tools(verify = true, enabled = true) {
   const [ask, status] = createTools({ support: w.support, enabled: w.enabled });
   return { w, ask: ask!, status: status! };
 }
-const call = (tool: { call: Function }, pubkey: string, args: Record<string, unknown>) => tool.call({ pubkey }, {}, args);
+const call = (tool: { call: Function }, pubkey: string, args: Record<string, unknown>, owner: string | undefined = OWNER_KEY) => tool.call({ pubkey, owner }, {}, args);
 const asked = (w: ReturnType<typeof world>) => (w.fake.log as { path: string }[]).filter((entry) => entry.path === "/v1/ask");
 
 describe("the tools' definitions", () => {
@@ -63,7 +70,7 @@ describe("megatech_support_ask_or_open", () => {
     expect(Object.keys(result)).toEqual(["ticket_id"]);
   });
 
-  it("lets any of the user's agents use them, whatever its type", async () => {
+  it("lets any of the user's own agents use them, whatever its type", async () => {
     const { ask, status } = await tools();
     for (const pubkey of [AGENT, "c".repeat(64), ""]) {
       const { ticket_id } = JSON.parse(await call(ask, pubkey, { question: "My order is late" }));
@@ -93,6 +100,35 @@ describe("megatech_support_ask_or_open", () => {
     await expect(call(ask, SUPPORT_AGENT, { question: "hi" })).rejects.toThrow(new Error(NOT_VERIFIED));
     await expect(call(status, SUPPORT_AGENT, { ticket_id: "T-1" })).rejects.toThrow(new Error(NOT_VERIFIED));
     expect(w.fake.log).toEqual([]);
+  });
+
+  it("refuses an agent that is not the verified person's own, before any request", async () => {
+    const { w, ask, status } = await tools();
+    const before = w.fake.log.length;
+    // Another owner, no owner recorded, an owner that is nearly the right key, and the agent's own key as its owner.
+    for (const owner of ["b".repeat(64), "", OWNER_KEY.toUpperCase(), OWNER_KEY.slice(1) + "0", AGENT]) {
+      await expect(call(ask, AGENT, { question: "hi" }, owner)).rejects.toThrow(new Error(NOT_YOURS));
+      await expect(call(status, AGENT, { ticket_id: "T-1" }, owner)).rejects.toThrow(new Error(NOT_YOURS));
+    }
+    // No owner recorded at all.
+    await expect(ask.call({ pubkey: AGENT }, {}, { question: "hi" })).rejects.toThrow(new Error(NOT_YOURS));
+    await expect(status.call({ pubkey: AGENT, owner: undefined }, {}, { ticket_id: "T-1" })).rejects.toThrow(new Error(NOT_YOURS));
+    expect(w.fake.log.length).toBe(before);
+    await expect(call(ask, AGENT, { question: "hi" })).resolves.toContain("ticket_id");
+  });
+
+  it("says it is switched off, or not verified, before it says whose agent it is", async () => {
+    const off = await tools(true, false);
+    await expect(call(off.ask, AGENT, { question: "hi" }, "b".repeat(64))).rejects.toThrow(new Error(NOT_ENABLED));
+    const unverified = await tools(false);
+    await expect(call(unverified.ask, AGENT, { question: "hi" }, "b".repeat(64))).rejects.toThrow(new Error(NOT_VERIFIED));
+  });
+
+  it("follow the key the session is verified for: when Buzz's signed-in key changes, an agent of the old one is refused", async () => {
+    const { w, ask } = await tools();
+    await expect(call(ask, AGENT, { question: "hi" })).resolves.toContain("ticket_id");
+    w.setViewer("c".repeat(64));
+    await expect(call(ask, AGENT, { question: "hi" })).rejects.toThrow(new Error(NOT_VERIFIED));
   });
 
   it("refuses arguments that are not what the schema says, without a request", async () => {
@@ -241,6 +277,66 @@ describe("the agent type", () => {
     expect((asked(w)[0] as unknown as { body: unknown }).body).toEqual({ question: "my order is late" });
   });
 
+  it("reads a mention the way Buzz writes it, `[@Name](nostr:npub1…)`: 'status T-1001' reads the ticket and does not open a new one", async () => {
+    const { w, type } = await typeOf();
+    const first = mention("please, my order is late");
+    await type.run!(first as never);
+    const id = /T-\d+/.exec(posted(first)[0]!.content)![0];
+    const before = w.fake.ticketsOf(w.user.pubkey).length;
+    const asks = asked(w).length;
+    for (const text of [`[@Support](nostr:npub1qqqqqqqqqqqqqqqq) status ${id}`, `[@my\\_agent \\(1\\)](nostr:nprofile1qqqqqqqq) ticket ${id}`, `nostr:npub1qqqq status ${id}`]) {
+      const delivery = mention(text);
+      await type.run!(delivery as never);
+      expect(posted(delivery)[0]?.content).toBe(`Ticket ${id} is open.`);
+    }
+    expect(asked(w)).toHaveLength(asks);
+    expect(w.fake.ticketsOf(w.user.pubkey)).toHaveLength(before);
+  });
+
+  it("asks the question without the real mention link in it", async () => {
+    const { w, type } = await typeOf();
+    await type.run!(mention("[@Support](nostr:npub1qqqqqqqqqqqqqqqq)   my order  is late") as never);
+    expect((asked(w)[0] as unknown as { body: unknown }).body).toEqual({ question: "my order is late" });
+  });
+
+  it("replies under the thread's root by Buzz's rule, not under a quoted message", async () => {
+    const { type } = await typeOf();
+    const quoted = ["e", "9".repeat(64), "", "mention"];
+    const root = ["e", "1".repeat(64), "", "root"];
+    const reply = ["e", "2".repeat(64), "", "reply"];
+    const cases: [string[][], string][] = [
+      [[["h", "chan-1"], quoted, root, reply], "1".repeat(64)],
+      [[["h", "chan-1"], quoted, reply], "2".repeat(64)],
+      [[["h", "chan-1"], quoted], "e".repeat(64)],
+      [[["h", "chan-1"], root], "e".repeat(64)],
+    ];
+    for (const [tags, expected] of cases) {
+      const delivery = mention("my order is late", { tags });
+      await type.run!(delivery as never);
+      expect(posted(delivery)[0]?.tags).toContainEqual(["e", expected, "", "reply"]);
+    }
+  });
+
+  it("posts a long answer cut short, with where the rest is", async () => {
+    const { w, type } = await typeOf();
+    w.fake.fail("/v1/ask", JSON.stringify({ ticket_id: "T-77", answer: "word ".repeat(3000) }));
+    const delivery = mention("my order is late");
+    await type.run!(delivery as never);
+    const text = posted(delivery)[0]!.content;
+    expect(text.length).toBeLessThan(MAX_POSTED + 300);
+    expect(text).toContain("Cut short");
+    expect(text).toContain("ticket T-77");
+    expect(text.startsWith("Megatech support answered:\n\nword word")).toBe(true);
+  });
+
+  it("does not fail when it cannot even ask what is needed", async () => {
+    const { type } = await typeOf();
+    const delivery = mention("[@Support](nostr:npub1qqqqqqqqqqqqqqqq)");
+    delivery.agent.publish.mockRejectedValue(new Error("relay down"));
+    await expect(type.run!(delivery as never)).resolves.toBeUndefined();
+    expect(delivery.agent.publish).toHaveBeenCalledTimes(1);
+  });
+
   it("says a ticket is open when there is no answer, and how to ask where it is", async () => {
     const { type } = await typeOf();
     const delivery = mention("my order is late");
@@ -324,7 +420,43 @@ describe("the agent type", () => {
   });
 });
 
+describe("rootOf", () => {
+  const id = "e".repeat(64);
+  const tag = (...parts: string[]) => parts;
+  it("is Buzz's rule: root with reply, else reply, else the event", () => {
+    expect(rootOf({ id, tags: [tag("e", "1".repeat(64), "", "root"), tag("e", "2".repeat(64), "", "reply")] })).toBe("1".repeat(64));
+    expect(rootOf({ id, tags: [tag("e", "2".repeat(64), "", "reply")] })).toBe("2".repeat(64));
+    expect(rootOf({ id, tags: [tag("e", "1".repeat(64), "", "root")] })).toBe(id);
+    expect(rootOf({ id, tags: [] })).toBe(id);
+  });
+  it("ignores a quote, an id that is not hex, a tag with no marker and a tag that is not an e tag", () => {
+    for (const odd of [tag("e", "9".repeat(64), "", "mention"), tag("e", "Z".repeat(64), "", "reply"), tag("e", "9".repeat(64)), tag("e", "9".repeat(64), "", ""), tag("p", "9".repeat(64), "", "reply"), tag("e", "9".repeat(63), "", "reply")])
+      expect(rootOf({ id, tags: [odd] })).toBe(id);
+  });
+});
+
+describe("posted", () => {
+  it("leaves a short answer alone, and cuts a long one on a whole character with a pointer to the ticket", () => {
+    expect(posted("short", "T-1")).toBe("short");
+    expect(posted("x".repeat(MAX_POSTED), "T-1")).toBe("x".repeat(MAX_POSTED));
+    const cut = posted("x".repeat(MAX_POSTED + 1), "T-1");
+    expect(cut.startsWith("x".repeat(MAX_POSTED) + "…")).toBe(true);
+    expect(cut).toContain("ticket T-1");
+    // A character outside the basic plane is not cut in half.
+    const emoji = posted("😀".repeat(MAX_POSTED + 5), "T-1");
+    expect([...emoji].slice(0, MAX_POSTED).every((letter) => letter === "😀")).toBe(true);
+    expect(emoji).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
+});
+
 describe("questionOf", () => {
+  it("takes a mention out whole, in the form Buzz writes it and the bare form", () => {
+    expect(questionOf("[@Support](nostr:npub1qqqqqqqqqqqqqqqq) status T-12")).toBe("status T-12");
+    expect(questionOf("[@my\\_agent \\[1\\]](nostr:nprofile1qqqq) hi")).toBe("hi");
+    expect(questionOf("[@A](nostr:npub1aaaa) [@B](nostr:npub1bbbb) two  of them")).toBe("two of them");
+    expect(questionOf("see [the docs](https://example.com/x) please")).toBe("see [the docs](https://example.com/x) please");
+    expect(questionOf("[@Support](nostr:npubx) is not a mention")).toBe("[@Support](nostr:npubx) is not a mention");
+  });
   it("strips mention tokens and squeezes spaces", () => {
     expect(questionOf("nostr:npub1qq hi   there nostr:nprofile1zz\n")).toBe("hi there");
     expect(questionOf("")).toBe("");

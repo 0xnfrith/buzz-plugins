@@ -106,7 +106,8 @@ export function createClient(transport: Transport, now: () => number = Date.now,
     /** The code, and how long it lives in milliseconds from now (the service says it in seconds, so no clock is compared with ours). */
     async challenge(pubkey: string): Promise<{ challenge: string; lifetimeMs: number }> {
       const reply = obj(await call("POST", "/v1/identity/challenge", { pubkey }, {}, false)) as Partial<Challenge>;
-      const seconds = lifetime(reply.expires_in, 3600);
+      // The attestation has no expiry of its own, so a code may live five minutes (the contract) and the plugin gives ten at most.
+      const seconds = lifetime(reply.expires_in, 600);
       if (typeof reply.challenge !== "string" || !CHALLENGE.test(reply.challenge) || seconds === undefined) throw new SupportError("unavailable");
       return { challenge: reply.challenge, lifetimeMs: seconds * 1000 };
     },

@@ -42,6 +42,8 @@ export function createSupport({ client, identity, newKey = () => crypto.randomUU
     return done;
   };
   return {
+    /** The key the identity is verified for, while it is. */
+    verifiedKey: (): string | undefined => identity.verifiedKey(),
     /** Asks, which opens a ticket if the service has no answer within the call. */
     async askOrOpen(question: string): Promise<Asked> {
       const text = question.trim();

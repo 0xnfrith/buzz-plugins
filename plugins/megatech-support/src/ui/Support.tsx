@@ -25,6 +25,10 @@ export function createSupportPage({ identity, support, relay }: { identity: Iden
     const [question, setQuestion] = React.useState("");
     const [subject, setSubject] = React.useState("");
     const [body, setBody] = React.useState("");
+    // What the last Ask and the last Open came to lives here too: a request that ends after the tab was left still clears the form it
+    // came from, so pressing the button again cannot make a second ticket, and the answer is there when the tab is back.
+    const [asked, setAsked] = React.useState<Asked | undefined>();
+    const [opened, setOpened] = React.useState<Opened | undefined>();
     const tabs = React.useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({});
     const was = React.useRef(state.status);
     React.useEffect(() => {
@@ -75,8 +79,10 @@ export function createSupportPage({ identity, support, relay }: { identity: Iden
                 ))}
               </div>
               <div role="tabpanel" id="mts-panel" aria-labelledby={`mts-tab-${tab}`} className="mts-tabpanel">
-                {tab === "ask" && <AskTab support={support} question={question} setQuestion={setQuestion} />}
-                {tab === "open" && <OpenTab support={support} subject={subject} setSubject={setSubject} body={body} setBody={setBody} />}
+                {tab === "ask" && <AskTab support={support} question={question} setQuestion={setQuestion} result={asked} setResult={setAsked} />}
+                {tab === "open" && (
+                  <OpenTab support={support} subject={subject} setSubject={setSubject} body={body} setBody={setBody} result={opened} setResult={setOpened} />
+                )}
                 {tab === "tickets" && <TicketsTab support={support} />}
               </div>
             </>
@@ -133,19 +139,31 @@ function useAlive() {
   return alive;
 }
 
-function AskTab({ support, question, setQuestion }: { support: Support; question: string; setQuestion: (text: string) => void }) {
+function AskTab({
+  support,
+  question,
+  setQuestion,
+  result,
+  setResult,
+}: {
+  support: Support;
+  question: string;
+  setQuestion: (text: string) => void;
+  result: Asked | undefined;
+  setResult: (result: Asked | undefined) => void;
+}) {
   const alive = useAlive();
   const [busy, setBusy] = React.useState(false);
-  const [result, setResult] = React.useState<Asked | undefined>();
   const [error, setError] = React.useState<string | undefined>();
   const send = async (event: React.FormEvent) => {
     event.preventDefault();
     if (busy || !question.trim()) return;
     setBusy(true);
     setError(undefined);
+    setResult(undefined);
     try {
       const asked = await support.askOrOpen(question);
-      if (!alive.current) return;
+      // The form and the result are the page's, so they are set even if this tab was left while the request ran.
       setQuestion("");
       setResult(asked);
     } catch (failure) {
@@ -194,28 +212,31 @@ function OpenTab({
   setSubject,
   body,
   setBody,
+  result: opened,
+  setResult: setOpened,
 }: {
   support: Support;
   subject: string;
   setSubject: (text: string) => void;
   body: string;
   setBody: (text: string) => void;
+  result: Opened | undefined;
+  setResult: (result: Opened | undefined) => void;
 }) {
   const alive = useAlive();
   const [busy, setBusy] = React.useState(false);
-  const [opened, setOpened] = React.useState<Opened | undefined>();
   const [error, setError] = React.useState<string | undefined>();
   const send = async (event: React.FormEvent) => {
     event.preventDefault();
     if (busy || !subject.trim() || !body.trim()) return;
     setBusy(true);
     setError(undefined);
+    setOpened(undefined);
     try {
       // A retry of the same text after a failure, or a second press, is the same ticket: the service layer keeps the key (see service.ts).
       const ticket = await support.open(subject, body);
       setSubject("");
       setBody("");
-      if (!alive.current) return;
       setOpened(ticket);
     } catch (failure) {
       if (alive.current) setError(words(failure));
@@ -260,21 +281,26 @@ function TicketsTab({ support }: { support: Support }) {
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | undefined>();
   const refresh = React.useRef<HTMLButtonElement | null>(null);
+  // Each load has a number, and only the latest may show its answer or end the waiting: a slow answer for a ticket that was left must
+  // not replace the one now open.
+  const loads = React.useRef(0);
   const load = async (id: string | undefined) => {
+    const mine = ++loads.current;
+    const current = () => alive.current && mine === loads.current;
     setBusy(true);
     setError(undefined);
     try {
       if (id) {
         const next = await support.detail(id);
-        if (alive.current) setDetail(next);
+        if (current()) setDetail(next);
       } else {
         const next = await support.list();
-        if (alive.current) setTickets(next);
+        if (current()) setTickets(next);
       }
     } catch (failure) {
-      if (alive.current) setError(words(failure));
+      if (current()) setError(words(failure));
     } finally {
-      if (alive.current) setBusy(false);
+      if (current()) setBusy(false);
     }
   };
   React.useEffect(() => {

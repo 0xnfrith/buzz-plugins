@@ -29,7 +29,7 @@ export const CSS = /* css */ `
 .mts-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
 .mts-panel { max-width: 560px; padding: 18px 20px; border: 1px solid var(--mts-line); border-top: 2px solid var(--mts-cyan); border-radius: 2px;
   background: var(--mts-card); display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
-.mts-panel h2, .mts-settings h2 { margin: 0; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; }
+.mts-panel h2, .mts-settings h2, .mts-settings h3 { margin: 0; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; }
 .mts-settings .mts-settings-title { margin: 0 0 4px; font-size: 20px; font-weight: 600; letter-spacing: normal; text-transform: none; }
 .mts-panel p, .mts-panel ul, .mts-settings p { margin: 0; }
 .mts-panel ul { padding-left: 20px; list-style: disc; }

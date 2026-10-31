@@ -107,6 +107,8 @@ export function createIdentity({ client, relay, prove, now = Date.now, signWaitM
   // finds its answer is out of date and keeps nothing, instead of putting a session back.
   let epoch = 0;
   let gone = false;
+  /** The key the session was verified for. It is the account's session, so it ends when Buzz's signed-in key is another one. */
+  let verifiedFor: string | undefined;
 
   const set = (next: IdentityState) => {
     state = next;
@@ -119,6 +121,7 @@ export function createIdentity({ client, relay, prove, now = Date.now, signWaitM
     expiry = setTimeout(() => {
       epoch += 1;
       client.forget();
+      verifiedFor = undefined;
       set({ status: "unverified", ended: true });
     }, Math.max(0, Math.min(at - now(), 2 ** 31 - 1)));
   };
@@ -150,6 +153,13 @@ export function createIdentity({ client, relay, prove, now = Date.now, signWaitM
       void client.logout();
       return;
     }
+    if (relay.snapshot().viewer !== viewer) {
+      // The signed-in key changed while the check ran: the session is for the wrong account.
+      void client.logout();
+      set({ status: "unverified", ended: true });
+      return;
+    }
+    verifiedFor = viewer;
     watchExpiry(sessionEnds);
     set({ status: "verified", expiresAt: sessionEnds });
   }
@@ -158,8 +168,20 @@ export function createIdentity({ client, relay, prove, now = Date.now, signWaitM
     epoch += 1;
     running = undefined;
     clearTimeout(expiry);
+    verifiedFor = undefined;
     set(next);
   };
+
+  /** Drops the session when Buzz's signed-in key is no longer the one it was verified for; true if it did. */
+  const checkViewer = (): boolean => {
+    if (state.status !== "verified" || relay.snapshot().viewer === verifiedFor) return false;
+    void client.logout();
+    end({ status: "unverified", ended: true });
+    return true;
+  };
+  const unwatch = relay.subscribe(() => void checkViewer());
+
+  const verified = () => state.status === "verified" && client.hasSession() && !checkViewer();
 
   return {
     state: () => state,
@@ -168,7 +190,9 @@ export function createIdentity({ client, relay, prove, now = Date.now, signWaitM
       return () => void listeners.delete(listener);
     },
     /** Whether a request may be made now. */
-    verified: () => state.status === "verified" && client.hasSession(),
+    verified,
+    /** The key the session is verified for, while it is; what a tool compares an agent's owner with. */
+    verifiedKey: (): string | undefined => (verified() ? verifiedFor : undefined),
     /** Starts the check once; callers that arrive while one runs wait for it. */
     verify(): Promise<void> {
       if (running) return running;
@@ -203,6 +227,7 @@ export function createIdentity({ client, relay, prove, now = Date.now, signWaitM
       epoch += 1;
       running = undefined;
       clearTimeout(expiry);
+      unwatch();
       void client.logout();
       listeners.clear();
     },

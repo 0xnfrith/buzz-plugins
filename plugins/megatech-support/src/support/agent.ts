@@ -1,4 +1,4 @@
-import type { AddedTool, AgentType, Agents, Delivery } from "../buzz";
+import type { AddedTool, AgentType, Agents, BuzzClient, Delivery } from "../buzz";
 import { ERROR_TEXT, SupportError } from "./client";
 import type { Support } from "./service";
 import { LIMITS } from "./types";
@@ -12,6 +12,10 @@ export const STATUS_TOOL = "megatech_support_ticket_status";
 /** What an agent is told when the switch is off, and when nobody has verified the identity. Fixed text. */
 export const NOT_ENABLED = "Megatech support is switched off. The owner turns it on in Buzz, Settings, Plugins, Megatech support.";
 export const NOT_VERIFIED = "Megatech support is not verified. The owner verifies it in Buzz, Settings, Plugins, Megatech support.";
+export const NOT_YOURS = "This agent does not belong to the person who verified Megatech support, so it may not use it.";
+
+/** What an agent posts of support's answer into a channel; the rest is on the ticket. */
+export const MAX_POSTED = 4000;
 
 const deepFreeze = <T>(value: T): T => {
   if (value && typeof value === "object") {
@@ -58,20 +62,29 @@ export const STATUS_DEFINITION = deepFreeze({
 });
 
 /**
- * `enabled` is the saved switch, read at each call: the tools are added only when it was on as Buzz started, and turning it off
- * afterwards stops them at once (the list of tools cannot change while agents run, but what they may do can). Any of the user's agents
- * may call them while it is on and the identity is verified.
+ * `enabled` is the saved switch, read at each call: the tools are added when the plugin starts with it on, and turning it off
+ * afterwards stops them at once (the list of tools cannot change while agents run, but what they may do can). An agent may call them
+ * while it is on, the identity is verified and the agent is the verified person's own: `client.owner` is the owner Buzz records for the
+ * agent. What is left is that a tool cannot tell who asked the agent, so an agent that answers someone else can pass on what a tool
+ * returned; the card and NOTES.md say so.
  */
 export function createTools({ support, enabled }: { support: Support; enabled: () => boolean }): AddedTool[] {
   const failure = (error: unknown): never => {
     if (error instanceof SupportError) throw new Error(error.kind === "no-session" || error.kind === "session-ended" ? NOT_VERIFIED : ERROR_TEXT[error.kind]);
     throw new Error(ERROR_TEXT.unavailable);
   };
+  /** The switch, then the identity, then whose agent it is: each with its own fixed words, before any request. */
+  const allowed = (client: BuzzClient) => {
+    if (!enabled()) throw new Error(NOT_ENABLED);
+    const key = support.verifiedKey();
+    if (!key) throw new Error(NOT_VERIFIED);
+    if (client.owner !== key) throw new Error(NOT_YOURS);
+  };
   return [
     {
       ...ASK_DEFINITION,
-      async call(_client, _context, args) {
-        if (!enabled()) throw new Error(NOT_ENABLED);
+      async call(client, _context, args) {
+        allowed(client);
         if (typeof args.question !== "string") throw new Error("question must be text.");
         try {
           return JSON.stringify(await support.askOrOpen(args.question));
@@ -82,8 +95,8 @@ export function createTools({ support, enabled }: { support: Support; enabled: (
     },
     {
       ...STATUS_DEFINITION,
-      async call(_client, _context, args) {
-        if (!enabled()) throw new Error(NOT_ENABLED);
+      async call(client, _context, args) {
+        allowed(client);
         if (typeof args.ticket_id !== "string") throw new Error("ticket_id must be text.");
         try {
           return JSON.stringify(await support.status(args.ticket_id));
@@ -95,9 +108,32 @@ export function createTools({ support, enabled }: { support: Support; enabled: (
   ];
 }
 
-/** The text of a mention, without the `nostr:` mention tokens the composer puts in. */
+/**
+ * A mention as Buzz's composer writes it is a Markdown link, `[@Name](nostr:npub1…)`, with the name's punctuation escaped by
+ * backslashes; older text can have the bare `nostr:npub1…`. Both go, whole, so what is left is what the person asked.
+ */
+const MENTION_LINK = /\[(?:\\.|[^\]\\])*\]\(nostr:(?:npub|nprofile|note|nevent)1[a-z0-9]+\)/g;
+const MENTION_BARE = /nostr:(?:npub|nprofile|note|nevent)1[a-z0-9]+/g;
+
+/** The text of a mention, without the mention tokens the composer puts in. */
 export function questionOf(content: string): string {
-  return content.replace(/nostr:(?:npub|nprofile|note|nevent)1[a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+  return content.replace(MENTION_LINK, " ").replace(MENTION_BARE, " ").replace(/\s+/g, " ").trim();
+}
+
+const HEX64 = /^[0-9a-f]{64}$/;
+
+/** The root of the thread `event` is in, by its NIP-10 markers: Buzz's own rule (`root` with `reply`, else `reply`, else the event itself). */
+export function rootOf(event: { id: string; tags: readonly (readonly string[])[] }): string {
+  const marked = event.tags.filter((tag) => tag[0] === "e" && tag.length >= 4 && HEX64.test(tag[1] ?? ""));
+  const root = marked.find((tag) => tag[3] === "root");
+  const reply = marked.find((tag) => tag[3] === "reply");
+  return (root && reply ? root : reply)?.[1] ?? event.id;
+}
+
+/** Support's answer as it is posted into a channel: not more than `MAX_POSTED` characters, with a pointer to the ticket for the rest. */
+export function posted(answer: string, ticket: string): string {
+  const letters = [...answer];
+  return letters.length <= MAX_POSTED ? answer : `${letters.slice(0, MAX_POSTED).join("")}…\n\n(Cut short: the whole answer is on ticket ${ticket}.)`;
 }
 
 /** "status T-12" or "ticket T-12": a ticket id has a digit, so "ticket please" is a question. */
@@ -119,7 +155,7 @@ export function createAgentType({ support, enabled }: { support: Support; enable
       const channel = delivery.channelId ?? event?.tags.find((tag) => tag[0] === "h")?.[1];
       if (!event || !channel || event.pubkey !== delivery.agent.owner) return void delivery.ignored?.();
       const say = (text: string) => {
-        const root = event.tags.find((tag) => tag[0] === "e" && tag[3] === "root")?.[1] ?? event.tags.find((tag) => tag[0] === "e")?.[1] ?? event.id;
+        const root = rootOf(event);
         return delivery.agent.publish({
           kind: 9,
           content: text,
@@ -128,7 +164,7 @@ export function createAgentType({ support, enabled }: { support: Support; enable
       };
       const question = questionOf(event.content);
       if (!enabled()) return void (await say(NOT_ENABLED).catch(() => {}));
-      if (!question) return void (await say("Tell me what you need help with and I will ask Megatech support."));
+      if (!question) return void (await say("Tell me what you need help with and I will ask Megatech support.").catch(() => {}));
       try {
         const asked = STATUS_ASK.exec(question);
         if (asked) {
@@ -138,7 +174,7 @@ export function createAgentType({ support, enabled }: { support: Support; enable
         const reply = await support.askOrOpen(question);
         await say(
           reply.answer
-            ? `Megatech support answered:\n\n${reply.answer}\n\nTicket ${reply.ticket_id}`
+            ? `Megatech support answered:\n\n${posted(reply.answer, reply.ticket_id)}\n\nTicket ${reply.ticket_id}`
             : `I opened ticket ${reply.ticket_id}. Megatech support will reply there. Ask "status ${reply.ticket_id}" to see where it is.`,
         );
       } catch (error) {

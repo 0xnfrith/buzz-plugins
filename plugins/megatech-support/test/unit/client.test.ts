@@ -336,7 +336,7 @@ describe("how long a code or a session lasts", () => {
   const bad = [undefined, null, "300", 300.5, 9, 0, -5, NaN, Infinity, { n: 300 }];
   it("is told in whole seconds: a date, or an odd number, is the service having trouble", async () => {
     const w = world();
-    for (const value of [...bad, 3601, "2026-10-31T12:05:00Z"]) {
+    for (const value of [...bad, 601, 3600, "2026-10-31T12:05:00Z"]) {
       w.fake.fail("/v1/identity/challenge", JSON.stringify({ challenge: "A".repeat(24), expires_in: value }));
       await expect(w.client.challenge(w.user.pubkey)).rejects.toMatchObject({ kind: "unavailable" });
     }
@@ -349,6 +349,14 @@ describe("how long a code or a session lasts", () => {
       await expect(w.client.verify(w.user.pubkey, challenge, auth)).rejects.toMatchObject({ kind: "unavailable" });
     }
     expect(w.client.hasSession()).toBe(false);
+  });
+
+  it("is at most ten minutes for a code, since the attestation has no expiry of its own, and the contract says five", async () => {
+    const w = world();
+    for (const seconds of [10, 300, 600]) {
+      w.fake.fail("/v1/identity/challenge", JSON.stringify({ challenge: "A".repeat(24), expires_in: seconds }));
+      await expect(w.client.challenge(w.user.pubkey)).resolves.toEqual({ challenge: "A".repeat(24), lifetimeMs: seconds * 1000 });
+    }
   });
 
   it("is counted from when the answer arrived, so a clock that is wrong changes nothing", async () => {

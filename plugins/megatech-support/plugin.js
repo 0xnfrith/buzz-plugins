@@ -93,7 +93,7 @@ function createClient(transport, now = Date.now, origin = SUPPORT_ORIGIN) {
 		/** The code, and how long it lives in milliseconds from now (the service says it in seconds, so no clock is compared with ours). */
 		async challenge(pubkey) {
 			const reply = obj(await call("POST", "/v1/identity/challenge", { pubkey }, {}, false));
-			const seconds = lifetime(reply.expires_in, 3600);
+			const seconds = lifetime(reply.expires_in, 600);
 			if (typeof reply.challenge !== "string" || !CHALLENGE.test(reply.challenge) || seconds === void 0) throw new SupportError("unavailable");
 			return {
 				challenge: reply.challenge,
@@ -240,6 +240,9 @@ var STATUS_TOOL = "megatech_support_ticket_status";
 /** What an agent is told when the switch is off, and when nobody has verified the identity. Fixed text. */
 var NOT_ENABLED = "Megatech support is switched off. The owner turns it on in Buzz, Settings, Plugins, Megatech support.";
 var NOT_VERIFIED = "Megatech support is not verified. The owner verifies it in Buzz, Settings, Plugins, Megatech support.";
+var NOT_YOURS = "This agent does not belong to the person who verified Megatech support, so it may not use it.";
+/** What an agent posts of support's answer into a channel; the rest is on the ticket. */
+var MAX_POSTED = 4e3;
 var deepFreeze = (value) => {
 	if (value && typeof value === "object") {
 		for (const inner of Object.values(value)) deepFreeze(inner);
@@ -282,19 +285,28 @@ var STATUS_DEFINITION = deepFreeze({
 	}
 });
 /**
-* `enabled` is the saved switch, read at each call: the tools are added only when it was on as Buzz started, and turning it off
-* afterwards stops them at once (the list of tools cannot change while agents run, but what they may do can). Any of the user's agents
-* may call them while it is on and the identity is verified.
+* `enabled` is the saved switch, read at each call: the tools are added when the plugin starts with it on, and turning it off
+* afterwards stops them at once (the list of tools cannot change while agents run, but what they may do can). An agent may call them
+* while it is on, the identity is verified and the agent is the verified person's own: `client.owner` is the owner Buzz records for the
+* agent. What is left is that a tool cannot tell who asked the agent, so an agent that answers someone else can pass on what a tool
+* returned; the card and NOTES.md say so.
 */
 function createTools({ support, enabled }) {
 	const failure = (error) => {
 		if (error instanceof SupportError) throw new Error(error.kind === "no-session" || error.kind === "session-ended" ? NOT_VERIFIED : ERROR_TEXT[error.kind]);
 		throw new Error(ERROR_TEXT.unavailable);
 	};
+	/** The switch, then the identity, then whose agent it is: each with its own fixed words, before any request. */
+	const allowed = (client) => {
+		if (!enabled()) throw new Error(NOT_ENABLED);
+		const key = support.verifiedKey();
+		if (!key) throw new Error(NOT_VERIFIED);
+		if (client.owner !== key) throw new Error(NOT_YOURS);
+	};
 	return [{
 		...ASK_DEFINITION,
-		async call(_client, _context, args) {
-			if (!enabled()) throw new Error(NOT_ENABLED);
+		async call(client, _context, args) {
+			allowed(client);
 			if (typeof args.question !== "string") throw new Error("question must be text.");
 			try {
 				return JSON.stringify(await support.askOrOpen(args.question));
@@ -304,8 +316,8 @@ function createTools({ support, enabled }) {
 		}
 	}, {
 		...STATUS_DEFINITION,
-		async call(_client, _context, args) {
-			if (!enabled()) throw new Error(NOT_ENABLED);
+		async call(client, _context, args) {
+			allowed(client);
 			if (typeof args.ticket_id !== "string") throw new Error("ticket_id must be text.");
 			try {
 				return JSON.stringify(await support.status(args.ticket_id));
@@ -315,9 +327,28 @@ function createTools({ support, enabled }) {
 		}
 	}];
 }
-/** The text of a mention, without the `nostr:` mention tokens the composer puts in. */
+/**
+* A mention as Buzz's composer writes it is a Markdown link, `[@Name](nostr:npub1…)`, with the name's punctuation escaped by
+* backslashes; older text can have the bare `nostr:npub1…`. Both go, whole, so what is left is what the person asked.
+*/
+var MENTION_LINK = /\[(?:\\.|[^\]\\])*\]\(nostr:(?:npub|nprofile|note|nevent)1[a-z0-9]+\)/g;
+var MENTION_BARE = /nostr:(?:npub|nprofile|note|nevent)1[a-z0-9]+/g;
+/** The text of a mention, without the mention tokens the composer puts in. */
 function questionOf(content) {
-	return content.replace(/nostr:(?:npub|nprofile|note|nevent)1[a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+	return content.replace(MENTION_LINK, " ").replace(MENTION_BARE, " ").replace(/\s+/g, " ").trim();
+}
+var HEX64 = /^[0-9a-f]{64}$/;
+/** The root of the thread `event` is in, by its NIP-10 markers: Buzz's own rule (`root` with `reply`, else `reply`, else the event itself). */
+function rootOf(event) {
+	const marked = event.tags.filter((tag) => tag[0] === "e" && tag.length >= 4 && HEX64.test(tag[1] ?? ""));
+	const root = marked.find((tag) => tag[3] === "root");
+	const reply = marked.find((tag) => tag[3] === "reply");
+	return (root && reply ? root : reply)?.[1] ?? event.id;
+}
+/** Support's answer as it is posted into a channel: not more than `MAX_POSTED` characters, with a pointer to the ticket for the rest. */
+function posted(answer, ticket) {
+	const letters = [...answer];
+	return letters.length <= 4e3 ? answer : `${letters.slice(0, MAX_POSTED).join("")}…\n\n(Cut short: the whole answer is on ticket ${ticket}.)`;
 }
 /** "status T-12" or "ticket T-12": a ticket id has a digit, so "ticket please" is a question. */
 var STATUS_ASK = /^(?:status|ticket)\s+([A-Za-z0-9._:-]{0,63}\d[A-Za-z0-9._:-]{0,63})\??$/i;
@@ -337,7 +368,7 @@ function createAgentType({ support, enabled }) {
 			const channel = delivery.channelId ?? event?.tags.find((tag) => tag[0] === "h")?.[1];
 			if (!event || !channel || event.pubkey !== delivery.agent.owner) return void delivery.ignored?.();
 			const say = (text) => {
-				const root = event.tags.find((tag) => tag[0] === "e" && tag[3] === "root")?.[1] ?? event.tags.find((tag) => tag[0] === "e")?.[1] ?? event.id;
+				const root = rootOf(event);
 				return delivery.agent.publish({
 					kind: 9,
 					content: text,
@@ -355,7 +386,7 @@ function createAgentType({ support, enabled }) {
 			};
 			const question = questionOf(event.content);
 			if (!enabled()) return void await say(NOT_ENABLED).catch(() => {});
-			if (!question) return void await say("Tell me what you need help with and I will ask Megatech support.");
+			if (!question) return void await say("Tell me what you need help with and I will ask Megatech support.").catch(() => {});
 			try {
 				const asked = STATUS_ASK.exec(question);
 				if (asked) {
@@ -364,7 +395,7 @@ function createAgentType({ support, enabled }) {
 					return;
 				}
 				const reply = await support.askOrOpen(question);
-				await say(reply.answer ? `Megatech support answered:\n\n${reply.answer}\n\nTicket ${reply.ticket_id}` : `I opened ticket ${reply.ticket_id}. Megatech support will reply there. Ask "status ${reply.ticket_id}" to see where it is.`);
+				await say(reply.answer ? `Megatech support answered:\n\n${posted(reply.answer, reply.ticket_id)}\n\nTicket ${reply.ticket_id}` : `I opened ticket ${reply.ticket_id}. Megatech support will reply there. Ask "status ${reply.ticket_id}" to see where it is.`);
 			} catch (error) {
 				await say(error instanceof SupportError ? error.kind === "no-session" || error.kind === "session-ended" ? NOT_VERIFIED : ERROR_TEXT[error.kind] : ERROR_TEXT.unavailable).catch(() => {});
 			}
@@ -457,6 +488,8 @@ function createIdentity({ client, relay, prove, now = Date.now, signWaitMs = SIG
 	let expiry;
 	let epoch = 0;
 	let gone = false;
+	/** The key the session was verified for. It is the account's session, so it ends when Buzz's signed-in key is another one. */
+	let verifiedFor;
 	const set = (next) => {
 		state = next;
 		for (const listener of [...listeners]) listener();
@@ -466,6 +499,7 @@ function createIdentity({ client, relay, prove, now = Date.now, signWaitMs = SIG
 		expiry = setTimeout(() => {
 			epoch += 1;
 			client.forget();
+			verifiedFor = void 0;
 			set({
 				status: "unverified",
 				ended: true
@@ -494,6 +528,15 @@ function createIdentity({ client, relay, prove, now = Date.now, signWaitMs = SIG
 			client.logout();
 			return;
 		}
+		if (relay.snapshot().viewer !== viewer) {
+			client.logout();
+			set({
+				status: "unverified",
+				ended: true
+			});
+			return;
+		}
+		verifiedFor = viewer;
 		watchExpiry(sessionEnds);
 		set({
 			status: "verified",
@@ -504,8 +547,21 @@ function createIdentity({ client, relay, prove, now = Date.now, signWaitMs = SIG
 		epoch += 1;
 		running = void 0;
 		clearTimeout(expiry);
+		verifiedFor = void 0;
 		set(next);
 	};
+	/** Drops the session when Buzz's signed-in key is no longer the one it was verified for; true if it did. */
+	const checkViewer = () => {
+		if (state.status !== "verified" || relay.snapshot().viewer === verifiedFor) return false;
+		client.logout();
+		end({
+			status: "unverified",
+			ended: true
+		});
+		return true;
+	};
+	const unwatch = relay.subscribe(() => void checkViewer());
+	const verified = () => state.status === "verified" && client.hasSession() && !checkViewer();
 	return {
 		state: () => state,
 		subscribe(listener) {
@@ -513,7 +569,9 @@ function createIdentity({ client, relay, prove, now = Date.now, signWaitMs = SIG
 			return () => void listeners.delete(listener);
 		},
 		/** Whether a request may be made now. */
-		verified: () => state.status === "verified" && client.hasSession(),
+		verified,
+		/** The key the session is verified for, while it is; what a tool compares an agent's owner with. */
+		verifiedKey: () => verified() ? verifiedFor : void 0,
 		/** Starts the check once; callers that arrive while one runs wait for it. */
 		verify() {
 			if (running) return running;
@@ -552,6 +610,7 @@ function createIdentity({ client, relay, prove, now = Date.now, signWaitMs = SIG
 			epoch += 1;
 			running = void 0;
 			clearTimeout(expiry);
+			unwatch();
 			client.logout();
 			listeners.clear();
 		}
@@ -603,6 +662,8 @@ function createSupport({ client, identity, newKey = () => crypto.randomUUID() })
 		return done;
 	};
 	return {
+		/** The key the identity is verified for, while it is. */
+		verifiedKey: () => identity.verifiedKey(),
 		/** Asks, which opens a ticket if the service has no answer within the call. */
 		async askOrOpen(question) {
 			const text = question.trim();
@@ -669,7 +730,7 @@ function createSettingsCard({ identity, relay, flag, agent }) {
 		return /* @__PURE__ */ React.createElement("section", {
 			className: "mts-settings",
 			"aria-label": "Megatech support"
-		}, /* @__PURE__ */ React.createElement("h2", { className: "mts-settings-title" }, "Megatech support"), /* @__PURE__ */ React.createElement("h2", null, "Identity"), /* @__PURE__ */ React.createElement("p", { role: "status" }, state.status === "verified" ? `Verified with Megatech support until ${new Date(state.expiresAt).toLocaleTimeString()}. It lasts until you close Buzz or press Forget, and Forget also asks Megatech support to end it.` : state.status === "verifying" ? "Verifying…" : state.status === "unverified" && state.ended ? "Your Megatech support session ended. Nothing is sent to Megatech support until you press Verify." : "Not verified. Nothing is sent to Megatech support until you press Verify."), state.status === "failed" && /* @__PURE__ */ React.createElement("p", {
+		}, /* @__PURE__ */ React.createElement("h2", { className: "mts-settings-title" }, "Megatech support"), /* @__PURE__ */ React.createElement("h3", null, "Identity"), /* @__PURE__ */ React.createElement("p", { role: "status" }, state.status === "verified" ? `Verified with Megatech support until ${new Date(state.expiresAt).toLocaleTimeString()}. It lasts until you close Buzz or press Forget, and Forget also asks Megatech support to end it.` : state.status === "verifying" ? "Verifying…" : state.status === "unverified" && state.ended ? "Your Megatech support session ended. Nothing is sent to Megatech support until you press Verify." : "Not verified. Nothing is sent to Megatech support until you press Verify."), state.status === "failed" && /* @__PURE__ */ React.createElement("p", {
 			role: "alert",
 			"data-tone": "error"
 		}, state.text), /* @__PURE__ */ React.createElement("p", { className: "mts-muted" }, "Pressing Verify sends your public key", viewer ? /* @__PURE__ */ React.createElement(React.Fragment, null, " (", /* @__PURE__ */ React.createElement("code", null, shortKey$1(viewer)), ")") : null, " to ", /* @__PURE__ */ React.createElement("code", null, hostOf$1(SUPPORT_ORIGIN)), " and has Buzz sign, with your key, a short statement about a one-time code from Megatech support; the signature goes to Megatech support. The statement is Buzz's owner attestation (the kind it uses to say an agent is yours), made over a hash of the code, which nobody holds a key for, so it gives nothing the right to act as you. Nothing is published to your community and your key is never read or sent. The session is kept in memory only, so closing Buzz ends it."), /* @__PURE__ */ React.createElement("div", { className: "mts-actions" }, /* @__PURE__ */ React.createElement("button", {
@@ -682,12 +743,12 @@ function createSettingsCard({ identity, relay, flag, agent }) {
 			type: "button",
 			className: "mts-button",
 			onClick: () => identity.forget()
-		}, "Forget")), /* @__PURE__ */ React.createElement("h2", null, "Megatech support agent"), /* @__PURE__ */ React.createElement("label", { className: "mts-switch" }, /* @__PURE__ */ React.createElement("input", {
+		}, "Forget")), /* @__PURE__ */ React.createElement("h3", null, "Megatech support agent"), /* @__PURE__ */ React.createElement("label", { className: "mts-switch" }, /* @__PURE__ */ React.createElement("input", {
 			type: "checkbox",
 			role: "switch",
 			checked: saved,
 			onChange: (event) => change(event.target.checked)
-		}), /* @__PURE__ */ React.createElement("span", null, "Add the Megatech support agent type and its tools")), /* @__PURE__ */ React.createElement("p", { className: "mts-muted" }, "Off by default. When on, you can make an agent of the type Megatech support in Agents; it answers a mention by asking Megatech support. Buzz also gives all your agents two tools, ", /* @__PURE__ */ React.createElement("code", null, ASK_TOOL), " and ", /* @__PURE__ */ React.createElement("code", null, STATUS_TOOL), ", with which an agent can ask support or open a ticket for you and check a ticket's status. They work only while this is on and your identity is verified. The tools are added the next time Buzz starts; turning this off stops them at once."), refused && /* @__PURE__ */ React.createElement("p", {
+		}), /* @__PURE__ */ React.createElement("span", null, "Add the Megatech support agent type and its tools")), /* @__PURE__ */ React.createElement("p", { className: "mts-muted" }, "Off by default. When on, you can make an agent of the type Megatech support in Agents; it answers your own mention by asking Megatech support, and posts the answer in the channel. Buzz also gives all your agents two tools, ", /* @__PURE__ */ React.createElement("code", null, ASK_TOOL), " and ", /* @__PURE__ */ React.createElement("code", null, STATUS_TOOL), ", with which an agent can ask support or open a ticket for you and check a ticket's status. They work only while this is on and your identity is verified, and only for agents that are yours. An agent cannot tell who asked it, so an agent that answers someone else can pass on what a tool gave it. The tools are added the next time the plugin starts: when Buzz starts, or when the plugin is turned off and on or updated, and agents running then start their sessions over. Turning this off stops them at once."), refused && /* @__PURE__ */ React.createElement("p", {
 			role: "alert",
 			"data-tone": "error"
 		}, "Buzz would not keep that choice, so it is still ", saved ? "on" : "off", "."), saved !== agent.startedOn && /* @__PURE__ */ React.createElement("p", { role: "status" }, "Restart Buzz to ", saved ? "turn this on" : "turn this off", "."), agent.startedOn && saved === agent.startedOn && /* @__PURE__ */ React.createElement("p", { role: "status" }, "On in this session."), agent.problems.map((problem) => /* @__PURE__ */ React.createElement("p", {
@@ -725,7 +786,7 @@ var CSS = `
 .mts-body { flex: 1; min-height: 0; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
 .mts-panel { max-width: 560px; padding: 18px 20px; border: 1px solid var(--mts-line); border-top: 2px solid var(--mts-cyan); border-radius: 2px;
   background: var(--mts-card); display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
-.mts-panel h2, .mts-settings h2 { margin: 0; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; }
+.mts-panel h2, .mts-settings h2, .mts-settings h3 { margin: 0; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; }
 .mts-settings .mts-settings-title { margin: 0 0 4px; font-size: 20px; font-weight: 600; letter-spacing: normal; text-transform: none; }
 .mts-panel p, .mts-panel ul, .mts-settings p { margin: 0; }
 .mts-panel ul { padding-left: 20px; list-style: disc; }
@@ -794,6 +855,8 @@ function createSupportPage({ identity, support, relay }) {
 		const [question, setQuestion] = React.useState("");
 		const [subject, setSubject] = React.useState("");
 		const [body, setBody] = React.useState("");
+		const [asked, setAsked] = React.useState();
+		const [opened, setOpened] = React.useState();
 		const tabs = React.useRef({});
 		const was = React.useRef(state.status);
 		React.useEffect(() => {
@@ -841,13 +904,17 @@ function createSupportPage({ identity, support, relay }) {
 		}, tab === "ask" && /* @__PURE__ */ React.createElement(AskTab, {
 			support,
 			question,
-			setQuestion
+			setQuestion,
+			result: asked,
+			setResult: setAsked
 		}), tab === "open" && /* @__PURE__ */ React.createElement(OpenTab, {
 			support,
 			subject,
 			setSubject,
 			body,
-			setBody
+			setBody,
+			result: opened,
+			setResult: setOpened
 		}), tab === "tickets" && /* @__PURE__ */ React.createElement(TicketsTab, { support })))));
 	};
 }
@@ -881,19 +948,18 @@ function useAlive() {
 	}, []);
 	return alive;
 }
-function AskTab({ support, question, setQuestion }) {
+function AskTab({ support, question, setQuestion, result, setResult }) {
 	const alive = useAlive();
 	const [busy, setBusy] = React.useState(false);
-	const [result, setResult] = React.useState();
 	const [error, setError] = React.useState();
 	const send = async (event) => {
 		event.preventDefault();
 		if (busy || !question.trim()) return;
 		setBusy(true);
 		setError(void 0);
+		setResult(void 0);
 		try {
 			const asked = await support.askOrOpen(question);
-			if (!alive.current) return;
 			setQuestion("");
 			setResult(asked);
 		} catch (failure) {
@@ -925,21 +991,20 @@ function AskTab({ support, question, setQuestion }) {
 		"aria-label": "Support's reply"
 	}, /* @__PURE__ */ React.createElement("span", { className: "mts-muted" }, "Ticket ", /* @__PURE__ */ React.createElement("span", { className: "mts-id" }, result.ticket_id)), result.answer ? /* @__PURE__ */ React.createElement("p", { className: "mts-answer" }, result.answer) : /* @__PURE__ */ React.createElement("p", null, "No answer yet: a ticket is open and Megatech support will reply there. Find it under My tickets.")));
 }
-function OpenTab({ support, subject, setSubject, body, setBody }) {
+function OpenTab({ support, subject, setSubject, body, setBody, result: opened, setResult: setOpened }) {
 	const alive = useAlive();
 	const [busy, setBusy] = React.useState(false);
-	const [opened, setOpened] = React.useState();
 	const [error, setError] = React.useState();
 	const send = async (event) => {
 		event.preventDefault();
 		if (busy || !subject.trim() || !body.trim()) return;
 		setBusy(true);
 		setError(void 0);
+		setOpened(void 0);
 		try {
 			const ticket = await support.open(subject, body);
 			setSubject("");
 			setBody("");
-			if (!alive.current) return;
 			setOpened(ticket);
 		} catch (failure) {
 			if (alive.current) setError(words(failure));
@@ -983,21 +1048,24 @@ function TicketsTab({ support }) {
 	const [busy, setBusy] = React.useState(false);
 	const [error, setError] = React.useState();
 	const refresh = React.useRef(null);
+	const loads = React.useRef(0);
 	const load = async (id) => {
+		const mine = ++loads.current;
+		const current = () => alive.current && mine === loads.current;
 		setBusy(true);
 		setError(void 0);
 		try {
 			if (id) {
 				const next = await support.detail(id);
-				if (alive.current) setDetail(next);
+				if (current()) setDetail(next);
 			} else {
 				const next = await support.list();
-				if (alive.current) setTickets(next);
+				if (current()) setTickets(next);
 			}
 		} catch (failure) {
-			if (alive.current) setError(words(failure));
+			if (current()) setError(words(failure));
 		} finally {
-			if (alive.current) setBusy(false);
+			if (current()) setBusy(false);
 		}
 	};
 	React.useEffect(() => {

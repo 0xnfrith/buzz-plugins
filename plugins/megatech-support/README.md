@@ -9,7 +9,7 @@ Ask Megatech support, open a ticket and follow your tickets without leaving Buzz
 
 - **A page, Megatech support**, in the page navigation: **Ask** a question (you get an answer when support has one right away, and a ticket either way), **Open a ticket** with a subject and what happened, and **My tickets** to read each ticket's messages.
 - **A Settings card** (Settings, Plugins, Megatech support) to verify your identity and to turn on the agent type and tools.
-- **Off by default: a Megatech support agent type and two agent tools**, `megatech_support_ask_or_open` and `megatech_support_ticket_status`. Turn them on in the Settings card; they are added the next time Buzz starts. Any of your agents may then use the tools while your identity is verified.
+- **Off by default: a Megatech support agent type and two agent tools**, `megatech_support_ask_or_open` and `megatech_support_ticket_status`. Turn them on in the Settings card; they are added the next time the plugin starts (when Buzz starts, or when the plugin is turned off and on or updated; agents that are running then start their sessions over). Your own agents may then use the tools while your identity is verified. The agent type answers **your own** mention, in the channel it was mentioned in, with support's answer (cut at 4,000 characters, with the ticket named for the rest). A tool cannot tell who asked an agent, so an agent that answers someone else can pass on what a tool gave it.
 
 ## Screenshots
 
@@ -43,7 +43,7 @@ The review lists one network address, `https://support.megatech.invalid`, the pl
 
 ![The Review plugin access window for Megatech support: Computer access, Connect to https://support.megatech.invalid, Enable plugin switched on, and the Install plugin button](screenshots/install/1-review.png)
 
-To give your agents the tools: Settings, Plugins, Megatech support, switch on **Add the Megatech support agent type and its tools**, then restart Buzz. Turning the switch off stops the tools at once.
+To give your agents the tools: Settings, Plugins, Megatech support, switch on **Add the Megatech support agent type and its tools**, then restart Buzz (turning the plugin off and on, or updating it, also starts it again). Turning the switch off stops the tools at once. The tools work only for agents that are yours: Buzz records an owner for each agent, and it has to be you, the person who verified.
 
 Steps 1 to 4 of installing are the same for every plugin in this repository: see [`docs/install.md`](../../docs/install.md).
 
