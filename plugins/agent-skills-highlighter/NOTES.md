@@ -63,4 +63,4 @@ The test list is far denser than real talk: every fifth message repeats "/brains
 
 ## What was and was not checked
 
-See the README's last section. In short: unit tests, the real script, the browser tests and the speed comparison were run; the card and the highlight were looked at in the installed desktop app in a channel and a thread. A DM was checked only in the browser harness (it would have meant sending a message to a person). macOS and Windows were not run.
+See the README's last section. In short: unit tests, the real script, the browser tests and the speed comparison were run; the card and the highlight were looked at in the installed desktop app in a channel and a thread. A DM was checked only in the browser harness (it would have meant sending a message to a person). On a Mac the highlight with its glow, the card, the description and its source line were run by hand in the desktop app; Windows was not run (it has no `sh`).

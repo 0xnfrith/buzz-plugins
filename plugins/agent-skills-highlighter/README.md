@@ -1,10 +1,29 @@
-# Agent Skills Highlighter
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/headers/agent-skills-highlighter-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../assets/headers/agent-skills-highlighter-light.svg">
+  <img alt="Agent Skills Highlighter" src="../../assets/headers/agent-skills-highlighter-dark.svg" width="100%">
+</picture>
 
-**MEGATECH.** A `/skill-name` in a Buzz message lights up when it names a skill on this computer. Hover it, or Tab to it, and a small card says what the skill is, where it comes from, and one line of Megatech lore. The message's own text is never changed and never moves.
+> [!NOTE]
+> 🍳 **Cooking.** This plugin is a work in progress: it runs and is tested, and it will still change.
+
+## What it is
+
+**MEGATECH.** A `/skill-name` in a Buzz message lights up when it names a skill on this computer. Hover it, or Tab to it, and a small card says what the skill is, where it comes from, and one Megatech signal line. The message's own text is never changed and never moves.
 
 ![A message with two skills highlighted, and the card of one of them, on Buzz's dark theme](screenshots/card-dark.png)
 
 Every skill, message and path in the screenshots is made up.
+
+## Platforms
+
+| macOS | Linux | Windows |
+| --- | --- | --- |
+| **works, tested** | **works, tested** | not supported |
+
+- **macOS:** run by hand in the Buzz desktop app on a Mac: the highlight with its glow, the card, the description and the "From your skills folder" line. The other checks listed at the end of this page (Settings, the extra folder, the keyboard, a thread, speed) were run on Linux and in the browser tests, not on a Mac.
+- **Linux:** run by hand in the Buzz desktop app on Linux (WebKitGTK), and in the browser tests in Buzz's own web build, in headless Chromium. [What was checked](#what-was-and-was-not-checked).
+- **Windows:** not supported. The plugin needs `sh`, which Windows does not have; there it finds no skills and says so in Settings.
 
 ## What you need
 
@@ -25,7 +44,7 @@ Taken in the Buzz desktop app on Linux, with made-up skills (a skills folder, a 
 | Dark | Light |
 | --- | --- |
 | ![Hovering /plan-review: the card, in dark mode](screenshots/card-dark.png) | ![The same in light mode](screenshots/card-light.png) |
-| Hover: the card (name, description, where from, a line of lore). The highlight is the dim tint with a dither; `/usr/local/bin/deploy`, `a/deploy`, the URL and `/deploy.md` are left alone | The same in light: the plate, text and border are Buzz's own |
+| Hover: the card (name, description, where from, a signal line). The highlight is the dim tint with a dither; `/usr/local/bin/deploy`, `a/deploy`, the URL and `/deploy.md` are left alone | The same in light: the plate, text and border are Buzz's own |
 | ![Tab to /brainstorming: a focus ring and the card](screenshots/focus-dark.png) | ![Tab to /plan-review in light mode](screenshots/focus-light.png) |
 | Keyboard: Tab onto a skill opens its card, and the app's focus ring shows where you are | The same in light |
 | ![A thread: the card of a skill in a reply](screenshots/thread-dark.png) | ![Settings, Agent skills: 10 names found, one from the extra folder](screenshots/settings.png) |
@@ -46,7 +65,7 @@ A `/name` is highlighted only when **all** of these hold:
 
 ## The card
 
-Hover a highlighted skill for a moment, or Tab to it (every highlight is a tab stop, like a link, and a button for a screen reader: `role="button"`, a hint that says to press Enter or Space, and `aria-expanded` for whether its card is open). The card shows the skill's **name**, its **description** from the skill file, **where it comes from** (your skills folder, the extra folder, or a plugin's name), and a line of lore that changes each time. The description shows up to **12 lines, about 575 characters** at the card's width (measured with a monospace face in the desktop app and in the browser build), and a longer one ends in an ellipsis (`…`) instead of being cut off. Real descriptions are shorter: eleven real `SKILL.md` files found on a machine that builds this plugin had descriptions of 44 to 439 characters, and all of them show whole.
+Hover a highlighted skill for a moment, or Tab to it (every highlight is a tab stop, like a link, and a button for a screen reader: `role="button"`, a hint that says to press Enter or Space, and `aria-expanded` for whether its card is open). The card shows the skill's **name**, its **description** from the skill file, **where it comes from** (your skills folder, the extra folder, or a plugin's name), and a signal line: a short line after `SYS::`, one of six, a new one each time the card opens. The description shows up to **12 lines, about 575 characters** at the card's width (measured with a monospace face in the desktop app and in the browser build), and a longer one ends in an ellipsis (`…`) instead of being cut off. Real descriptions are shorter: eleven real `SKILL.md` files found on a machine that builds this plugin had descriptions of 44 to 439 characters, and all of them show whole.
 
 | Do this | What happens |
 | --- | --- |
@@ -150,14 +169,14 @@ Cloaked at rest, charged on contact.
 - **At rest** a skill has a still, dim cyan tint with an ordered (Bayer) dither and a thin underline, behind the letters. Nothing moves. (A shimmer at rest was tried and dropped: on a long channel, with a skill in one message in five, it slowed scrolling too much. See `NOTES.md`.)
 - **On hover or focus** it decloaks for 0.4 seconds: a scan beam crosses the highlight and a thin cyan and magenta split flickers at its left and right edges, inside the highlight and behind its own first and last letters (a translucent band, so the words stay readable; nothing is drawn outside the highlight, on the words beside it). Then it stays brighter while the card is open. The card arrives with the same split on its edge.
 - **The letters never glitch.** Only what is behind them, inside the highlight, changes; every shadow of the highlight is an inset one, and a test holds the decloak at nine frames and compares the pixels of the words either side of it with the same words at rest. The message's own text keeps its font, size, colour and place, and a test compares the position and size of every word before and after.
-- **The card** is the Megatech design system's: a gunmetal plate, ink text, a hair border, a dithered frame, square corners; the name in capitals in the display face; a status line that starts `SYS::` in cyan-dim. The fonts are not downloaded (a plugin cannot): the display and mono faces are named first and the system's sans and mono faces follow, so on a computer without Chakra Petch and Share Tech Mono it reads in the system's.
+- **The card** is the Megatech design system's: a gunmetal plate, ink text, a hair border, a dithered frame, square corners; the name in capitals in the display face; a signal line that starts `SYS::` in cyan-dim. The fonts are not downloaded (a plugin cannot): the display and mono faces are named first and the system's sans and mono faces follow, so on a computer without Chakra Petch and Share Tech Mono it reads in the system's.
 - **Magenta** (`#ff2bd6`) appears only as the thin split edge, never as a fill, a border or text. A test checks where it is used.
 
 | Token (dark) | Value | Used for |
 | --- | --- | --- |
 | cyan | `#00d4ff` | the highlight, the card's name, its edge |
 | cyan-bright | `#4aeaff` | the charged state: the underline and the scan beam |
-| cyan-dim | `#0099cc` | the status line |
+| cyan-dim | `#0099cc` | the signal line |
 | magenta | `#ff2bd6` | the split edge, only |
 | gunmetal-deep | `#12161c` | the card's plate |
 | ink, muted | `#e9eef4`, `#a7b2be` | the card's text, and its source line |
@@ -223,7 +242,7 @@ Checked:
 
 Not checked:
 
-- **macOS and Windows.** The plugin runs on whichever web view Buzz uses; the shell script uses only `sh`, `read`, `printf`, `grep`, `sed`, `head` and `awk`, and has been run here only with Linux's (dash, GNU grep, sed and awk).
+- **Windows**, which has no `sh`. **Most of macOS:** only the highlight with its glow, the card, the description and the "From your skills folder" line were run on a Mac, in the desktop app. The shell script uses only `sh`, `read`, `printf`, `grep`, `sed`, `head` and `awk`, and the node tests ran it with Linux's (dash, GNU grep, sed and awk) only; on a Mac it ran with macOS's own tools.
 - **A real Claude Code plugin install.** The folder layout read from `installed_plugins.json` is the one Claude Code's documentation and binary describe (V1 and V2 files, `installPath`, `skills/<name>/SKILL.md`, `.claude-plugin/plugin.json`). The tests and the real-app check build that layout; they cannot show that a real install has the same files.
 - **The Chakra Petch and Share Tech Mono faces.** The card was looked at with the system faces only.
 - **Reduced motion and a DM in the real app.** Both are covered by the browser tests only. A DM would have meant messaging a person. Reduced motion cannot be switched on in the Linux app on a bare display: its web view ignores the GTK animations-off setting (switching it off changed none of the 17 distinct frames of the decloak that were captured), so nobody should expect to see it there.

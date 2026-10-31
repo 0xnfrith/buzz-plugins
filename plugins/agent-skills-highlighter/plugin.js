@@ -221,21 +221,17 @@ export function createSkillStore({ load }) {
   };
 }
 
-// ---- The story ---------------------------------------------------------------------------------------------------------------
+// ---- The signal ---------------------------------------------------------------------------------------------------------------
 
-export const LORE = [
-  "Megatech runs the quiet part of the network: private relays for operators and their agents.",
-  "Every skill is a contract. We keep the ones you can read.",
-  "Founded in the gap between a prompt and a result. Still there.",
-  "No feed, no public square. A Megatech relay is a room with one door and a good lock.",
-  "Agents do the work. Operators own the relay. We own nothing we cannot explain.",
-  "Cloaked until needed. Charged on contact. That is the whole doctrine.",
-  "The relay does not sleep. It only dims.",
-  "Every message arrives signed. Every agent leaves a trace. We keep the receipts.",
-  "We never asked to be famous. We asked for uptime.",
-  "When an agent learns a skill, a relay somewhere lights one cyan line. That line is us.",
+export const SIGNAL = [
+  "The net is vast and infinite.",
+  "And where does the newborn go from here?",
+  "Your effort to remain is what limits you.",
+  "Believe in yourself. Choose what to leave.",
+  "Ghost line stable.",
+  "If a feat is possible, man will do it.",
 ];
-export const loreFor = (counter) => LORE[((counter % LORE.length) + LORE.length) % LORE.length];
+export const signalFor = (counter) => SIGNAL[((counter % SIGNAL.length) + SIGNAL.length) % SIGNAL.length];
 
 // ---- Look --------------------------------------------------------------------------------------------------------------------
 
@@ -323,8 +319,8 @@ export const CSS = `
 .megatech-skills__tag{margin-left:auto;font:400 10px/1 "Share Tech Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.26em;text-transform:uppercase;padding:3px 3px 3px 6px;border:1px solid var(--megatech-skills-name);color:var(--megatech-skills-name)}
 .megatech-skills__desc{margin:0 0 10px;white-space:pre-wrap;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:${DESCRIPTION_LINES};line-clamp:${DESCRIPTION_LINES};overflow:hidden}
 .megatech-skills__from{margin:0 0 10px;font-size:10px;line-height:1.3;letter-spacing:.26em;text-transform:uppercase;color:var(--megatech-skills-muted)}
-.megatech-skills__lore{margin:0;padding-top:10px;border-top:1px solid var(--megatech-skills-hair);font-size:12px;line-height:1.55;letter-spacing:.16em;color:var(--megatech-skills-status)}
-.megatech-skills__lore::before{content:"SYS:: "}
+.megatech-skills__signal{margin:0;padding-top:10px;border-top:1px solid var(--megatech-skills-hair);font-size:12px;line-height:1.55;letter-spacing:.16em;color:var(--megatech-skills-status)}
+.megatech-skills__signal::before{content:"SYS:: "}
 @keyframes megatech-skills-card{
   0%{box-shadow:-4px 0 0 var(--megatech-skills-magenta),4px 0 0 var(--megatech-skills-cyan),var(--megatech-skills-glow),0 0 0 1px var(--megatech-skills-edge);opacity:.2}
   30%{box-shadow:3px 0 0 var(--megatech-skills-magenta),-3px 0 0 var(--megatech-skills-cyan),var(--megatech-skills-glow),0 0 0 1px var(--megatech-skills-edge);opacity:1}
@@ -384,7 +380,7 @@ function createCard({ store, doc, win }) {
     const plate = make("div", "megatech-skills__plate");
     const head = make("div", "megatech-skills__head");
     head.append(make("span", "megatech-skills__name"), make("span", "megatech-skills__tag", "skill"));
-    plate.append(head, make("p", "megatech-skills__desc"), make("p", "megatech-skills__from"), make("p", "megatech-skills__lore"));
+    plate.append(head, make("p", "megatech-skills__desc"), make("p", "megatech-skills__from"), make("p", "megatech-skills__signal"));
     element.append(plate);
     element.addEventListener("mouseenter", () => clearTimeout(closeTimer));
     element.addEventListener("mouseleave", () => schedule(close, CLOSE_DELAY));
@@ -427,7 +423,7 @@ function createCard({ store, doc, win }) {
     field("name").textContent = `/${skill.name}`;
     field("desc").textContent = skill.description || "This skill's file gives no description.";
     field("from").textContent = `From ${skill.source}`;
-    field("lore").textContent = loreFor(counter++);
+    field("signal").textContent = signalFor(counter++);
     card.hidden = false;
     // Restart the decloak each time the card opens.
     card.style.animation = "none";

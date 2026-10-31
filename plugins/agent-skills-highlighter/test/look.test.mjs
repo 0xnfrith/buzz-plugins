@@ -45,7 +45,7 @@ test("nothing moves at rest: the highlight has no animation until it is hovered,
 
 test("the card's name is in the display face in capitals; the status line starts SYS:: in cyan-dim", () => {
   assert.ok(/\.megatech-skills__name\{[^}]*Chakra Petch[^}]*text-transform:uppercase/.test(CSS));
-  assert.ok(/\.megatech-skills__lore::before\{content:"SYS:: "\}/.test(CSS));
+  assert.ok(/\.megatech-skills__signal::before\{content:"SYS:: "\}/.test(CSS));
   assert.ok(/--megatech-skills-status:var\(--megatech-skills-dim\)/.test(CSS));
 });
 

@@ -7,7 +7,7 @@ import { open } from "./timeline.mjs";
 import { hoverMessage } from "./message-actions.mjs";
 import { openSettings, selectSettingsSection, settingsDialog, settingsSections } from "./navigation.mjs";
 import { setPluginEnabled } from "./plugin-settings.mjs";
-import { DESCRIPTION_LINES, LORE } from "../fixtures/agent-skills-highlighter/plugin.js";
+import { DESCRIPTION_LINES, SIGNAL } from "../fixtures/agent-skills-highlighter/plugin.js";
 
 test.use({ pluginFixtures: true, productionBroker: true, dmLabels: true, historyCounts: { alpha: 12, beta: 3 } });
 
@@ -64,7 +64,7 @@ test("a known skill is drawn in a channel, a thread and a DM, and a path, a URL,
   await expect(tokens(page).first()).toHaveText("/brainstorming");
 });
 
-test("hovering a skill opens the card with its name, description, source and a line of lore; mouse-out closes it; the card itself keeps it open", async ({ page, app }) => {
+test("hovering a skill opens the card with its name, description, source and a signal line; mouse-out closes it; the card itself keeps it open", async ({ page, app }) => {
   await arrange(page, app);
   await say(page, "try /brainstorming and /plan-review");
   await expect(tokens(page)).toHaveCount(2);
@@ -74,8 +74,8 @@ test("hovering a skill opens the card with its name, description, source and a l
   await expect(card(page).locator(".megatech-skills__name")).toHaveText("/brainstorming");
   await expect(card(page).locator(".megatech-skills__desc")).toHaveText("Explore intent and requirements before building anything.");
   await expect(card(page).locator(".megatech-skills__from")).toHaveText("From your skills folder");
-  const lore = await card(page).locator(".megatech-skills__lore").textContent();
-  expect(LORE).toContain(lore);
+  const signal = await card(page).locator(".megatech-skills__signal").textContent();
+  expect(SIGNAL).toContain(signal);
   const id = await card(page).getAttribute("id");
   await expect(token(page, "brainstorming")).toHaveAttribute("aria-describedby", id);
   await expect(token(page, "brainstorming")).toHaveAttribute("data-skill-open", "");
@@ -97,11 +97,11 @@ test("hovering a skill opens the card with its name, description, source and a l
   await expect(card(page)).toBeHidden();
   await expect(token(page, "brainstorming")).not.toHaveAttribute("data-skill-open", "");
   await expect(token(page, "brainstorming")).not.toHaveAttribute("aria-describedby", /.+/);
-  // A second skill: its own description, from the plugin that has it, and the next line of lore.
+  // A second skill: its own description, from the plugin that has it, and the next signal line.
   await token(page, "plan-review").hover();
   await expect(card(page).locator(".megatech-skills__desc")).toHaveText("Review a plan before it runs.");
   await expect(card(page).locator(".megatech-skills__from")).toHaveText("From the superpowers plugin");
-  await expect(card(page).locator(".megatech-skills__lore")).not.toHaveText(lore);
+  await expect(card(page).locator(".megatech-skills__signal")).not.toHaveText(signal);
 });
 
 test("by keyboard: a skill is a tab stop, focus opens the card, Esc closes it, moving on closes it", async ({ page, app }) => {
@@ -454,7 +454,7 @@ for (const mode of ["dark", "light"]) {
         tag: onPlate(".megatech-skills__tag"),
         desc: onPlate(".megatech-skills__desc"),
         from: onPlate(".megatech-skills__from"),
-        lore: onPlate(".megatech-skills__lore"),
+        signal: onPlate(".megatech-skills__signal"),
         mode: document.documentElement.dataset.colorMode,
         tint,
       };
@@ -462,7 +462,7 @@ for (const mode of ["dark", "light"]) {
     console.log(`CONTRAST ${mode} ${JSON.stringify(ratios)}`);
     expect(ratios.rest).toBeGreaterThanOrEqual(4.5);
     expect(ratios.hover).toBeGreaterThanOrEqual(4.5);
-    for (const part of ["plate", "name", "tag", "desc", "from", "lore"]) expect(ratios[part], part).toBeGreaterThanOrEqual(4.5);
+    for (const part of ["plate", "name", "tag", "desc", "from", "signal"]) expect(ratios[part], part).toBeGreaterThanOrEqual(4.5);
   });
 }
 
@@ -489,8 +489,8 @@ test("the card is the Megatech design system's in dark and the host's own plate 
         name: css(".megatech-skills__name", "color"),
         nameCase: css(".megatech-skills__name", "textTransform"),
         nameFont: css(".megatech-skills__name", "fontFamily"),
-        lore: css(".megatech-skills__lore", "color"),
-        sys: css(".megatech-skills__lore", "content", "::before"),
+        signal: css(".megatech-skills__signal", "color"),
+        sys: css(".megatech-skills__signal", "content", "::before"),
         glow: getComputedStyle(document.querySelector(".megatech-skills__card")).getPropertyValue("--megatech-skills-glow"), // the card is mid-animation, so its box-shadow is read from the variable
         radii: [css(".megatech-skills__card", "borderRadius"), css(".megatech-skills__plate", "borderRadius"), css('[data-skill="brainstorming"]', "borderRadius")],
         magenta: getComputedStyle(document.querySelector(".megatech-skills__card")).getPropertyValue("--megatech-skills-magenta").trim(),
@@ -504,7 +504,7 @@ test("the card is the Megatech design system's in dark and the host's own plate 
     hair: "rgba(0, 212, 255, 0.16)",
     name: "rgb(0, 212, 255)", // cyan
     nameCase: "uppercase",
-    lore: "rgb(0, 153, 204)", // cyan-dim
+    signal: "rgb(0, 153, 204)", // cyan-dim
     sys: '"SYS:: "',
     radii: ["0px", "0px", "0px"],
     magenta: "#ff2bd6",
@@ -516,7 +516,7 @@ test("the card is the Megatech design system's in dark and the host's own plate 
   expect(light.plate).toBe(light.host.plate); // the host's popover surface and text, not ours
   expect(light.text).toBe(light.host.text);
   expect(light.name).toBe("rgb(0, 112, 143)"); // cyan darkened for white
-  expect(light.lore).toBe("rgb(0, 112, 143)");
+  expect(light.signal).toBe("rgb(0, 112, 143)");
   expect(light.glow).not.toContain("40px"); // no glow on light
   expect(light.radii).toEqual(["0px", "0px", "0px"]);
 });

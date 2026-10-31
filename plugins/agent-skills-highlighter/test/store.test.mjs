@@ -1,7 +1,7 @@
-// The skill store, the settings and the lore.
+// The skill store, the settings and the signal.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createSkillStore, checkExtraFolder, loadSettings, saveSettings, loreFor, LORE, ditherTile } from "../plugin.js";
+import { createSkillStore, checkExtraFolder, loadSettings, saveSettings, signalFor, SIGNAL, ditherTile } from "../plugin.js";
 
 const skills = (...names) => new Map(names.map((name) => [name, { name, description: `about ${name}`, source: "your skills folder" }]));
 
@@ -90,17 +90,23 @@ test("settings save as one small JSON value, and a full storage says so", () => 
   assert.equal(saveSettings({ setItem() { throw new Error("full"); } }, { extraFolder: "" }), false);
 });
 
-test("the lore: ten lines, every line short and plain, and the rotation wraps", () => {
-  assert.equal(LORE.length, 10);
-  for (const line of LORE) {
+test("the signal: the six lines, short and plain, and the rotation wraps", () => {
+  assert.deepEqual(SIGNAL, [
+    "The net is vast and infinite.",
+    "And where does the newborn go from here?",
+    "Your effort to remain is what limits you.",
+    "Believe in yourself. Choose what to leave.",
+    "Ghost line stable.",
+    "If a feat is possible, man will do it.",
+  ]);
+  for (const line of SIGNAL) {
     assert.ok(line.length <= 100, line);
     assert.ok(/^[\x20-\x7e]+$/.test(line), `plain ASCII: ${line}`);
   }
-  assert.equal(new Set(LORE).size, 10);
-  assert.equal(loreFor(0), LORE[0]);
-  assert.equal(loreFor(10), LORE[0]);
-  assert.equal(loreFor(13), LORE[3]);
-  assert.equal(loreFor(-1), LORE[9]);
+  assert.equal(signalFor(0), SIGNAL[0]);
+  assert.equal(signalFor(6), SIGNAL[0]);
+  assert.equal(signalFor(9), SIGNAL[3]);
+  assert.equal(signalFor(-1), SIGNAL[5]);
 });
 test("the dither tile is a 4x4 ordered pattern: sixteen cells of rising alpha", () => {
   const tile = decodeURIComponent(ditherTile("#00d4ff", 0.3).slice('url("data:image/svg+xml,'.length, -2));
