@@ -1,15 +1,49 @@
-# Vim mode
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/headers/vim-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../assets/headers/vim-light.svg">
+  <img alt="Vim mode" src="../../assets/headers/vim-dark.svg" width="100%">
+</picture>
+
+## What it is
 
 Move through Buzz with vim keys: normal and insert modes, `j` and `k` through messages and channels, `h` and `l` between the channel list, the message list and a thread, `{` and `}` between communities, `gt` between pages, `r` and `m` on a message, and `o`, `q`, `zc`, `>` and `<` for threads. It began as a concept, built to learn what the plugin API reaches. `NOTES.md` has the findings.
 
-## Getting started
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="screenshots/normal-cursor-dark.png">
+  <img alt="NORMAL, the cursor on a message: its bubble lifted, with a thin accent outline" src="screenshots/normal-cursor-light.png">
+</picture>
+
+## Platforms
+
+| macOS | Linux | Windows |
+| --- | --- | --- |
+| should work, untested | **works, tested** | should work, untested |
+
+- **Linux:** run by hand in the Buzz desktop app on Linux (WebKitGTK), and in the browser tests in Buzz's own web build, in headless Chromium. Sources: `NOTES.md`, "What was and was not verified" and "Measuring the plugin".
+- **macOS:** not run in a Mac's web view (WKWebView), where key handling, focus after clicks and `Selection.modify` can differ. The Mac key bindings are tested in Chromium with the platform reported as a Mac. Source: `NOTES.md`, "Not verified".
+- **Windows:** not run. The notes do not mention it.
+
+
+## How to install
 
 1. In the desktop app open Settings, Plugins, Manage plugins, Load from folder, and choose this folder (the one that contains `manifest.json` and `plugin.js`). Install it, and enable **Vim mode** if it is not already on.
 2. Open Messages and a channel with some history. A small `-- NORMAL --  main` label appears in the window's bottom-right corner (it says the mode and which pane has the keys), and the sidebar shows a **Vim mode** page with an `N` badge.
 3. Work through the checklist below.
 4. To stop at any time press Cmd+Shift+E (Ctrl+Shift+E elsewhere), or disable the plugin in Settings.
 
-## Screenshots
+## What it looks like
+
+| | |
+| --- | --- |
+| ![A thread beside the channel: the pane that has the keys has an accent line under its header](screenshots/thread-pane-dark.png) | ![VISUAL mode in the message box](screenshots/box-visual-dark.png) |
+| A thread beside the channel: the pane that has the keys has a 2 px accent line under its header | VISUAL: a motion grows the highlight |
+| ![The channel list has the keys](screenshots/channel-list-light.png) | ![The key list, opened with ?](screenshots/help-dark.png) |
+| The channel list has the keys: a ring on the current channel | The key list, opened with `?` |
+
+<details>
+<summary><b>All screenshots, light and dark</b></summary>
+
+### Screenshots
 
 Taken in Buzz's own browser test harness with its fixture data (`test/screenshots.spec.mjs`), in light and dark mode.
 
@@ -26,7 +60,14 @@ Taken in Buzz's own browser test harness with its fixture data (`test/screenshot
 | ![The channel list has the keys](screenshots/channel-list-light.png) | ![The key list, opened with ?](screenshots/help-dark.png) |
 | The channel list has the keys: a ring on the current channel | The key list, opened with `?` |
 
-## Try this
+</details>
+
+## Details
+
+<details>
+<summary><b>Try this: every key, step by step</b></summary>
+
+### Try this
 
 | Step | Keys | Expected |
 | --- | --- | --- |
@@ -73,11 +114,21 @@ Taken in Buzz's own browser test harness with its fixture data (`test/screenshot
 
 **Visual mode** in the message box: type a few lines (Shift+Enter makes a new line), press Esc, then `v` and the label says `VISUAL` with the character under the cursor highlighted. every motion above (`e`, `W`, `fx`, `3l`, `G` ...) stretches the highlight, `y` copies it to the clipboard, `d` or `x` deletes it, `c` deletes it and goes to insert mode, and Esc (or `v` again) leaves. `V` does the same by whole lines (`Vd` removes the lines and their newline). Switch between the two with `v` and `V`. There is no `p`: paste with Cmd+V.
 
-## What to report
+</details>
+
+<details>
+<summary><b>What to report</b></summary>
+
+### What to report
 
 Which steps behaved differently, and for any that did nothing, whether the label changed. If the app has a developer console, any red errors that mention `megatech.vim-mode`.
 
-## For developers
+</details>
+
+<details>
+<summary><b>For developers</b></summary>
+
+### For developers
 
 The source is TypeScript in `src/`, one module per concern (see "Source layout" in `NOTES.md`). The app loads only the built `plugin.js` next to the manifest and never runs a build, so the built file is committed with the source.
 
@@ -87,9 +138,14 @@ The source is TypeScript in `src/`, one module per concern (see "Source layout" 
 - **Measuring**: `test/perf.sh`, `test/real-app/` and "Measuring the plugin" in `NOTES.md`.
 - **Screenshots**: `SPEC=screenshots.spec.mjs test/perf.sh PATH_TO_BLOCK_BUZZ_APP_CHECKOUT with 1` writes the pictures above into `SHOTS_DIR`.
 
+</details>
+
 ## Key latency budget
 
 Every key the plugin handles has to answer within a frame or two, in a channel with thousands of messages as well as in an empty one. `test/budget.spec.mjs` holds that for the keys it presses ("What is pressed", below, and the keys it does not press yet): it presses them on the surfaces listed there in headless Chromium, against the production web build of Buzz's own browser harness (the checkout `test/run.sh` also uses), and prints p50, p95, p99 and the maximum per surface and key.
+
+<details>
+<summary><b>How it is measured, what is pressed, how to run it and how to read the table</b></summary>
 
 **The budget.** The **gate** is p99 ≤ 50 ms: a row over it in all three attempts fails the test, and the GitHub job (`.github/workflows/vim-latency.yml`) fails the pull request. The **target** is p95 ≤ 16 ms, one frame at 60 Hz: it is reported, the rows over it are marked, and it does not fail anything.
 
@@ -126,3 +182,5 @@ plugins/vim/test/budget.sh PATH_TO_BLOCK_BUZZ_APP_CHECKOUT
 The table goes to the terminal, to `/tmp/vim-budget.md` and to `/tmp/vim-budget.json` (`BUDGET_OUT` changes the prefix). A full run takes 20 to 25 minutes on a two-core machine; `BUDGET_ONLY=thread,settings` runs some surfaces (`sidebar`, `list`, `thread`, `box-text`, `box-mentions`, `reminders`, `agents`, `workflows`, `settings`), `BUDGET_REPS` and `BUDGET_ATTEMPTS` shorten it. Close everything else, the Buzz app included: on a machine with 4 GB, the app alone was enough to double the numbers. Numbers from a small machine are for comparing two builds (below); the gate is the CI job's, on its own runner, and a local run can go red on rows that are green there. `BUDGET_PLUGIN=/path/plugin.js` measures another build of the plugin (the one on `main`, to compare a branch with it), and `BUDGET_TRACE=full` turns on the plugin's own trace, so each row also says how long each of the plugin's handlers ran per press and which DOM calls it made (those milliseconds are for finding where the time goes; the trace wraps DOM methods and distorts them).
 
 **Adding a key.** A pull request that adds or changes a key adds it to the rows of every surface where it does something (`moves`, `boxRows` and the `surface(...)` blocks of `test/budget.spec.mjs`), in the same pull request; a new page or dialog gets a `surface(...)` of its own. If the new key is slow because of what the app does, add a control row that does the same work from the page, and put the key in `budget.baseline.json` only if the control is over 50 ms too.
+
+</details>

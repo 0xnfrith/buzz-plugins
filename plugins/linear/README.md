@@ -1,8 +1,30 @@
-# Linear
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/headers/linear-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../assets/headers/linear-light.svg">
+  <img alt="Linear" src="../../assets/headers/linear-dark.svg" width="100%">
+</picture>
 
-Your Linear board inside Buzz: one column for each workflow state, in Linear's order, with cards that look like Linear's own. Drag a card to another column to change the issue's state; click a card for its details and an **Open in Linear** link.
+## What it is
 
-## Getting started
+Your Linear board inside Buzz: one column for each workflow state, in Linear's order, with cards that look like Linear's own. Drag a card to another column to change the issue's state; click a card for its details and an **Open in Linear** link. Each person pastes their own personal API key.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="screenshots/board-dark.png">
+  <img alt="The board in light mode" src="screenshots/board-light.png">
+</picture>
+
+## Platforms
+
+| macOS | Linux | Windows |
+| --- | --- | --- |
+| should work, untested | **works, tested** | should work, untested |
+
+- **Linux:** run by hand in the Buzz desktop app on Linux against a throwaway real Linear workspace, with the key kept in the real Secret Service. Source: `NOTES.md`, "What was verified".
+- **macOS:** not run on a Mac. The Keychain path is tested only against a stand-in `security` program, and Mac WebKit (WKWebView) is unverified. Source: `NOTES.md`, "What was not verified".
+- **Windows:** not run. Source: `NOTES.md`, "What was not verified". There is no key store the plugin can use there, so the key is kept in the app's profile as plain text, and the card says so.
+
+
+## How to install
 
 1. Install it: Settings, Plugins, Manage plugins, Add, then load this folder or enter `https://github.com/0xnfrith/buzz-plugins` as the Git or GitHub repository and pick **Linear**. Review what it asks for (one network origin, `https://api.linear.app`) and install, then enable it.
 2. In Linear make a personal API key: Settings, Account, Security & access, Personal API keys. It needs the **Write** scope (Write is what lets a dragged card change state; it includes reading). If Linear lets you limit the key to certain teams, limit it to the teams you use.
@@ -12,7 +34,19 @@ Your Linear board inside Buzz: one column for each workflow state, in Linear's o
 
 The board asks Linear whether anything changed once a minute while the page is open and when the window comes back to the front, and reloads only if something did. **Refresh** reads everything again.
 
-## Screenshots
+## What it looks like
+
+| | |
+| --- | --- |
+| ![A card dragged to another column](screenshots/dragging-dark.png) | ![The details panel](screenshots/details-dark.png) |
+| Dragging a card: the target column lights up | Details, with **Open in Linear** |
+| ![The settings card after saving a key](screenshots/settings-card.png) | ![The install review](screenshots/install-review.png) |
+| The settings card: the key is not shown again | The install review, taken before the key stores were added |
+
+<details>
+<summary><b>All screenshots, with the full captions</b></summary>
+
+### Screenshots
 
 Taken in the Buzz desktop app on Linux (WebKitGTK), with the plugin's test double standing in for Linear: the issues are invented.
 
@@ -25,7 +59,14 @@ Taken in the Buzz desktop app on Linux (WebKitGTK), with the plugin's test doubl
 | ![The settings card after saving a key](screenshots/settings-card.png) | ![The install review](screenshots/install-review.png) |
 | The settings card: the key is not shown again (the plain-text fallback, shown on Linux with no Secret Service available to the plugin) | The install review, taken before the key stores were added: it listed the one origin the plugin may reach, and now also lists six commands (with every argument): three `security` for the Keychain, three `secret-tool` for the Secret Service. ("Computer access" is shown for every plugin: plugins are not sandboxed) |
 
-## What to know before you paste a key
+</details>
+
+## Details
+
+<details>
+<summary><b>What to know before you paste a key</b></summary>
+
+### What to know before you paste a key
 
 - **Where the key is kept.** On a **Mac**, in your **Keychain**, in an item named `buzz-linear` (account `linear`), through Apple's `security` program. On **Linux**, in the system secret store (the Secret Service: gnome-keyring, KWallet or another), in an item with the attributes `service buzz-linear` and `account linear`, through `secret-tool` (package `libsecret-tools`). The plugin hands the key to the program on its standard input, never as an argument, and reads it back to be sure it was kept; it reads it once, the first time the Linear page or its card is opened in a Buzz session (not when Buzz starts, so a locked keyring does not ask every time), and holds it in memory. Where there is no store the plugin can use (Windows, or Linux with no Secret Service running, or no `secret-tool`), the key is stored in the Buzz app's profile on this computer (the page's local storage, under this plugin's id) **as plain text**, and the card says which place holds it. Buzz has no credential store for plugins yet.
 - **Who can read it.** A plain-text copy: **any other plugin you install can read it.** The Keychain or Secret Service copy: not from the profile, but a plugin that declares the same program (`security` or `secret-tool`) in its manifest could ask for it as well, and that plugin's install review lists the program. Buzz plugins are not sandboxed: they run as trusted code inside the app. Install only plugins you trust, and give this key the least access it needs.
@@ -37,7 +78,12 @@ Taken in the Buzz desktop app on Linux (WebKitGTK), with the plugin's test doubl
 - **Remove key** in the card deletes the item from the Keychain or the Secret Service and any plain copy in the profile, and checks the store by reading it again (if it will not let go, the card says so and the key stays in use). Do that before you delete the plugin, and revoke the key in Linear too: I found no code in Buzz that clears a plugin's stored data when the plugin is deleted.
 - Each person pastes their own key. Cards you move are moved as you, in Linear's history.
 
-## What it does and does not do
+</details>
+
+<details>
+<summary><b>What it does and does not do</b></summary>
+
+### What it does and does not do
 
 - Shows one team at a time, optionally narrowed to a project or a saved view (the view's own filter, applied by Linear).
 - Columns are the team's workflow states in Linear's order (triage, backlog, unstarted, started, completed, canceled, duplicate, then Linear's own position). Each column loads 50 issues; "50+" and **Show more** appear when there are more. Linear's API has no total count for a list, so this is the one place counts differ from Linear's own board.
@@ -47,6 +93,8 @@ Taken in the Buzz desktop app on Linux (WebKitGTK), with the plugin's test doubl
 - A card cannot be dragged into **Duplicate** (nor picked from the Status menu): Linear puts an issue there only when it is marked a duplicate of another, which the board cannot do. While a card is held the Duplicate column is greyed out and is not a drop target; if the card is dropped there anyway the board says so and sends nothing.
 - Initials stand in for avatars: the plugin does not load remote images.
 
----
+</details>
+
+## For contributors
 
 Contributor notes: [`NOTES.md`](NOTES.md) (what works through the plugin API, how it was tested, what was not). Build with `pnpm install && pnpm build` (writes `plugin.js` next to `manifest.json`; the built file is committed because Buzz never runs a build). Unit tests: `pnpm test` (with the type check, this is all CI runs: `.github/workflows/linear-tests.yml`). Tests in Buzz's web build: `test/run.sh <block/buzz-app checkout>`; CI does not run them, so run them by hand before a change is merged.
