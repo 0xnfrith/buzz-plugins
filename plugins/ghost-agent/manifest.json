@@ -1,0 +1,10 @@
+{
+  "id": "megatech.ghost-agent",
+  "name": "GHOST agent (prototype)",
+  "apiVersion": 1,
+  "description": "Links a GHOST Protocol instance that already runs on its own server to your Agents page, with a Banner tab showing its management data. Spike for MT-921; not for customers yet.",
+  "discovery": {
+    "category": "developer-tools-and-integrations",
+    "tags": ["Agents", "GHOST Protocol"]
+  }
+}
