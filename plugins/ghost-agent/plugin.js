@@ -9,7 +9,7 @@
 //
 // The Banner tab reads the instance's own relay note, kind 30023 with d = "ghost-banner" (JSON, schema ghost-banner/v0),
 // signed by the instance's key, so nothing here is hardcoded and the plugin holds no key, token or network route.
-export const inject = ["react", "agents", "relay", "navigation"];
+export const inject = ["react", "agents", "relay", "navigation", "host"];
 
 const TYPE_ID = "ghost";
 const NOTE_D = "ghost-banner";
@@ -262,6 +262,104 @@ export function apply(ctx) {
     );
   }
 
+  /** Hands the owner's NIP-OA attestation to the instance in a DM, so it can add it to its relay login and the relay
+   * records the owner (needed before the relay accepts its kind 24200 activity). Proves ownership; not a secret. */
+  async function sendAttestation(pubkey, auth) {
+    const relay = ctx.relay.snapshot();
+    if (relay.status !== "ready") throw new Error("Buzz is not connected to this community yet.");
+    const tag = auth ?? (await ctx.host.prepareRemoteAgentAuthorization?.(pubkey));
+    if (!Array.isArray(tag) || tag[0] !== "auth") throw new Error("Buzz did not provide an owner attestation.");
+    const session = relay.session;
+    const channel = await session.directMessages.open([pubkey], AbortSignal.timeout(15_000));
+    const body = JSON.stringify({ type: "ghost-owner-attestation/v0", agent: pubkey, auth: tag });
+    await session.messages.send(channel, "GHOST owner attestation (NIP-OA). Add it to your relay login.\n```json\n" + body + "\n```", [pubkey]);
+  }
+
+  function AttestationButton({ pubkey }) {
+    const [state, setState] = React.useState("");
+    return h(
+      "p",
+      { className: "ghost-banner__meta" },
+      h(
+        "button",
+        {
+          type: "button",
+          className: "ui-button",
+          disabled: state === "sending",
+          onClick: () => {
+            setState("sending");
+            sendAttestation(pubkey).then(
+              () => setState("sent"),
+              (error) => setState(`failed: ${String(error?.message ?? error)}`),
+            );
+          },
+        },
+        "Send owner attestation",
+      ),
+      " ",
+      state === "sent" ? "Sent in a DM to the instance." : state.startsWith("failed") ? `Not sent (${state.slice(8)}).` : "",
+    );
+  }
+
+  /** Reads what Buzz already collects for Block's Agent Activity plugin (kind 24200, NIP-AO); fetches nothing. */
+  function Activity({ agent }) {
+    const relay = useRelaySnapshot();
+    const activity = relay.status === "ready" ? relay.session?.agentActivity : undefined;
+    const none = React.useMemo(() => ({ status: "unavailable", records: [], turns: [] }), []);
+    const snap = React.useSyncExternalStore(
+      activity?.subscribe ?? (() => () => {}),
+      activity?.snapshot ?? (() => none),
+      activity?.snapshot ?? (() => none),
+    );
+    const turns = (snap.turns ?? []).filter((turn) => turn.agent === agent.pubkey).slice(-10).reverse();
+    const records = (snap.records ?? []).filter((record) => record.agent === agent.pubkey).slice(-50).reverse();
+    const summary = (record) => {
+      try {
+        const frame = JSON.parse(record.plaintext);
+        const payload = frame.payload ?? {};
+        const detail = payload.method ?? payload.params?.update?.sessionUpdate ?? payload.params?.update?.title ?? "";
+        return `${frame.kind ?? record.kind}${detail ? ` · ${detail}` : ""}`;
+      } catch {
+        return record.kind;
+      }
+    };
+    const time = (ms) => new Date(ms).toISOString().slice(11, 19);
+    return h(
+      "div",
+      { className: "ghost-banner" },
+      h(
+        "p",
+        { className: "ghost-banner__meta" },
+        `Live activity from the instance (kind 24200, encrypted to you). Status: ${snap.status}. Shown only while Buzz is open; the relay keeps none.`,
+      ),
+      h(AttestationButton, { pubkey: agent.pubkey }),
+      turns.length === 0 && records.length === 0
+        ? h("p", { className: "ghost-banner__meta" }, "No activity yet. Mention or message the agent, then watch here.")
+        : h(
+            "ul",
+            { className: "ghost-banner__list", "aria-label": "GHOST activity" },
+            turns.map((turn) =>
+              h(
+                "li",
+                { key: `turn:${turn.turnId}`, className: "ghost-banner__row" },
+                h("span", { className: "ghost-banner__label" }, `Turn · ${turn.state}`),
+                h("span", null, turn.turnId),
+                h("span", { className: "ghost-banner__date" }, time(turn.timestamp)),
+              ),
+            ),
+            records.map((record) =>
+              h(
+                "li",
+                { key: record.id, className: "ghost-banner__row" },
+                h("span", { className: "ghost-banner__label" }, "Step"),
+                h("span", null, summary(record)),
+                h("span", { className: "ghost-banner__date" }, time(record.receivedAt)),
+              ),
+            ),
+          ),
+    );
+  }
+
   function Create({ config, onChange, disabled }) {
     const value = config?.pubkey ?? "";
     const valid = HEX64.test(value);
@@ -295,16 +393,21 @@ export function apply(ctx) {
     defaults: () => ({ config: { pubkey: "" } }),
     summary: () => "GHOST Protocol · runs on its own server",
     Create,
-    tabs: [{ id: "banner", title: "Banner", component: Banner }],
+    tabs: [
+      { id: "activity", title: "Activity", role: "activity", component: Activity },
+      { id: "banner", title: "Banner", component: Banner },
+    ],
     remote: {
       async provision({ config }) {
         const pubkey = config?.pubkey;
         if (!HEX64.test(pubkey ?? "")) throw new Error("Enter the instance's 64-character hex pubkey.");
         return { pubkey };
       },
-      // The owner's NIP-OA attestation arrives here. The spike keeps nothing: a real provider would hand it to the
-      // instance so it can attach it to what it signs. It is never logged.
-      async activate() {},
+      // The owner's NIP-OA attestation arrives here; hand it to the instance so the relay can record the owner. A failed
+      // send does not fail the link: the Activity tab has a button to send it again.
+      async activate({ pubkey, auth }) {
+        await sendAttestation(pubkey, auth).catch(() => {});
+      },
       // The instance owns its own profile; renaming it in Buzz changes only the owner's listing.
       async profile() {},
       // Unlinks only. The instance and its key are untouched.
