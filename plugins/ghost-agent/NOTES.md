@@ -59,8 +59,8 @@ Because the note is signed by the instance's key, the tab cannot be fed by anyon
 - Gap: getting focus into the list. Today you click it or Tab to it. Vim has no route into an agent's tab panel (there is
   no API for focus between regions; see `docs/building.md` §1). Smallest fix: the tab focuses its list when it mounts, or
   vim gains a key that focuses the first `[role="listbox"]` in the open side panel.
-- Observed: the list renders and scrolls. **Not yet confirmed in the app:** Enter opening the thread, and the vim plugin
-  being on at the same time.
+- Observed: the list renders and scrolls, and Enter on an item with a `thread` opened that thread in the side pane with
+  the vim plugin on (NORMAL mode).
 
 ## Extend GHOST Protocol or sit beside it
 
@@ -83,3 +83,34 @@ note it signs. What GHOST Protocol would add for this to work for every instance
 - **Rename** in Buzz changes only the owner's listing, not the instance's profile.
 - **No live updates.** Polling every 30 s; fine for a banner.
 - **Remove** unlinks only. Deleting or stopping the instance stays on its server.
+
+## Next: Agent Activity for a linked instance (scope, read only)
+
+Buzz shows two kinds of activity, and both come from events the agent signs, so a remote instance can produce them.
+
+1. **Working dots** under the message it is answering: kind **20002** typing, empty content, tags `["h", channel]`, plus
+   `["e", root, "", "root"]` and `["e", message, "", "reply"]` in a thread, re-sent every 3 s while it works and dropped by
+   clients 8 s after the last one (`src/features/agents/typing.ts:27-75`, `docs/agents.md` "Local plugin-agent lifecycle").
+2. **Live steps** (the Agent Activity bubble, and an Activity tab): kind **24200** observer frames, defined by NIP-AO in
+   block/buzz (`docs/nips/NIP-AO.md`). Tags are exactly `["p", owner]`, `["agent", agent]`, `["frame", "telemetry"]`. The
+   content is NIP-44 v2 encrypted from the agent's key to the owner, and decrypts to
+   `{ seq, timestamp, kind, channelId, sessionId, turnId, payload }`. Frames must be under 5 minutes old to be shown
+   (`src-tauri/src/relay/agent.rs:211-219`). A turn opens with `turn_started` (`payload.triggeringEventIds`: the message
+   ids that started it) and ends with `turn_completed`, `turn_error` or `agent_panic`. Tool steps are `acp_read` and
+   `acp_write` frames carrying ACP JSON-RPC (`src/features/agents/activity.ts:70-77`, `activity-transcript.ts`).
+
+The relay accepts a 24200 only if it has recorded the owner as the agent's owner (`is_agent_owner`, block/buzz
+`crates/buzz-db/src/store/user.rs:519`). It records that when the agent authenticates with a NIP-OA owner attestation
+(`crates/buzz-relay/src/handlers/auth.rs:700-726`). That is the attestation `activate` receives, which also closes the
+consent gap above.
+
+Work, by side:
+
+- **GHOST Protocol (server):** Claude Code hooks (turn start, each tool call, turn end) send the 24200 frames, and a
+  typing pulse while a turn runs, signed with the instance key. It needs NIP-44 v2 and an owner attestation on its relay
+  login.
+- **This plugin:** an Activity tab (`role: "activity"`) that reads `session.agentActivity`, as Builderlab's does
+  (`src/bundled/builderlab/adapter-type/Activity.tsx:20-38`). Buzz's own transcript component is not available to plugins,
+  so the tab draws a plain list.
+- **Untested:** whether a deployed relay matches block/buzz main here, and whether the bubble shows for hosted agents
+  without further work.
