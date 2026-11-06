@@ -3,8 +3,8 @@
 name: AI sorter tests
 
 on:
-  # Called by tests.yml, which runs on every pull request and every push to main and calls this workflow when a file it tests
-  # changes. Its `all-tests` check is the one to require.
+  # Called by tests.yml, which runs on every pull request into main and every push to main, and calls this workflow when anything
+  # under .github/ changes (the `ai-sorter` row of .github/tests-to-run.sh). Its `all-tests` check is the one to require.
   workflow_call:
 
 permissions:

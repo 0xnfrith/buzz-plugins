@@ -238,8 +238,8 @@ They run the script the way the workflow does and check its exit code and summar
   the check's workflow never does.
 - **Output:** text that tries to start a workflow command.
 
-In CI, `.github/workflows/tests.yml` calls `.github/workflows/ai-sorter-tests.yml` when this folder or either sorter workflow changes,
-and its `all-tests` check covers them. A live call needs the real key and is not part of the tests.
+In CI, `.github/workflows/tests.yml` calls `.github/workflows/ai-sorter-tests.yml` when anything under `.github/` changes, this folder
+and both sorter workflows included (the `ai-sorter` row of `.github/tests-to-run.sh`), and its `all-tests` check covers them. A live call needs the real key and is not part of the tests.
 
 ## Using it in another repository
 
