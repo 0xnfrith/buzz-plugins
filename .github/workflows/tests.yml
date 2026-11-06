@@ -1,0 +1,205 @@
+# Every plugin test workflow, called from one place, and one check over all of them: `all-tests`, the check to require.
+#
+# GitHub blocks a merge only on a required check, and a required check that never reports leaves the pull request waiting. The plugin
+# test workflows ran only when their plugin's folder changed, so none of them could be required. Now this workflow runs on every pull
+# request and every push to main. The `changes` job lists the files the change touches (`git diff` against the base) and calls each
+# test workflow (`workflow_call`) whose paths are among them: the same paths each workflow's own filter named before. Each test
+# workflow runs once, from here, and only when one of its files changed. `all-tests` waits for all of them and fails unless each one
+# passed or was skipped because nothing it tests changed. A change that touches no plugin (a README, say) calls none of them, so
+# `all-tests` passes as soon as the list of changed files is made. A change to this file calls every one, and so does running this
+# workflow by hand.
+#
+# To add a plugin's tests: give its workflow `on: workflow_call`, add a line for it to the table in the `changes` job and a key to
+# that job's `outputs`, add a job below that calls it, and add that job to the `needs` of `all-tests`.
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A newer push to a pull request cancels the run it replaces. A push to main never cancels a run that has started: the next one
+  # waits for it, and when several wait, only the newest runs.
+  group: tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: Which plugin tests apply
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      agent-skills-highlighter: ${{ steps.match.outputs.agent-skills-highlighter }}
+      artifacts: ${{ steps.match.outputs.artifacts }}
+      artifacts-browser: ${{ steps.match.outputs.artifacts-browser }}
+      linear: ${{ steps.match.outputs.linear }}
+      megatech-support: ${{ steps.match.outputs.megatech-support }}
+      megatech-support-browser: ${{ steps.match.outputs.megatech-support-browser }}
+      vim-tests: ${{ steps.match.outputs.vim-tests }}
+      vim-latency: ${{ steps.match.outputs.vim-latency }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # the whole history, so the base of the change is there to diff against
+      - name: The changed files, and the tests they call
+        id: match
+        env:
+          EVENT: ${{ github.event_name }}
+          # A pull request: its base and head commits, diffed from their merge base (`base...head`), the files GitHub lists as changed.
+          # A push: the commit before it and the commit pushed.
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          zero=0000000000000000000000000000000000000000
+          have() { [ -n "$1" ] && [ "$1" != "$zero" ] && git cat-file -e "$1^{commit}" 2>/dev/null; }
+          everything=""
+          changed=""
+          case "$EVENT" in
+            pull_request)
+              if have "$BASE" && have "$HEAD" && git merge-base "$BASE" "$HEAD" >/dev/null; then
+                changed=$(git diff --no-renames --name-only "$BASE...$HEAD")
+              else
+                everything="the base or the head of the pull request is not in the history"
+              fi ;;
+            push)
+              if have "$BASE" && have "$HEAD"; then
+                changed=$(git diff --no-renames --name-only "$BASE" "$HEAD")
+              else
+                everything="the commit before the push is not in the history (a new branch or a force push)"
+              fi ;;
+            *) everything="run by hand ($EVENT)" ;;
+          esac
+          if [ -z "$everything" ] && grep -q -x -F .github/workflows/tests.yml <<<"$changed"; then
+            everything=".github/workflows/tests.yml changed"
+          fi
+
+          # Each line: the output that calls a test workflow, then the paths that call it. A path that ends in / is a folder and
+          # everything in it; any other path is one file. These are the paths of each workflow's own filter before it moved here.
+          rules=$(cat <<'RULES'
+          agent-skills-highlighter  plugins/agent-skills-highlighter/  .github/workflows/agent-skills-highlighter-tests.yml  .github/check-app-ref.sh
+          artifacts                 plugins/artifacts/                 .github/workflows/artifacts-tests.yml
+          artifacts-browser         plugins/artifacts/                 .github/workflows/artifacts-browser-tests.yml
+          linear                    plugins/linear/                    .github/workflows/linear-tests.yml
+          megatech-support          plugins/megatech-support/          .github/workflows/megatech-support-tests.yml
+          megatech-support-browser  plugins/megatech-support/          .github/workflows/megatech-support-browser-tests.yml
+          vim-tests                 plugins/vim/                       .github/workflows/vim-tests.yml
+          vim-latency               plugins/vim/                       .github/workflows/vim-latency.yml
+          RULES
+          )
+
+          {
+            echo "### Which plugin tests apply"
+            echo
+            if [ -n "$everything" ]; then echo "All of them: $everything."; else echo "$(grep -c . <<<"$changed" || true) files changed."; fi
+            echo
+            echo "| Tests | Run | Because of |"
+            echo "| --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          while read -r name paths; do
+            [ -n "$name" ] || continue
+            run=false
+            why=""
+            if [ -n "$everything" ]; then
+              run=true
+              why=$everything
+            else
+              read -r -a list <<<"$paths"
+              for path in "${list[@]}"; do
+                while IFS= read -r file; do
+                  [ -n "$file" ] || continue
+                  if { [[ $path == */ ]] && [[ $file == "$path"* ]]; } || [[ $file == "$path" ]]; then
+                    run=true
+                    why=$file
+                    break 2
+                  fi
+                done <<<"$changed"
+              done
+            fi
+            echo "$name=$run" >> "$GITHUB_OUTPUT"
+            echo "| $name | $run | $why |" >> "$GITHUB_STEP_SUMMARY"
+            echo "$name: $run${why:+ ($why)}"
+          done <<<"$rules"
+
+  agent-skills-highlighter:
+    name: Agent Skills Highlighter tests
+    needs: changes
+    if: ${{ needs.changes.outputs.agent-skills-highlighter == 'true' }}
+    uses: ./.github/workflows/agent-skills-highlighter-tests.yml
+
+  artifacts:
+    name: Artifacts tests
+    needs: changes
+    if: ${{ needs.changes.outputs.artifacts == 'true' }}
+    uses: ./.github/workflows/artifacts-tests.yml
+
+  artifacts-browser:
+    name: Artifacts browser tests
+    needs: changes
+    if: ${{ needs.changes.outputs.artifacts-browser == 'true' }}
+    uses: ./.github/workflows/artifacts-browser-tests.yml
+
+  linear:
+    name: Linear tests
+    needs: changes
+    if: ${{ needs.changes.outputs.linear == 'true' }}
+    uses: ./.github/workflows/linear-tests.yml
+
+  megatech-support:
+    name: Megatech support tests
+    needs: changes
+    if: ${{ needs.changes.outputs.megatech-support == 'true' }}
+    uses: ./.github/workflows/megatech-support-tests.yml
+
+  megatech-support-browser:
+    name: Megatech support browser tests
+    needs: changes
+    if: ${{ needs.changes.outputs.megatech-support-browser == 'true' }}
+    uses: ./.github/workflows/megatech-support-browser-tests.yml
+
+  vim-tests:
+    name: Vim functional tests
+    needs: changes
+    if: ${{ needs.changes.outputs.vim-tests == 'true' }}
+    uses: ./.github/workflows/vim-tests.yml
+
+  vim-latency:
+    name: Vim key latency
+    needs: changes
+    if: ${{ needs.changes.outputs.vim-latency == 'true' }}
+    uses: ./.github/workflows/vim-latency.yml
+
+  all-tests:
+    # The check to require. It runs whatever happened above (`always()`) and fails unless the changed files were listed and every test
+    # workflow either passed or was skipped because nothing it tests changed. One that failed, was cancelled or timed out turns it red.
+    # It has no `if` that could skip it, because a required check that is skipped counts as passed.
+    name: all-tests
+    needs: [changes, agent-skills-highlighter, artifacts, artifacts-browser, linear, megatech-support, megatech-support-browser, vim-tests, vim-latency]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every test that applies passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS"
+          {
+            echo "### all-tests"
+            echo
+            echo "| Job | Result |"
+            echo "| --- | --- |"
+            jq -r 'to_entries[] | "| \(.key) | \(.value.result) |"' <<<"$NEEDS"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if ! jq -e '.changes.result == "success" and ([.[].result] | all(. == "success" or . == "skipped"))' <<<"$NEEDS" >/dev/null; then
+            echo "::error::Not every test that applies passed: a job above failed or was cancelled, or the changed files could not be listed."
+            exit 1
+          fi
+          echo "Every test that applies passed."
