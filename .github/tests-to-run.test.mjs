@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const script = join(dirname(fileURLToPath(import.meta.url)), "tests-to-run.sh");
-const ROWS = ["agent-skills-highlighter", "artifacts", "artifacts-browser", "beeper", "linear", "megatech-support", "megatech-support-browser", "vim-tests", "vim-latency"];
+const ROWS = ["agent-skills-highlighter", "ai-sorter", "artifacts", "artifacts-browser", "beeper", "linear", "megatech-support", "megatech-support-browser", "vim-tests", "vim-latency"];
 const ZERO = "0".repeat(40);
 
 // A throwaway repository. `commit(files, deleted)` writes and deletes files and returns the new commit.

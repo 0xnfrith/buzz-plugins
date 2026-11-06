@@ -43,6 +43,7 @@ jobs:
     outputs:
       rows: ${{ steps.match.outputs.rows }}
       agent-skills-highlighter: ${{ steps.match.outputs.agent-skills-highlighter }}
+      ai-sorter: ${{ steps.match.outputs.ai-sorter }}
       artifacts: ${{ steps.match.outputs.artifacts }}
       artifacts-browser: ${{ steps.match.outputs.artifacts-browser }}
       beeper: ${{ steps.match.outputs.beeper }}
@@ -75,6 +76,12 @@ jobs:
     needs: changes
     if: ${{ needs.changes.outputs.agent-skills-highlighter == 'true' }}
     uses: ./.github/workflows/agent-skills-highlighter-tests.yml
+
+  ai-sorter:
+    name: AI sorter tests
+    needs: changes
+    if: ${{ needs.changes.outputs.ai-sorter == 'true' }}
+    uses: ./.github/workflows/ai-sorter-tests.yml
 
   artifacts:
     name: Artifacts tests
@@ -132,7 +139,7 @@ jobs:
     #     left without a job and no job without a row;
     #   - each test workflow did what its row said: passed when it was called ("true"), was skipped when it was not ("false").
     name: all-tests
-    needs: [changes, agent-skills-highlighter, artifacts, artifacts-browser, beeper, linear, megatech-support, megatech-support-browser, vim-tests, vim-latency]
+    needs: [changes, agent-skills-highlighter, ai-sorter, artifacts, artifacts-browser, beeper, linear, megatech-support, megatech-support-browser, vim-tests, vim-latency]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5

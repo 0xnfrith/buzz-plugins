@@ -15,9 +15,11 @@
 # adds or edits is in a folder under plugins/ that no row names and that is not in the list of plugins without tests.
 set -euo pipefail
 
-# The test workflows: the output (and job) name in tests.yml, then the plugin folders whose changes call it.
+# The test workflows: the output (and job) name in tests.yml, then the folders (or files) whose changes call it. A change under .github/
+# calls every row anyway; the AI sorter's paths there name what its tests cover.
 rows=(
   "agent-skills-highlighter  plugins/agent-skills-highlighter/"
+  "ai-sorter                 .github/sorter/ .github/workflows/ai-sorter.yml .github/workflows/ai-sorter-tests.yml"
   "artifacts                 plugins/artifacts/"
   "artifacts-browser         plugins/artifacts/"
   "beeper                    plugins/beeper/"
