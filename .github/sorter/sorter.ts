@@ -190,6 +190,33 @@ export function systemPrompt(list: string): string {
   ].join("\n");
 }
 
+// How the model is asked, besides the prompt: one place, used by askModel and hashed into the policy.
+export const REQUEST_SETTINGS = {
+  // Thinking is on by default on this model and counts toward max_tokens: leave it room.
+  max_tokens: 4096,
+  effort: "low",
+} as const;
+
+/**
+ * Everything that decides how a diff is judged: the model, its settings, the answer's schema, the instructions with the sensitive list
+ * in them, and the user turn's template. The workflow runs this script from the base branch's copy, so these are the base branch's,
+ * never the pull request's.
+ */
+export function policyInputs(list: string) {
+  return {
+    model: MODEL,
+    settings: REQUEST_SETTINGS,
+    schema: ANSWER_SCHEMA,
+    system: systemPrompt(list),
+    user: userTurn("{diff}", "{nonce}"),
+  };
+}
+
+/** The sha256 of the policy: a recorded verdict counts only under the policy it was judged by. */
+export function policySha256(inputs: ReturnType<typeof policyInputs>): string {
+  return createHash("sha256").update(JSON.stringify(inputs)).digest("hex");
+}
+
 export function userTurn(diff: string, nonce: string): string {
   return [
     `The pull request's diff is between <diff-${nonce}> and </diff-${nonce}>.`,
@@ -257,7 +284,9 @@ export async function approverOfHead(opts: {
 // ---------------------------------------------------------------------------------------------------------------------------------
 // The recorded verdict: the model is asked once for a given change, and its verdict is final for it. The run that asked prints a notice
 // annotation (recordLine) on its own check run. A later run (an edit of the pull request, a review, a re-run, a reopening, another pull
-// request from the same commit) reuses it only when it is for exactly the same change: the same head, base branch and diff (its sha256).
+// request from the same commit) reuses it only when it is for exactly the same change: the same head, base branch and diff (its sha256),
+// judged under the same policy (the sha256 of policyInputs: the model, its settings, the schema, the prompt with the list in it). A
+// change on the base branch to the list, the prompt or the model makes every older record stale.
 // A base that moved without changing the diff is the same change; a retargeted pull request, or a moved base that changes the diff, is
 // not: no record, and the run fails closed.
 //
@@ -270,13 +299,13 @@ export async function approverOfHead(opts: {
 export const WORKFLOW_PATH = ".github/workflows/ai-sorter.yml";
 
 /** What a verdict is bound to: exactly the change that was judged. */
-export type RecordKey = { head: string; base_ref: string; diff_sha256: string };
+export type RecordKey = { head: string; base_ref: string; diff_sha256: string; policy_sha256: string };
 
 // A workflow command's message: "%", "\r" and "\n" are escaped, as the runner unescapes them.
 const escapeData = (text: string) => text.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
 
 export function recordLine(key: RecordKey, touches: boolean): string {
-  const record = { v: 3, head: key.head, base_ref: key.base_ref, diff_sha256: key.diff_sha256 };
+  const record = { v: 4, head: key.head, base_ref: key.base_ref, diff_sha256: key.diff_sha256, policy_sha256: key.policy_sha256 };
   return `::notice title=${RECORD_TITLE}::${escapeData(JSON.stringify({ ...record, touches_list: touches }))}`;
 }
 
@@ -290,10 +319,10 @@ export function parseRecord(message: unknown, key: RecordKey): boolean | null {
     return null;
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  if (Object.keys(value).sort().join(",") !== "base_ref,diff_sha256,head,touches_list,v") return null;
+  if (Object.keys(value).sort().join(",") !== "base_ref,diff_sha256,head,policy_sha256,touches_list,v") return null;
   const record = value as Record<string, unknown>;
-  if (record.v !== 3 || typeof record.touches_list !== "boolean") return null;
-  for (const field of ["head", "base_ref", "diff_sha256"] as const) {
+  if (record.v !== 4 || typeof record.touches_list !== "boolean") return null;
+  for (const field of ["head", "base_ref", "diff_sha256", "policy_sha256"] as const) {
     if (record[field] !== key[field]) return null;
   }
   return record.touches_list;
@@ -386,9 +415,8 @@ export async function askModel(opts: { apiKey: string; baseURL: string; list: st
   try {
     message = await client.messages.create({
       model: MODEL,
-      // Thinking is on by default on this model and counts toward max_tokens: leave it room.
-      max_tokens: 4096,
-      output_config: { effort: "low", format: { type: "json_schema", schema: ANSWER_SCHEMA } },
+      max_tokens: REQUEST_SETTINGS.max_tokens,
+      output_config: { effort: REQUEST_SETTINGS.effort, format: { type: "json_schema", schema: ANSWER_SCHEMA } },
       system: systemPrompt(opts.list),
       messages: [{ role: "user", content: userTurn(opts.diff, nonce) }],
     } as Anthropic.MessageCreateParamsNonStreaming);
@@ -487,7 +515,12 @@ export async function sort(env: Record<string, string | undefined>): Promise<Out
   if (baseRef === "" || baseRef.length > 255 || /[\u0000-\u001f\u007f]/.test(baseRef)) {
     return { result: "error", why: "SORTER_BASE_REF is missing or malformed" };
   }
-  const key: RecordKey = { head, base_ref: baseRef, diff_sha256: createHash("sha256").update(raw).digest("hex") };
+  const key: RecordKey = {
+    head,
+    base_ref: baseRef,
+    diff_sha256: createHash("sha256").update(raw).digest("hex"),
+    policy_sha256: policySha256(policyInputs(list)),
+  };
   let recorded: Awaited<ReturnType<typeof recordedVerdict>>;
   try {
     recorded = await recordedVerdict({ api, repo, token, key });

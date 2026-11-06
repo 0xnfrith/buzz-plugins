@@ -54,12 +54,15 @@ The reason (or the error) is shown in the check's summary, on one line inside a 
 ## One verdict per change
 
 The run that asks the model prints one notice annotation on its own check run, titled `ai-sorter-verdict`. It holds the verdict and
-exactly what was judged: the head commit, the base branch and the sha256 of the diff. A later run (an edit of the pull request, a
-review, a re-run, a reopening, or another pull request from the same commit) reuses it only when all three are the same now, so nobody,
+exactly what was judged: the head commit, the base branch, the sha256 of the diff, and the sha256 of the policy it was judged by (the
+model, its settings, the answer's schema, the instructions with `list.md` in them and the user turn's template, all from the base
+branch's copy of this folder). A later run (an edit of the pull request, a review, a re-run, a reopening, or another pull request from
+the same commit) reuses it only when all four are the same now, so nobody,
 the author included, can re-roll a "yes" into a "no" by editing the pull request, reviewing it, re-running the check or opening a second
 pull request. When the base moves without changing the diff (byte for byte), it is the same change and the record is reused. A pull
 request retargeted to another branch, or whose base moved in a way that changes the diff, is a different change: no record matches, and
-the run fails closed until a new push asks again, or the owner approves. The oldest matching record wins. The paths, the cap and the
+the run fails closed until a new push asks again, or the owner approves. So does any record made before the base branch changed the
+list, the prompt or the model: an old "no" never stands under a new policy. The oldest matching record wins. The paths, the cap and the
 unreadable-diff rules are checked again on every run; only the model's answer is reused.
 
 A record counts only from this workflow's own run. Through the Checks and Actions APIs the lookup requires a check run named
@@ -157,7 +160,7 @@ They run the script the way the workflow does and check its exit code and summar
 - **The owner's approval:** old commits, dismissals and other people's approvals.
 - **One verdict per change:** a recorded yes reused by an edit, a review, a re-run and a reopening; no record on those fails closed;
   the oldest record wins; a second pull request from the same commit and a base that moved without changing the diff reuse it. No
-  record counts for a retargeted pull request or a diff that changed, nor from another workflow, a push event, a fork's run, a pull
+  record counts for a retargeted pull request, a diff that changed, or a list, prompt, model or settings changed since, nor from another workflow, a push event, a fork's run, a pull
   request into another base branch, another app, check or commit, or in another format. A pull request that edits the workflow waits
   before any record is read. With real git, a base that moves elsewhere leaves the diff byte-identical, and one that moves the
   changed file does not.

@@ -15,15 +15,19 @@ import {
   DIFF_CAP_BYTES,
   MODEL,
   RECORD_TITLE,
+  REQUEST_SETTINGS,
   type RecordKey,
   WORKFLOW_PATH,
   alwaysHits,
   parseAnswer,
   parseNumstat,
   parseRecord,
+  policyInputs,
+  policySha256,
   readAlways,
   recordLine,
   shown,
+  systemPrompt,
   unreadable,
 } from "./sorter.ts";
 
@@ -112,8 +116,14 @@ const no = (reason = "Only fixes a typo in a plugin README.") => answer(JSON.str
 const review = (login: string, state: string, commit_id: string) => ({ user: { login }, state, commit_id });
 
 const SMALL_DIFF_SHA256 = () => createHash("sha256").update(SMALL_DIFF).digest("hex");
-// What a record for the default change (SMALL_DIFF on HEAD, into main) is bound to.
-const KEY = (): RecordKey => ({ head: HEAD, base_ref: "main", diff_sha256: SMALL_DIFF_SHA256() });
+// What a record for the default change (SMALL_DIFF on HEAD, into main, judged under this folder's policy) is bound to.
+const LIST = () => readFileSync(join(here, "list.md"), "utf8");
+const KEY = (): RecordKey => ({
+  head: HEAD,
+  base_ref: "main",
+  diff_sha256: SMALL_DIFF_SHA256(),
+  policy_sha256: policySha256(policyInputs(LIST())),
+});
 
 /**
  * A check run on HEAD, from this workflow's pull_request run for pull request 7 on main at BASE, with one annotation: a record of the
@@ -251,6 +261,8 @@ describe("the model's answer", () => {
     expect(credential).toBe(true);
     expect(body.model).toBe("claude-haiku-5-5");
     expect(body.output_config).toEqual({ effort: "low", format: { type: "json_schema", schema: ANSWER_SCHEMA } });
+    expect(body.max_tokens).toBe(REQUEST_SETTINGS.max_tokens);
+    expect(body.output_config.effort).toBe(REQUEST_SETTINGS.effort);
     expect(body.output_config.format.schema.additionalProperties).toBe(false);
     for (const key of ["temperature", "top_p", "top_k"]) expect(body).not.toHaveProperty(key);
     expect(body.system).toContain("Credentials and secret handling");
@@ -572,8 +584,8 @@ describe("one verdict per change", () => {
     ["another check name", () => recordRun(5, false, { over: { name: "AI sorter tests" } })],
     ["a check run on another commit", () => recordRun(5, false, { over: { head_sha: OLD } })],
     ["a malformed record", () => recordRun(5, '{"v":3,"touches_list":false}')],
-    ["an old-format record", () => recordRun(5, JSON.stringify({ v: 2, ...KEY(), pr: 7, base_sha: BASE, touches_list: false }))],
-    ["a record with an extra key", () => recordRun(5, JSON.stringify({ v: 3, ...KEY(), touches_list: false, by: "x" }))],
+    ["an old-format record", () => recordRun(5, JSON.stringify({ v: 3, head: HEAD, base_ref: "main", diff_sha256: SMALL_DIFF_SHA256(), touches_list: false }))],
+    ["a record with an extra key", () => recordRun(5, JSON.stringify({ v: 4, ...KEY(), touches_list: false, by: "x" }))],
     ["another annotation title", () => recordRun(5, false, { title: "something-else" })],
   ] as [string, () => void][]) {
     test(`${name} does not count`, async () => {
@@ -625,13 +637,73 @@ describe("one verdict per change", () => {
     }
   });
 
+  // The policy: a record counts only under the list, prompt and model it was judged by, all read from the sorter's own copy.
+  test("a list change on the base branch, with an identical diff: a review fails closed, a push asks the model", async () => {
+    recordRun(5, false);
+    const dir = mkdtempSync(join(tmpdir(), "ai-sorter-list-"));
+    writeFileSync(join(dir, "list.md"), `${LIST()}7. **Analytics**: code that sends usage data anywhere.\n`);
+    fake.messages = [no()];
+    let r = await run({ env: { ...review, SORTER_LIST_FILE: join(dir, "list.md") } });
+    expect(r.code).toBe(1);
+    expect(r.summary).toContain("no verdict is recorded for this change");
+    expect(modelCalls()).toHaveLength(0);
+    r = await run({ env: { SORTER_LIST_FILE: join(dir, "list.md") } });
+    expect(r.code).toBe(0);
+    expect(modelCalls()).toHaveLength(1);
+    expect(modelCalls()[0].body.system).toContain("Analytics");
+  });
+
+  for (const [what, change] of [
+    ["another model", (inputs: ReturnType<typeof policyInputs>) => ({ ...inputs, model: "claude-haiku-4-5" })],
+    ["another prompt", (inputs: ReturnType<typeof policyInputs>) => ({ ...inputs, system: `${inputs.system}\n- One more rule.` })],
+    ["other settings", (inputs: ReturnType<typeof policyInputs>) => ({ ...inputs, settings: { ...inputs.settings, effort: "high" } })],
+  ] as [string, (inputs: ReturnType<typeof policyInputs>) => unknown][]) {
+    test(`a record judged under ${what}: a review fails closed, a push asks the model`, async () => {
+      // A record made before the base branch changed the policy carries the old policy's hash.
+      const old = policySha256(change(policyInputs(LIST())) as ReturnType<typeof policyInputs>);
+      expect(old).not.toBe(KEY().policy_sha256);
+      recordRun(5, false, { key: { policy_sha256: old } });
+      fake.messages = [no()];
+      let r = await run({ env: review });
+      expect(r.code).toBe(1);
+      expect(r.summary).toContain("no verdict is recorded for this change");
+      expect(modelCalls()).toHaveLength(0);
+      r = await run();
+      expect(r.code).toBe(0);
+      expect(modelCalls()).toHaveLength(1);
+    });
+  }
+
+  test("an unchanged policy still reuses the record", async () => {
+    recordRun(5, true);
+    const r = await run({ env: review, key: null });
+    expect(r.code).toBe(1);
+    expect(r.summary).toContain("the verdict recorded for this change (check run 5)");
+    expect(modelCalls()).toHaveLength(0);
+  });
+
+  test("the policy covers the model, its settings, the schema, the prompt with the list, and the user turn's template", () => {
+    const inputs = policyInputs(LIST());
+    expect(inputs.model).toBe(MODEL);
+    expect(inputs.settings).toEqual(REQUEST_SETTINGS);
+    expect(inputs.schema).toEqual(ANSWER_SCHEMA);
+    expect(inputs.system).toBe(systemPrompt(LIST()));
+    expect(inputs.system).toContain("Credentials and secret handling");
+    expect(inputs.user).toContain("{diff}");
+    expect(policySha256(inputs)).toBe(createHash("sha256").update(JSON.stringify(inputs)).digest("hex"));
+    expect(policySha256(policyInputs(`${LIST()}7. **Analytics**.\n`))).not.toBe(policySha256(inputs));
+    // The record the run prints carries the policy it judged by.
+    expect(recordLine(KEY(), false)).toContain(`"policy_sha256":"${KEY().policy_sha256}"`);
+  });
+
   test("recordLine and parseRecord agree, and parseRecord takes nothing else", () => {
     const key = KEY();
     const line = recordLine(key, true);
     expect(line.startsWith(`::notice title=${RECORD_TITLE}::`)).toBe(true);
     expect(parseRecord(line.slice(`::notice title=${RECORD_TITLE}::`.length), key)).toBe(true);
-    expect(parseRecord(JSON.stringify({ v: 3, ...key, touches_list: "true" }), key)).toBeNull();
-    expect(parseRecord(JSON.stringify({ v: 3, ...key, head: OLD, touches_list: true }), key)).toBeNull();
+    expect(parseRecord(JSON.stringify({ v: 4, ...key, touches_list: "true" }), key)).toBeNull();
+    expect(parseRecord(JSON.stringify({ v: 4, ...key, head: OLD, touches_list: true }), key)).toBeNull();
+    expect(parseRecord(JSON.stringify({ v: 4, ...key, policy_sha256: "0".repeat(64), touches_list: true }), key)).toBeNull();
     expect(parseRecord(42, key)).toBeNull();
     // "%", "\r" and "\n" in a base branch name are escaped in the workflow command.
     expect(recordLine({ ...key, base_ref: "a%b" }, false)).toContain('"base_ref":"a%25b"');
