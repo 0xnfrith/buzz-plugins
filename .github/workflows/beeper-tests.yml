@@ -45,12 +45,14 @@ jobs:
       - name: plugin.js is the build of the source
         # Buzz loads the committed plugin.js and never runs a build: it has to be what this source builds to. The file is removed
         # first, so a build that does not write it (a changed output name, a build script that does nothing) leaves it missing, and
-        # `git status` also catches a plugin.js that is missing from the commit or not tracked at all.
+        # `git status` also catches a plugin.js that is missing from the commit, not tracked or ignored. The status is its own command,
+        # so a git error fails the step.
         run: |
           rm -f plugin.js
           pnpm run build
-          if [ -n "$(git status --porcelain -- plugin.js)" ]; then
-            git status --short -- plugin.js
+          status=$(git status --porcelain --ignored -- plugin.js)
+          if [ -n "$status" ]; then
+            echo "$status"
             git diff -- plugin.js
             echo "::error::plugin.js is not the build of src/: run 'pnpm run build' in plugins/beeper and commit it"
             exit 1
