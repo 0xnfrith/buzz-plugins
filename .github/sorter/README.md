@@ -33,11 +33,12 @@ branch. The pull request that adds the sorter has none on its base, so its own c
    asked.
 3. **The diff is over 100,000 bytes**: counts as touching the list, so it waits for the owner. The model is not asked.
 4. **The diff does not show the whole change**: git counts a changed file as binary (by its content or by `.gitattributes`), the diff
-   holds binary bytes or a "Binary files ... differ" line, the change includes a submodule, or a changed path has no content lines (a
-   mode change, an empty file). It counts as touching the list, so it waits for the owner. The model is not asked.
-5. **A verdict is already recorded for this commit**: it is reused, whatever started the run. The model is asked once per commit.
+   holds binary bytes or a "Binary files ... differ" line, the change includes a submodule or a symbolic link, or a changed path has
+   no content lines (a mode change, an empty file). It counts as touching the list, so it waits for the owner. The model is not asked.
+5. **A verdict is already recorded for exactly this change**: it is reused, whatever started the run. The model is asked once per
+   change.
 6. **Only the first run after a push, an opening or a reopening asks the model.** An edit of the pull request, a review or a re-run with
-   no recorded verdict fails closed.
+   no verdict recorded for this change fails closed.
 7. **The `SORTER_ANTHROPIC_API_KEY` secret is missing or empty**: fails closed.
 8. **The model's answer**, with the diff inside markers that carry a random code. Only `end_turn` with exactly one text block that is
    exactly the two fields, a boolean and a reason that says something, counts. Everything else fails closed. A valid answer is recorded.
@@ -50,14 +51,24 @@ The reason (or the error) is shown in the check's summary, on one line inside a 
 | waits for the owner | 1 | The owner approves the latest commit. |
 | failed closed | 1 | Fix the cause and push a new commit (or close and reopen the pull request, if no verdict was recorded), or the owner approves the latest commit. It never passes on its own after an error. |
 
-## One verdict per commit
+## One verdict per change
 
-The run that asks the model prints one notice annotation on its own check run, titled `ai-sorter-verdict`, holding
-`{"v":1,"head":"<commit>","touches_list":true|false}`. Every later run for that commit (an edit of the pull request, which can change
-its base branch; a review; a re-run; a reopening) looks it up through the Checks API: check runs named `AI sorter`, by the GitHub Actions
-app, on that exact commit. The oldest record wins. So nobody, the author included, can re-roll a "yes" into a "no" by editing the pull
-request, reviewing it or re-running the check. The paths, the cap and the unreadable-diff rules are checked again on every run; only the
-model's answer is reused.
+The run that asks the model prints one notice annotation on its own check run, titled `ai-sorter-verdict`. It holds the verdict and
+exactly what was judged: the pull request's number, its head commit, its base branch, the base commit the diff was taken against (the
+merge commit's first parent) and the sha256 of the diff. A later run (an edit of the pull request, a review, a re-run, a reopening)
+reuses it only when every one of those is the same now, so nobody, the author included, can re-roll a "yes" into a "no" by editing the
+pull request, reviewing it or re-running the check. A pull request retargeted to another branch, or whose base has moved, is a different
+change: no record matches, and the run fails closed until a new push asks again, or the owner approves. The oldest matching record wins.
+The paths, the cap and the unreadable-diff rules are checked again on every run; only the model's answer is reused.
+
+A record counts only from this workflow's own run. Through the Checks and Actions APIs the lookup requires a check run named
+`AI sorter`, by the GitHub Actions app, on this head, whose workflow run is `.github/workflows/ai-sorter.yml`, started by a
+`pull_request` event, for this pull request, base branch and base commit. GitHub does not say which version of the workflow file ran:
+a pull request that edits it touches `.github/`, which waits for the owner before any record is read. A record forged from another
+branch's copy of the workflow needs someone who can push a branch here, and they can forge the check itself anyway (see the limits).
+
+Runs are grouped by commit (`concurrency`): GitHub cancels a waiting run when another run of its group queues, so with one group per
+pull request an edit could cancel the run that asks the model. Per commit, the run that asks is always the first and never waits.
 
 ## Setting it up
 
@@ -68,8 +79,9 @@ The owner does these; the code does not need anything else.
 2. **The repository secret `SORTER_ANTHROPIC_API_KEY`** holding that key (Settings, Secrets and variables, Actions).
 3. **Require it:** add `AI sorter` as a required status check in the branch ruleset for `main`, with its source pinned to
    **GitHub Actions**. Without the pin, a commit status of the same name set by any other app or token would satisfy the rule.
-4. **Require code-owner review for `.github/`** (a CODEOWNERS file and the ruleset's code-owner rule). This is what guards the workflow
-   itself; see the limits.
+4. **Require code-owner review** (the ruleset's code-owner rule). The repository's CODEOWNERS file already lists `.github/`, which
+   holds this workflow and this folder; the rule is what makes that list hold a pull request. This is what guards the workflow itself;
+   see the limits.
 5. **Before requiring it, test on a throwaway repository which run GitHub follows.** A push and then a review each give the same commit
    a check run named `AI sorter`. Check that the pull request follows the newer one (red after the push, green after the owner's
    approval), and that a re-run replaces a failed run. GitHub's documentation does not say this; it is an assumption until tested.
@@ -96,14 +108,15 @@ closed on every pull request; until step 3, that blocks nothing.
 - **How git shows the change.** [`change.sh`](change.sh) diffs every file as text (`--text`), whatever `.gitattributes` says, with no
   external diff programs, no text conversion and no rename detection, and it refuses unless the checkout is a merge commit whose second
   parent is the pull request's head. A pull request therefore cannot hide a file's content from the model by marking it binary, and a
-  change to any `.gitattributes` or `.gitmodules`, a submodule, binary content and paths without content lines wait for the owner
-  (step 4). Pull requests that add images wait for the owner too.
+  change to any `.gitattributes` or `.gitmodules`, a submodule, a symbolic link, binary content and paths without content lines wait
+  for the owner (step 4). Pull requests that add images wait for the owner too.
 - **Built files are read, not skipped.** A plugin's committed `plugin.js` is what Buzz runs, so it stays in the diff the model reads;
   leaving it out would let a change to it alone go unread. Large rebuilds go over the cap and wait for the owner.
 - **Pull requests from forks get no secrets**, so the model is never asked and the check fails closed. The owner's approval of the
   latest commit still clears it (reading reviews needs no secret). That is the intended behaviour for outside contributions.
 - **It is not deterministic.** The model takes no temperature setting, so the same diff asked twice can be answered differently. That
-  is why the first answer for a commit is final; a new push asks again, for the new commit.
+  is why the first answer for a change is final; a new push asks again, for the new commit. A new pull request from the same commit
+  is a new change too (the record names the pull request), so it is asked once more.
 - **The owner cannot approve their own pull request** (GitHub never lets an author approve). A pull request the owner opens that
   touches the list stays red; CODEOWNERS has the same limit.
 - **Cost can be run up.** Each push asks the model once. Someone who can push to pull requests here can push many commits, or open many
@@ -142,17 +155,20 @@ They run the script the way the workflow does and check its exit code and summar
 - **Answers:** a yes and a no; malformed JSON and every other answer that is not exactly the schema; a refusal.
 - **The API and the key:** a spent cap, a bad key, a server error and no API at all; a missing and an empty secret.
 - **The owner's approval:** old commits, dismissals and other people's approvals.
-- **One verdict per commit:** a recorded yes reused by an edit, a review, a re-run and a reopening; no record on those fails closed; the
-  oldest record wins; records from another app, check, commit or format do not count.
+- **One verdict per change:** a recorded yes reused by an edit, a review, a re-run and a reopening; no record on those fails closed;
+  the oldest record wins. No record counts for a retargeted pull request, a moved base, another diff or another pull request, nor from
+  another workflow, a push event, a fork's run, another app, check or commit, or in another format. A pull request that edits the
+  workflow waits before any record is read.
 - **What never reaches the model:** an oversize diff and the `always.txt` paths. With real git repositories run through `change.sh`, so
   do a file marked binary by `.gitattributes` (which still shows its content), an added `.gitattributes`, `.gitmodules` or submodule, a
-  mode change, an empty file and binary bytes. `change.sh` refuses a checkout whose second parent is not the head, and a `"\r"` inside a
-  line does not split it.
+  symbolic link (added, or a file turned into one), a mode change, an empty file and binary bytes; a plain deletion still reaches the
+  model. `change.sh` refuses a checkout whose second parent is not the head, and a `"\r"` inside a line does not split it.
 - **The workflow's own layout:** read from the workflow file. A root `tsconfig.json`, `jsconfig.json` or `package.json` workspace in the
   pull request cannot take over the sorter.
 - **Output:** text that tries to start a workflow command.
 
-`.github/workflows/ai-sorter-tests.yml` runs them in CI. A live call needs the real key and is not part of the tests.
+In CI, `.github/workflows/tests.yml` calls `.github/workflows/ai-sorter-tests.yml` when this folder or either sorter workflow changes,
+and its `all-tests` check covers them. A live call needs the real key and is not part of the tests.
 
 ## Using it in another repository
 

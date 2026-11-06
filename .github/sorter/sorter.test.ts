@@ -510,6 +510,7 @@ describe("one verdict per change", () => {
         }),
       {},
     ],
+    ["a record naming another base branch, in this pull request's run", () => recordRun(5, false, { key: { base_ref: "feature" } }), {}],
     ["a moved base (another base commit)", () => recordRun(5, false, { key: { base_sha: OLD } }), {}],
     ["another diff (sha256)", () => recordRun(5, false, { key: { diff_sha256: "0".repeat(64) } }), {}],
     ["another pull request with the same head", () => recordRun(5, false, { key: { pr: 8 } }), {}],

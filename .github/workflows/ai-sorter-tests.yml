@@ -1,20 +1,11 @@
-# Tests of the AI sorter (.github/sorter/sorter.test.ts), against a fake Claude API and a fake GitHub API on localhost: no key, no
-# network beyond the install.
+# Tests of the AI sorter (.github/sorter/sorter.test.ts), against a fake Claude API, a fake GitHub API and real git repositories on the
+# runner: no key, and no network beyond the install.
 name: AI sorter tests
 
 on:
-  pull_request:
-    paths:
-      - ".github/sorter/**"
-      - ".github/workflows/ai-sorter.yml"
-      - ".github/workflows/ai-sorter-tests.yml"
-  push:
-    branches: [main]
-    paths:
-      - ".github/sorter/**"
-      - ".github/workflows/ai-sorter.yml"
-      - ".github/workflows/ai-sorter-tests.yml"
-  workflow_dispatch:
+  # Called by tests.yml, which runs on every pull request and every push to main and calls this workflow when a file it tests
+  # changes. Its `all-tests` check is the one to require.
+  workflow_call:
 
 permissions:
   contents: read
