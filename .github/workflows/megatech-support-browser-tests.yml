@@ -5,23 +5,13 @@
 name: Megatech support browser tests
 
 on:
-  pull_request:
-    paths:
-      - "plugins/megatech-support/**"
-      - ".github/workflows/megatech-support-browser-tests.yml"
-  push:
-    branches: [main]
-    paths:
-      - "plugins/megatech-support/**"
-      - ".github/workflows/megatech-support-browser-tests.yml"
+  # Called by tests.yml, which runs on every pull request and every push to main and calls this workflow when a file it tests
+  # changes. Its `all-tests` check is the one to require. Run by hand from the Actions tab with workflow_dispatch.
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
-
-concurrency:
-  group: megatech-support-browser-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 env:
   # The block/buzz-app commit the plugin is tested against. The other workflows that build the app name the same commit: the first step

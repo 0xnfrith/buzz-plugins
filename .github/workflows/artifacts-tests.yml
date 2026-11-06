@@ -2,15 +2,9 @@
 name: Artifacts tests
 
 on:
-  pull_request:
-    paths:
-      - "plugins/artifacts/**"
-      - ".github/workflows/artifacts-tests.yml"
-  push:
-    branches: [main]
-    paths:
-      - "plugins/artifacts/**"
-      - ".github/workflows/artifacts-tests.yml"
+  # Called by tests.yml, which runs on every pull request and every push to main and calls this workflow when a file it tests
+  # changes. Its `all-tests` check is the one to require. Run by hand from the Actions tab with workflow_dispatch.
+  workflow_call:
   workflow_dispatch:
 
 permissions:

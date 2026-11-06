@@ -8,27 +8,18 @@
 # and the scripts under plugins/vim/test do not change for it. They are listed in one place, the `shards` step of the `plan` job,
 # which also checks, before anything is measured, that between them they run every test of the spec exactly once. "rest" is
 # everything the other shards do not name, so a test added later always lands somewhere. The final job, "Key latency budget", is the
-# one check to require: it fails unless the plan and every shard passed.
+# verdict of this workflow: it fails unless the plan and every shard passed. The check to require is `all-tests` (tests.yml), which
+# waits for it.
 name: Vim key latency
 
 on:
-  pull_request:
-    paths:
-      - "plugins/vim/**"
-      - ".github/workflows/vim-latency.yml"
-  push:
-    branches: [main]
-    paths:
-      - "plugins/vim/**"
-      - ".github/workflows/vim-latency.yml"
+  # Called by tests.yml, which runs on every pull request and every push to main and calls this workflow when a file it tests
+  # changes. Its `all-tests` check is the one to require. Run by hand from the Actions tab with workflow_dispatch.
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
-
-concurrency:
-  group: vim-latency-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 env:
   # The block/buzz-app commit the plugin is tested against (plugins/vim/NOTES.md, "What was and was not verified").
@@ -172,7 +163,7 @@ jobs:
           retention-days: 14
 
   budget:
-    # The one check to require. A shard that fails, is cancelled or never ran (the plan failed) turns it red.
+    # The verdict of this workflow, which `all-tests` (tests.yml) waits for. A shard that fails, is cancelled or never ran (the plan failed) turns it red.
     name: Key latency budget
     needs: [plan, shard]
     if: ${{ always() }}
