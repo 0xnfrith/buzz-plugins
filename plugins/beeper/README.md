@@ -219,7 +219,7 @@ cd plugins/beeper
 pnpm install
 pnpm run typecheck
 pnpm test                # unit tests: the curl request, the client against the real curl and a fake Beeper, the store, the formatting
-pnpm run build           # writes plugin.js next to manifest.json; commit it, Buzz never builds
+pnpm run build           # writes plugin.js next to manifest.json; commit it, Buzz never builds (CI checks it is the build of src/)
 test/run.sh /path/to/block/buzz-app/checkout    # the browser tests, in Buzz's own web build (see the header of the script)
 node test/fake-beeper/server.mjs                # a fake Beeper Desktop for trying the plugin by hand (PORT, CHATS, MESSAGES)
 ```

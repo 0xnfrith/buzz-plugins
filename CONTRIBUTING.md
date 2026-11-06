@@ -4,7 +4,7 @@ Pull requests go to `main`. Keep one change to a pull request, say what you trie
 
 ## A plugin's built file is committed
 
-Buzz loads `plugin.js` and never runs a build, so a plugin written in TypeScript commits its built `plugin.js` next to the source. Rebuild before you push (see [`docs/building.md`](docs/building.md) and the plugin's own README), and run the plugin's tests.
+Buzz loads `plugin.js` and never runs a build, so a plugin written in TypeScript commits its built `plugin.js` next to the source. Rebuild before you push (see [`docs/building.md`](docs/building.md) and the plugin's own README), and run the plugin's tests. CI builds each such plugin from its source and fails a change whose committed `plugin.js` is not what the source builds to.
 
 ## Vim mode: every key has a latency budget
 

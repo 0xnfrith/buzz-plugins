@@ -1,6 +1,9 @@
 # The functional tests of the Vim mode plugin (plugins/vim/test/vim.spec.mjs): every key, mode and surface, in headless Chromium
 # against block/buzz-app's own production web build, the way plugins/vim/test/run.sh runs them by hand. The key-latency budget is
 # a separate workflow (vim-latency.yml).
+#
+# Both suites load the committed plugins/vim/plugin.js, not src/, so the `build` job checks that the committed file is the build of
+# src/: without it, a change to src/ alone would be tested as the old plugin.js.
 name: Vim functional tests
 
 on:
@@ -19,6 +22,34 @@ env:
   BUZZ_APP_REF: d92bfb2c4dd89fc5ae6e7a1445f38ad1e8ab7060
 
 jobs:
+  build:
+    name: Vim type check and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: plugins/vim
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@12.16.1 --activate
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Type check
+        run: pnpm exec tsc
+      - name: plugin.js is the build of the source
+        # Buzz loads the committed plugin.js and never runs a build: it has to be what this source builds to.
+        run: |
+          pnpm run build
+          git diff --exit-code -- plugin.js || { echo "::error::plugin.js is not the build of src/: run 'pnpm run build' in plugins/vim and commit it"; exit 1; }
+
   functional:
     name: Vim functional tests
     runs-on: ubuntu-24.04
