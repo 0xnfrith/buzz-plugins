@@ -1,0 +1,44 @@
+# Type check and unit tests of the Beeper plugin (plugins/beeper/test/unit): the curl request, the client against the real curl and
+# a fake Beeper, the store, the formatting. No Beeper Desktop is needed. The browser suite (plugins/beeper/test/run.sh) needs a
+# block/buzz-app checkout and is run by hand.
+name: Beeper tests
+
+on:
+  # Called by tests.yml, which runs on every pull request to main, every push to main and every merge group, and calls this
+  # workflow when its plugin changes (or anything under .github/). Its `all-tests` check is the one to require. Run by hand from the
+  # Actions tab with workflow_dispatch.
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Beeper type check and unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: plugins/beeper
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@12.16.1 --activate
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Type check
+        run: pnpm exec tsc
+      - name: Unit tests
+        # A run that finds no tests passes too, so the machine-readable result says it: some tests ran, every one passed, none was skipped.
+        run: |
+          pnpm exec vitest run --reporter=json --outputFile="$RUNNER_TEMP/unit.json"
+          jq -e '.numTotalTests > 0 and .numPassedTests == .numTotalTests and .numFailedTests == 0 and .numPendingTests == 0' "$RUNNER_TEMP/unit.json"
+          jq '{tests: .numTotalTests, passed: .numPassedTests, failed: .numFailedTests, skipped: .numPendingTests}' "$RUNNER_TEMP/unit.json"

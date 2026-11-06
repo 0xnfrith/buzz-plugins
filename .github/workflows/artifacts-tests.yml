@@ -2,8 +2,9 @@
 name: Artifacts tests
 
 on:
-  # Called by tests.yml, which runs on every pull request and every push to main and calls this workflow when a file it tests
-  # changes. Its `all-tests` check is the one to require. Run by hand from the Actions tab with workflow_dispatch.
+  # Called by tests.yml, which runs on every pull request to main, every push to main and every merge group, and calls this
+  # workflow when its plugin changes (or anything under .github/). Its `all-tests` check is the one to require. Run by hand from the
+  # Actions tab with workflow_dispatch.
   workflow_call:
   workflow_dispatch:
 
