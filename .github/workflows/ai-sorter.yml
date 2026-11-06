@@ -5,14 +5,19 @@
 # Built to be a required check, so: no `paths` filter and no job-level `if` (a required check must report on every pull request, and a
 # job skipped by a condition reports success). All branching is in the script.
 #
-# Security: `pull_request`, never `pull_request_target`. The key is only in the last step, after the install. Pull requests from forks
-# get no secrets and fail closed unless the owner approves their latest commit. A pull request runs its own copy of this file and of
-# the script, so CODEOWNERS on .github/ is the guard for the sorter itself (see the README's limits).
+# Security:
+# - `pull_request`, never `pull_request_target`. The key is only in the last step.
+# - Nothing from the pull request is ever run. The pull request is checked out into pr/ as data. The sorter runs from the base branch's
+#   copy of .github/sorter in trusted/, beside pr/ and never inside it, so no file of the pull request (a tsconfig.json, jsconfig.json
+#   or package.json at its root, say) sits in any folder that Bun looks through.
+# - The model is asked once per commit; edits, reviews and re-runs reuse the recorded verdict (the README says how).
+# - Pull requests from forks get no secrets and fail closed unless the owner approves their latest commit.
+# - This file itself comes from the pull request under `pull_request`, so CODEOWNERS on .github/ guards it (see the README's limits).
 name: AI sorter
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, edited, ready_for_review]
+    types: [opened, synchronize, reopened, edited]
   # The owner's approval (or its dismissal) runs the check again, on the same commit.
   pull_request_review:
     types: [submitted, dismissed]
@@ -20,42 +25,58 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  # To read the verdict recorded on earlier check runs of this commit.
+  checks: read
 
-# One run at a time per pull request, in the order the events came, so the newest run is the one that finishes last.
+# One run at a time per pull request, in the order the events came.
 concurrency:
   group: ai-sorter-${{ github.event.pull_request.number }}
 
 jobs:
   sort:
-    # The check's name. Keep it: a ruleset requires it by this name.
+    # The check's name. Keep it: a ruleset requires it by this name, and the recorded verdicts are looked up by it.
     name: AI sorter
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: The pull request (data only, never run)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          path: pr
           persist-credentials: false
-          # The merge commit GitHub made for the pull request, and its first parent (the base branch).
+          # The merge commit GitHub made for the pull request, and its two parents.
           fetch-depth: 2
+      - name: The sorter, from the base branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: trusted
+          persist-credentials: false
+          sparse-checkout: /.github/sorter/
+          sparse-checkout-cone-mode: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.4
       - name: Install (frozen lockfile, no install scripts)
-        working-directory: .github/sorter
+        working-directory: trusted/.github/sorter
         run: bun install --frozen-lockfile --ignore-scripts
       - name: The pull request's change
-        # Every file as text (--text) whatever .gitattributes says, no external diff programs, no text conversion, no renames.
-        run: .github/sorter/change.sh "$RUNNER_TEMP"
+        working-directory: trusted/.github/sorter
+        env:
+          SORTER_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: ./change.sh "$GITHUB_WORKSPACE/pr" "$SORTER_HEAD_SHA" "$RUNNER_TEMP"
       - name: Sort
-        working-directory: .github/sorter
+        working-directory: trusted/.github/sorter
         env:
           SORTER_ANTHROPIC_API_KEY: ${{ secrets.SORTER_ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           SORTER_PR_NUMBER: ${{ github.event.pull_request.number }}
           SORTER_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          # Whose approval of the latest commit clears the check: the repository variable SORTER_APPROVERS (comma-separated logins),
-          # else the repository's owner. For a repository owned by an organization, set the variable: an organization cannot review.
-          SORTER_APPROVERS: ${{ vars.SORTER_APPROVERS || github.repository_owner }}
+          SORTER_EVENT: ${{ github.event_name }}
+          SORTER_ACTION: ${{ github.event.action }}
+          SORTER_RUN_ATTEMPT: ${{ github.run_attempt }}
+          # Whose approval of the latest commit clears the check: the repository's owner, written here and not read from a setting.
+          SORTER_APPROVERS: 0xnfrith
           SORTER_DIFF_FILE: ${{ runner.temp }}/change.diff
           SORTER_NUMSTAT_FILE: ${{ runner.temp }}/change.numstat
         run: bun sorter.ts

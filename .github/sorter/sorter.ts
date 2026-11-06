@@ -1,10 +1,12 @@
 // The AI sorter (README.md): one required check that answers whether a pull request touches the owner's sensitive list (list.md).
 // "No" passes. "Yes" fails until the owner approves the pull request's latest commit. Every other outcome fails too: a missing key, an
 // API error or a spent cap, a refusal, an answer that is not exactly {"touches_list": boolean, "reason": string}, a diff over the cap,
-// a diff that does not show the whole change (binary, or a path with no content lines).
+// a diff that does not show the whole change (binary, a submodule, or a path with no content lines).
 // The owner's approval of the latest commit clears every one of them, because nothing is left for the sorter to ask him for.
+// The model is asked once per commit: its verdict is recorded on the check run, and every later run for that commit reuses it.
 //
-// Run by .github/workflows/ai-sorter.yml with `bun sorter.ts`. Exit code 0 is a pass, anything else is a fail.
+// Run by .github/workflows/ai-sorter.yml with `bun sorter.ts`, from the base branch's copy of this folder, never the pull request's.
+// Exit code 0 is a pass, anything else is a fail.
 
 import Anthropic from "@anthropic-ai/sdk";
 import { randomBytes } from "node:crypto";
@@ -14,10 +16,14 @@ import { fileURLToPath } from "node:url";
 
 export const MODEL = "claude-haiku-5-5";
 export const SECRET_NAME = "SORTER_ANTHROPIC_API_KEY";
-// About 50,000 to 70,000 tokens of diff: below the model's 100,000-token price step, and above most pull requests here.
-export const DIFF_CAP_BYTES = 200_000;
+// The job's name in the workflow, which is the check's name. The recorded verdicts are looked up by it.
+export const CHECK_NAME = "AI sorter";
+export const RECORD_TITLE = "ai-sorter-verdict";
+// About 25,000 to 35,000 tokens of diff: small enough that one sensitive line is not lost in it.
+export const DIFF_CAP_BYTES = 100_000;
 const REASON_SHOWN_CHARS = 600;
 const REVIEW_PAGES_MAX = 20;
+const RECORD_RUNS_MAX = 20;
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -31,9 +37,10 @@ export const ANSWER_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+// `record` is set only when the model answered in this run: the verdict to record for the commit.
 export type Outcome =
-  | { result: "pass"; why: string; reason?: string }
-  | { result: "waits"; why: string; reason?: string }
+  | { result: "pass"; why: string; reason?: string; record?: boolean }
+  | { result: "waits"; why: string; reason?: string; record?: boolean }
   | { result: "error"; why: string; detail?: string };
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -78,10 +85,16 @@ export function readAlways(text: string): string[] {
     .filter((line) => line !== "" && !line.startsWith("#"));
 }
 
+// A file name against a name pattern from always.txt, where "*" stands for any characters but "/".
+function nameMatches(pattern: string, name: string): boolean {
+  const parts = pattern.split("*").map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(`^${parts.join("[^/]*")}$`).test(name);
+}
+
 export function alwaysHits(files: string[], always: string[]): string[] {
   return files.filter((file) =>
     always.some((entry) => {
-      if (entry.startsWith("**/")) return file === entry.slice(3) || file.endsWith(`/${entry.slice(3)}`);
+      if (entry.startsWith("**/")) return nameMatches(entry.slice(3), file.slice(file.lastIndexOf("/") + 1));
       return entry.endsWith("/") ? file.startsWith(entry) : file === entry;
     }),
   );
@@ -104,22 +117,44 @@ export function parseNumstat(text: string): FileStat[] | null {
 
 /**
  * Why the diff does not show the whole change, or null when it does. Whatever the model cannot read counts as touching the list:
- * a file git marks as binary (by its content or by .gitattributes), raw binary bytes, a "Binary files ... differ" line, and a changed
- * path with no content lines (a mode change, an empty file). The last check counts the diff's own file sections against the numstat,
- * so a path that has no section with a hunk is caught even if the counts above said otherwise.
+ * a file git marks as binary (by its content or by .gitattributes), raw binary bytes, a "Binary files ... differ" line, a submodule (a
+ * pointer to a commit of another repository), and a changed path with no content lines (a mode change, an empty file). The last check
+ * counts the diff's own file sections against the numstat, so a path that has no section with a hunk is caught even if the counts above
+ * said otherwise. Lines are split on "\n" only, as git writes them: a "\r" inside a line never starts a new one.
  */
 export function unreadable(diff: string, stats: FileStat[]): string | null {
   const name = (paths: string[]) => paths.slice(0, 5).join(", ") + (paths.length > 5 ? ` and ${paths.length - 5} more` : "");
-  if (/^(Binary files .* differ|GIT binary patch)$/m.test(diff)) return "The diff shows a file as binary instead of its content.";
+  const lines = diff.split("\n");
+  if (lines.some((line) => line === "GIT binary patch" || /^Binary files .* differ$/.test(line))) {
+    return "The diff shows a file as binary instead of its content.";
+  }
+  const submodule = (line: string) =>
+    /^(new file mode|deleted file mode|old mode|new mode) 160000$/.test(line) ||
+    /^index [0-9a-f]+\.\.[0-9a-f]+ 160000$/.test(line) ||
+    /^[-+ ]?Subproject commit [0-9a-f]+/.test(line);
+  if (lines.some(submodule)) {
+    return "The change includes a submodule, a pointer to a commit of another repository, whose content the diff does not show.";
+  }
   const binary = stats.filter((stat) => stat.added === "-" || stat.removed === "-").map((stat) => stat.path);
   if (binary.length > 0) return `Git counts these as binary (by their content or by .gitattributes): ${name(binary)}.`;
   if (diff.includes("\0")) return "The diff holds binary bytes the model cannot read.";
   const empty = stats.filter((stat) => stat.added === "0" && stat.removed === "0").map((stat) => stat.path);
   if (empty.length > 0) return `Changed with no content lines in the diff (a mode change or an empty file): ${name(empty)}.`;
-  const sections = diff.split(/^(?=diff --git )/m).filter((section) => section.startsWith("diff --git "));
-  const withHunk = sections.filter((section) => /^@@ /m.test(section)).length;
-  if (sections.length !== stats.length || withHunk !== stats.length) {
-    return `The diff has ${sections.length} file sections, ${withHunk} with content, for ${stats.length} changed paths.`;
+  let sections = 0;
+  let withHunk = 0;
+  let hunk = false;
+  for (const line of lines) {
+    if (line.startsWith("diff --git ")) {
+      if (sections > 0 && hunk) withHunk++;
+      sections++;
+      hunk = false;
+    } else if (sections > 0 && line.startsWith("@@ ")) {
+      hunk = true;
+    }
+  }
+  if (sections > 0 && hunk) withHunk++;
+  if (sections !== stats.length || withHunk !== stats.length) {
+    return `The diff has ${sections} file sections, ${withHunk} with content, for ${stats.length} changed paths.`;
   }
   return null;
 }
@@ -214,6 +249,86 @@ export async function approverOfHead(opts: {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
+// The recorded verdict: the model is asked once per commit, and its verdict is final for that commit. The run that asked prints a
+// notice annotation (recordLine) on its own check run; every later run for the same commit (an edit of the pull request, a review, a
+// re-run, a reopening) finds it through the Checks API and reuses it, so nobody can re-roll a "yes" by asking again.
+
+export function recordLine(head: string, touches: boolean): string {
+  return `::notice title=${RECORD_TITLE}::${JSON.stringify({ v: 1, head, touches_list: touches })}`;
+}
+
+/** The recorded touches_list, or null when the message is not exactly a record for this commit. */
+export function parseRecord(message: unknown, head: string): boolean | null {
+  if (typeof message !== "string") return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(message);
+  } catch {
+    return null;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  if (Object.keys(value).sort().join(",") !== "head,touches_list,v") return null;
+  const record = value as Record<string, unknown>;
+  if (record.v !== 1 || record.head !== head || typeof record.touches_list !== "boolean") return null;
+  return record.touches_list;
+}
+
+async function githubGet(url: string, token: string): Promise<unknown> {
+  const res = await fetch(url, {
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${token}`,
+      "user-agent": "ai-sorter",
+      "x-github-api-version": "2022-11-28",
+    },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!res.ok) throw new Error(`GitHub answered ${res.status} for ${new URL(url).pathname}`);
+  return res.json();
+}
+
+/**
+ * The verdict recorded for `head`, or null when there is none. Only check runs of this check, by the GitHub Actions app, on this
+ * exact commit count, and the oldest record wins: the first verdict for a commit is final.
+ */
+export async function recordedVerdict(opts: {
+  api: string;
+  repo: string;
+  head: string;
+  token: string;
+}): Promise<{ touches_list: boolean; checkRun: number } | null> {
+  const list = (await githubGet(
+    `${opts.api}/repos/${opts.repo}/commits/${opts.head}/check-runs?check_name=${encodeURIComponent(CHECK_NAME)}&filter=all&per_page=100`,
+    opts.token,
+  )) as { total_count?: unknown; check_runs?: unknown };
+  if (!Array.isArray(list?.check_runs)) throw new Error("GitHub's list of check runs is not a list");
+  if (typeof list.total_count === "number" && list.total_count > list.check_runs.length) {
+    throw new Error(`more than ${list.check_runs.length} check runs on this commit`);
+  }
+  const runs = (list.check_runs as any[])
+    .filter(
+      (run) =>
+        run?.name === CHECK_NAME &&
+        run?.head_sha === opts.head &&
+        run?.app?.slug === "github-actions" &&
+        typeof run?.id === "number" &&
+        Number(run?.output?.annotations_count) > 0,
+    )
+    .sort((a, b) => a.id - b.id)
+    .slice(0, RECORD_RUNS_MAX);
+  for (const run of runs) {
+    const annotations = await githubGet(`${opts.api}/repos/${opts.repo}/check-runs/${run.id}/annotations?per_page=100`, opts.token);
+    if (!Array.isArray(annotations)) throw new Error("GitHub's list of annotations is not a list");
+    for (const annotation of annotations) {
+      if (annotation?.title !== RECORD_TITLE || annotation?.annotation_level !== "notice") continue;
+      const touches = parseRecord(annotation.message, opts.head);
+      if (touches !== null) return { touches_list: touches, checkRun: run.id };
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------
 // The model
 
 export async function askModel(opts: { apiKey: string; baseURL: string; list: string; diff: string }): Promise<Outcome> {
@@ -247,8 +362,8 @@ export async function askModel(opts: { apiKey: string; baseURL: string; list: st
     return { result: "error", why: 'the answer is not exactly {"touches_list": true|false, "reason": "..."}', detail: texts[0].text };
   }
   return answer.touches_list
-    ? { result: "waits", why: "the model says the change touches the sensitive list", reason: answer.reason }
-    : { result: "pass", why: "the model says the change does not touch the sensitive list", reason: answer.reason };
+    ? { result: "waits", why: "the model says the change touches the sensitive list", reason: answer.reason, record: true }
+    : { result: "pass", why: "the model says the change does not touch the sensitive list", reason: answer.reason, record: false };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -271,9 +386,11 @@ export async function sort(env: Record<string, string | undefined>): Promise<Out
   if (token === "") return { result: "error", why: "GITHUB_TOKEN is missing" };
   if (approvers.size === 0) return { result: "error", why: "SORTER_APPROVERS names nobody" };
 
+  const api = env.GITHUB_API_URL || "https://api.github.com";
+
   // 1. The owner already approved this exact commit: there is nothing left to wait for, whatever the change is.
   try {
-    const approver = await approverOfHead({ api: env.GITHUB_API_URL || "https://api.github.com", repo, pr, head, approvers, token });
+    const approver = await approverOfHead({ api, repo, pr, head, approvers, token });
     if (approver !== null) return { result: "pass", why: `${approver} approved this commit (${head.slice(0, 12)})` };
   } catch (error) {
     return { result: "error", why: "the reviews could not be read", detail: String(error) };
@@ -317,7 +434,34 @@ export async function sort(env: Record<string, string | undefined>): Promise<Out
     return { result: "waits", why: "the diff does not show the whole change, so it counts as touching the list", reason: hidden };
   }
 
-  // 4. The key. A secret that is not set reaches the job as an empty string; fork pull requests never get one.
+  // 4. A verdict already recorded for this commit is final: reuse it, whatever started this run.
+  let recorded: Awaited<ReturnType<typeof recordedVerdict>>;
+  try {
+    recorded = await recordedVerdict({ api, repo, head, token });
+  } catch (error) {
+    return { result: "error", why: "the verdict recorded for this commit could not be read", detail: String(error) };
+  }
+  if (recorded !== null) {
+    const from = `the verdict recorded for this commit (check run ${recorded.checkRun})`;
+    return recorded.touches_list
+      ? { result: "waits", why: `${from} says the change touches the sensitive list` }
+      : { result: "pass", why: `${from} says the change does not touch the sensitive list` };
+  }
+
+  // 5. Only the first run after a push, an opening or a reopening may ask the model. An edit of the pull request, a review or a
+  //    re-run never does: with no verdict recorded, it fails closed.
+  const event = env.SORTER_EVENT ?? "";
+  const action = env.SORTER_ACTION ?? "";
+  const attempt = env.SORTER_RUN_ATTEMPT ?? "";
+  if (!(event === "pull_request" && ["opened", "synchronize", "reopened"].includes(action) && attempt === "1")) {
+    return {
+      result: "error",
+      why: "no verdict is recorded for this commit, and only the first run after a push, an opening or a reopening asks the model",
+      detail: `This run: ${event} ${action}, attempt ${attempt}. Push a new commit, or the owner approves the latest commit.`,
+    };
+  }
+
+  // 6. The key. A secret that is not set reaches the job as an empty string; fork pull requests never get one.
   const apiKey = env[SECRET_NAME] ?? "";
   if (apiKey.trim() === "") {
     return {
@@ -326,7 +470,7 @@ export async function sort(env: Record<string, string | undefined>): Promise<Out
     };
   }
 
-  // 5. The model.
+  // 7. The model. A valid answer is recorded for this commit (main prints the record).
   return askModel({ apiKey, baseURL: env.SORTER_ANTHROPIC_BASE_URL || "https://api.anthropic.com", list, diff });
 }
 
@@ -357,6 +501,7 @@ async function main(): Promise<void> {
     outcome = { result: "error", why: "the sorter itself failed", detail: String(error) };
   }
   const head = process.env.SORTER_HEAD_SHA ?? "";
+  if (outcome.result !== "error" && outcome.record !== undefined) console.log(recordLine(head, outcome.record));
   const file = process.env.GITHUB_STEP_SUMMARY;
   if (file) {
     try {

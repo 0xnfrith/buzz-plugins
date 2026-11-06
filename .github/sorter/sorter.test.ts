@@ -1,30 +1,39 @@
 // Tests of the AI sorter. The script runs as the workflow runs it (`bun sorter.ts`, its exit code and its step summary), against a fake
 // Claude API and a fake GitHub API on localhost. No key, no network. The fake records whether a credential header came, never its value.
+// Real git repositories (built in temporary folders with no global or system git config) go through change.sh, as in the workflow, and
+// the workflow file itself is read to build the folder layout the sorter runs in.
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ANSWER_SCHEMA,
+  CHECK_NAME,
   DIFF_CAP_BYTES,
   MODEL,
+  RECORD_TITLE,
   alwaysHits,
   parseAnswer,
   parseNumstat,
+  parseRecord,
   readAlways,
+  recordLine,
   shown,
   unreadable,
 } from "./sorter.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
+// The workflow under test. AI_SORTER_WORKFLOW points the layout tests at another copy (to show they fail on an older layout).
+const WORKFLOW = process.env.AI_SORTER_WORKFLOW || join(here, "../workflows/ai-sorter.yml");
 const HEAD = "a".repeat(40);
 const OLD = "b".repeat(40);
 const OWNER = "the-owner";
 const FAKE_KEY = "test-key-not-real";
+const LS = String.fromCharCode(0x2028);
 
-type Call = { method: string; path: string; credential: boolean; body: any };
+type Call = { method: string; path: string; query: string; credential: boolean; body: any };
 type Reply = { status: number; body: unknown; headers?: Record<string, string> };
 
 const fake = {
@@ -32,6 +41,9 @@ const fake = {
   messages: [] as Reply[],
   reviews: [] as unknown[][],
   reviewsStatus: 200,
+  checkRuns: [] as any[],
+  checkRunsStatus: 200,
+  annotations: {} as Record<number, unknown[]>,
 };
 
 const server = Bun.serve({
@@ -40,7 +52,7 @@ const server = Bun.serve({
     const url = new URL(req.url);
     const credential = req.headers.has("authorization") || req.headers.has("x-api-key");
     const text = req.method === "POST" ? await req.text() : "";
-    fake.calls.push({ method: req.method, path: url.pathname, credential, body: text ? JSON.parse(text) : null });
+    fake.calls.push({ method: req.method, path: url.pathname, query: url.search, credential, body: text ? JSON.parse(text) : null });
     if (req.method === "POST" && url.pathname === "/v1/messages") {
       const reply = fake.messages.length > 1 ? fake.messages.shift()! : fake.messages[0];
       if (!reply) return Response.json({ type: "error", error: { type: "api_error", message: "no reply set" } }, { status: 500 });
@@ -53,6 +65,12 @@ const server = Bun.serve({
       if (page < fake.reviews.length) headers.link = `<${url.origin}${url.pathname}?per_page=100&page=${page + 1}>; rel="next"`;
       return Response.json(fake.reviews[page - 1] ?? [], { headers });
     }
+    if (req.method === "GET" && /^\/repos\/owner\/repo\/commits\/[0-9a-f]+\/check-runs$/.test(url.pathname)) {
+      if (fake.checkRunsStatus !== 200) return Response.json({ message: "nope" }, { status: fake.checkRunsStatus });
+      return Response.json({ total_count: fake.checkRuns.length, check_runs: fake.checkRuns });
+    }
+    const annotations = url.pathname.match(/^\/repos\/owner\/repo\/check-runs\/(\d+)\/annotations$/);
+    if (req.method === "GET" && annotations) return Response.json(fake.annotations[Number(annotations[1])] ?? []);
     return new Response("not found", { status: 404 });
   },
 });
@@ -82,6 +100,13 @@ const yes = (reason = "Changes the release workflow.") => answer(JSON.stringify(
 const no = (reason = "Only fixes a typo in a plugin README.") => answer(JSON.stringify({ touches_list: false, reason }));
 const review = (login: string, state: string, commit_id: string) => ({ user: { login }, state, commit_id });
 
+/** A check run on HEAD with one annotation: a verdict record, or any message given as a string. */
+function recordRun(id: number, record: boolean | string, over: Record<string, unknown> = {}, title = RECORD_TITLE) {
+  fake.checkRuns.push({ id, name: CHECK_NAME, head_sha: HEAD, app: { slug: "github-actions" }, output: { annotations_count: 1 }, ...over });
+  const message = typeof record === "string" ? record : JSON.stringify({ v: 1, head: HEAD, touches_list: record });
+  fake.annotations[id] = [{ title, annotation_level: "notice", message }];
+}
+
 const SMALL_DIFF = [
   "diff --git a/plugins/vim/README.md b/plugins/vim/README.md",
   "--- a/plugins/vim/README.md",
@@ -91,6 +116,29 @@ const SMALL_DIFF = [
   "+Vim mode",
   "",
 ].join("\n");
+
+function sorterEnv(dir: string, change: string, opts: { key?: string | null; env?: Record<string, string> }): Record<string, string> {
+  const env: Record<string, string> = {
+    PATH: process.env.PATH ?? "",
+    HOME: process.env.HOME ?? dir,
+    GITHUB_REPOSITORY: "owner/repo",
+    GITHUB_API_URL: base,
+    GITHUB_TOKEN: "fake-github-token",
+    GITHUB_STEP_SUMMARY: join(dir, "summary.md"),
+    SORTER_PR_NUMBER: "7",
+    SORTER_HEAD_SHA: HEAD,
+    SORTER_APPROVERS: OWNER,
+    SORTER_EVENT: "pull_request",
+    SORTER_ACTION: "synchronize",
+    SORTER_RUN_ATTEMPT: "1",
+    SORTER_DIFF_FILE: join(change, "change.diff"),
+    SORTER_NUMSTAT_FILE: join(change, "change.numstat"),
+    SORTER_ANTHROPIC_BASE_URL: base,
+    ...opts.env,
+  };
+  if (opts.key !== null) env.SORTER_ANTHROPIC_API_KEY = opts.key ?? FAKE_KEY;
+  return env;
+}
 
 // The change is either written here (a diff and a numstat; `files` makes a numstat of one changed line per path), or taken from
 // `changeDir`, where change.sh wrote it from a real git repository.
@@ -112,23 +160,7 @@ async function run(
     writeFileSync(join(dir, "change.numstat"), numstat);
   }
   writeFileSync(join(dir, "summary.md"), "");
-  const env: Record<string, string> = {
-    PATH: process.env.PATH ?? "",
-    HOME: process.env.HOME ?? dir,
-    GITHUB_REPOSITORY: "owner/repo",
-    GITHUB_API_URL: base,
-    GITHUB_TOKEN: "fake-github-token",
-    GITHUB_STEP_SUMMARY: join(dir, "summary.md"),
-    SORTER_PR_NUMBER: "7",
-    SORTER_HEAD_SHA: HEAD,
-    SORTER_APPROVERS: OWNER,
-    SORTER_DIFF_FILE: join(change, "change.diff"),
-    SORTER_NUMSTAT_FILE: join(change, "change.numstat"),
-    SORTER_ANTHROPIC_BASE_URL: base,
-    ...opts.env,
-  };
-  if (opts.key !== null) env.SORTER_ANTHROPIC_API_KEY = opts.key ?? FAKE_KEY;
-  const proc = Bun.spawn(["bun", "sorter.ts"], { cwd: here, env, stdout: "pipe", stderr: "pipe" });
+  const proc = Bun.spawn(["bun", "sorter.ts"], { cwd: here, env: sorterEnv(dir, change, opts), stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
   return { code, stdout, stderr, summary: readFileSync(join(dir, "summary.md"), "utf8") };
 }
@@ -139,24 +171,29 @@ beforeEach(() => {
   fake.messages = [];
   fake.reviews = [];
   fake.reviewsStatus = 200;
+  fake.checkRuns = [];
+  fake.checkRunsStatus = 200;
+  fake.annotations = {};
 });
 
 describe("the model's answer", () => {
-  test("no: the check passes and shows the reason", async () => {
+  test("no: the check passes, shows the reason and records the verdict", async () => {
     fake.messages = [no()];
     const r = await run();
     expect(r.code).toBe(0);
     expect(r.summary).toContain("## AI sorter: passes");
     expect(r.summary).toContain("Only fixes a typo in a plugin README.");
+    expect(r.stdout.split("\n")).toContain(recordLine(HEAD, false));
   });
 
-  test("yes: the check fails, waits for the owner and shows the reason", async () => {
+  test("yes: the check fails, waits for the owner, shows the reason and records the verdict", async () => {
     fake.messages = [yes()];
     const r = await run();
     expect(r.code).toBe(1);
     expect(r.summary).toContain("## AI sorter: waits for the owner");
     expect(r.summary).toContain("Changes the release workflow.");
     expect(r.summary).toContain("the owner approves this pull request's latest commit");
+    expect(r.stdout.split("\n")).toContain(recordLine(HEAD, true));
   });
 
   test("the request: the model id, the strict schema, low effort, no sampling settings, the diff inside a random marker", async () => {
@@ -191,11 +228,12 @@ describe("the model's answer", () => {
     expect(nonces[0]).not.toBe(nonces[1]);
   });
 
-  test("malformed JSON fails closed", async () => {
+  test("malformed JSON fails closed and records nothing", async () => {
     fake.messages = [answer("yes, it touches the list")];
     const r = await run();
     expect(r.code).toBe(1);
     expect(r.summary).toContain("## AI sorter: failed closed");
+    expect(r.stdout).not.toContain(RECORD_TITLE);
   });
 
   for (const [name, text] of [
@@ -293,6 +331,13 @@ describe("the owner's approval", () => {
     expect(modelCalls()).toHaveLength(0);
   });
 
+  test("an approval of the latest commit passes over a recorded yes, on a review event", async () => {
+    fake.reviews = [[review(OWNER, "APPROVED", HEAD)]];
+    recordRun(5, true);
+    const r = await run({ env: { SORTER_EVENT: "pull_request_review", SORTER_ACTION: "submitted" } });
+    expect(r.code).toBe(0);
+  });
+
   test("an approval of an older commit does not count", async () => {
     fake.reviews = [[review(OWNER, "APPROVED", OLD)]];
     fake.messages = [yes()];
@@ -336,6 +381,108 @@ describe("the owner's approval", () => {
   });
 });
 
+// H2: the model is asked once per commit. Edits, reviews, re-runs and reopenings reuse the recorded verdict; a "yes" cannot be re-rolled.
+describe("one verdict per commit", () => {
+  const laterRuns: [string, Record<string, string>][] = [
+    ["an edit of the pull request", { SORTER_EVENT: "pull_request", SORTER_ACTION: "edited" }],
+    ["a review", { SORTER_EVENT: "pull_request_review", SORTER_ACTION: "submitted" }],
+    ["a dismissed review", { SORTER_EVENT: "pull_request_review", SORTER_ACTION: "dismissed" }],
+    ["a re-run", { SORTER_EVENT: "pull_request", SORTER_ACTION: "synchronize", SORTER_RUN_ATTEMPT: "2" }],
+    ["a reopening", { SORTER_EVENT: "pull_request", SORTER_ACTION: "reopened" }],
+    ["a new run after a push of the same commit", { SORTER_EVENT: "pull_request", SORTER_ACTION: "synchronize" }],
+  ];
+
+  for (const [name, env] of laterRuns) {
+    test(`${name} reuses a recorded yes: still waits, and the model is not asked`, async () => {
+      recordRun(5, true);
+      fake.messages = [no()];
+      const r = await run({ env });
+      expect(r.code).toBe(1);
+      expect(r.summary).toContain("## AI sorter: waits for the owner");
+      expect(r.summary).toContain("the verdict recorded for this commit (check run 5)");
+      expect(modelCalls()).toHaveLength(0);
+      expect(r.stdout).not.toContain(RECORD_TITLE);
+    });
+  }
+
+  test("a recorded no is reused too", async () => {
+    recordRun(5, false);
+    const r = await run({ env: { SORTER_EVENT: "pull_request_review", SORTER_ACTION: "submitted" }, key: null });
+    expect(r.code).toBe(0);
+    expect(modelCalls()).toHaveLength(0);
+  });
+
+  for (const [name, env] of laterRuns.slice(0, 4)) {
+    test(`${name} with no recorded verdict fails closed without asking the model`, async () => {
+      fake.messages = [no()];
+      const r = await run({ env });
+      expect(r.code).toBe(1);
+      expect(r.summary).toContain("no verdict is recorded for this commit");
+      expect(modelCalls()).toHaveLength(0);
+    });
+  }
+
+  test("a reopening with no recorded verdict asks the model (it may follow an error)", async () => {
+    fake.messages = [no()];
+    const r = await run({ env: { SORTER_ACTION: "reopened" } });
+    expect(r.code).toBe(0);
+    expect(modelCalls()).toHaveLength(1);
+  });
+
+  test("the first verdict is final: the oldest record wins over a newer one", async () => {
+    recordRun(9, false);
+    recordRun(5, true);
+    const r = await run({ env: { SORTER_ACTION: "edited" } });
+    expect(r.code).toBe(1);
+    expect(r.summary).toContain("check run 5");
+  });
+
+  test("the lookup asks for every check run of this check on the commit", async () => {
+    recordRun(5, true);
+    await run({ env: { SORTER_ACTION: "edited" } });
+    const list = fake.calls.find((call) => call.path.endsWith("/check-runs"))!;
+    expect(list.path).toBe(`/repos/owner/repo/commits/${HEAD}/check-runs`);
+    expect(new URLSearchParams(list.query).get("check_name")).toBe(CHECK_NAME);
+    expect(new URLSearchParams(list.query).get("filter")).toBe("all");
+  });
+
+  for (const [name, setUp] of [
+    ["another app", () => recordRun(5, false, { app: { slug: "some-other-app" } })],
+    ["another check name", () => recordRun(5, false, { name: "AI sorter tests" })],
+    ["another commit", () => recordRun(5, false, { head_sha: OLD })],
+    ["a record for another commit", () => recordRun(5, JSON.stringify({ v: 1, head: OLD, touches_list: false }))],
+    ["a malformed record", () => recordRun(5, '{"v":1,"touches_list":false}')],
+    ["an extra key", () => recordRun(5, JSON.stringify({ v: 1, head: HEAD, touches_list: false, by: "x" }))],
+    ["another annotation title", () => recordRun(5, false, {}, "something-else")],
+  ] as [string, () => void][]) {
+    test(`a record from ${name} does not count`, async () => {
+      setUp();
+      fake.messages = [no()];
+      const r = await run({ env: { SORTER_EVENT: "pull_request_review", SORTER_ACTION: "submitted" } });
+      expect(r.code).toBe(1);
+      expect(r.summary).toContain("no verdict is recorded for this commit");
+    });
+  }
+
+  test("check runs that cannot be read fail closed, without asking the model", async () => {
+    fake.checkRunsStatus = 500;
+    fake.messages = [no()];
+    const r = await run();
+    expect(r.code).toBe(1);
+    expect(r.summary).toContain("the verdict recorded for this commit could not be read");
+    expect(modelCalls()).toHaveLength(0);
+  });
+
+  test("recordLine and parseRecord agree, and parseRecord takes nothing else", () => {
+    const line = recordLine(HEAD, true);
+    expect(line.startsWith(`::notice title=${RECORD_TITLE}::`)).toBe(true);
+    expect(parseRecord(line.slice(line.indexOf("::", 2) + 2), HEAD)).toBe(true);
+    expect(parseRecord(JSON.stringify({ v: 2, head: HEAD, touches_list: true }), HEAD)).toBeNull();
+    expect(parseRecord(JSON.stringify({ v: 1, head: HEAD, touches_list: "true" }), HEAD)).toBeNull();
+    expect(parseRecord(42, HEAD)).toBeNull();
+  });
+});
+
 describe("what counts without asking the model", () => {
   test("a diff over the cap counts as touching the list, and the model is not called", async () => {
     fake.messages = [no()];
@@ -344,6 +491,10 @@ describe("what counts without asking the model", () => {
     expect(r.summary).toContain("## AI sorter: waits for the owner");
     expect(r.summary).toContain("over the size cap");
     expect(modelCalls()).toHaveLength(0);
+  });
+
+  test("the cap is 100,000 bytes", () => {
+    expect(DIFF_CAP_BYTES).toBe(100_000);
   });
 
   test("a diff over the cap that the owner approved passes", async () => {
@@ -361,65 +512,101 @@ describe("what counts without asking the model", () => {
     expect(modelCalls()).toHaveLength(0);
   });
 
-  test("always.txt: a folder covers what is under it, **/name any folder, a file only itself", () => {
+  test("always.txt: folders, **/name in any folder with * in the name, and single files", () => {
     const always = readAlways(readFileSync(join(here, "always.txt"), "utf8"));
-    expect(always).toEqual([".github/", "LICENSE", "**/.gitattributes"]);
-    const files = [
+    expect(always).toEqual([
+      ".github/",
+      "LICENSE",
+      "**/.gitattributes",
+      "**/.gitmodules",
+      "**/*.lock",
+      "**/*.lockb",
+      "**/pnpm-lock.yaml",
+      "**/package-lock.json",
+      "**/npm-shrinkwrap.json",
+    ]);
+    const hit = [
       ".github/CODEOWNERS",
       "LICENSE",
       ".gitattributes",
       "plugins/vim/.gitattributes",
+      ".gitmodules",
+      "bun.lock",
+      ".github/sorter/bun.lock",
+      "plugins/x/bun.lockb",
+      "plugins/linear/pnpm-lock.yaml",
+      "package-lock.json",
+      "yarn.lock",
+      "plugins/x/Cargo.lock",
+      "npm-shrinkwrap.json",
+    ];
+    const miss = [
       "plugins/x/LICENSE",
       "docs/.github/x",
       "LICENSE.md",
       "plugins/x.gitattributes",
       ".gitattributes.md",
+      "plugins/x/lock.ts",
+      "docs/locking.md",
+      "plugins/x/bun.lock.md",
+      "plugins/vim/plugin.js",
     ];
-    expect(alwaysHits(files, always)).toEqual([".github/CODEOWNERS", "LICENSE", ".gitattributes", "plugins/vim/.gitattributes"]);
+    expect(alwaysHits([...hit, ...miss], always)).toEqual(hit);
   });
 });
 
-// A real git repository, built in a temporary folder with no global or system git config, and the change as change.sh writes it.
+// A real git repository whose HEAD is the merge commit GitHub would make: the base commit on main, the pull request's commit on a
+// branch, merged with --no-ff, so HEAD^1 is the base and HEAD^2 is the pull request's head.
 function git(repo: string, ...args: string[]): string {
   const result = Bun.spawnSync(
     ["git", "-c", "user.name=test", "-c", "user.email=test@example.invalid", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", ...args],
     { cwd: repo, env: { PATH: process.env.PATH ?? "", HOME: repo, GIT_CONFIG_NOSYSTEM: "1" } },
   );
   if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr.toString()}`);
-  return result.stdout.toString();
+  return result.stdout.toString().trim();
 }
-function repoWith(base: Record<string, string>, pr: Record<string, string>, prSetup?: (repo: string) => void): string {
+function writeTree(root: string, files: Record<string, string>) {
+  for (const [path, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    writeFileSync(join(root, path), text);
+  }
+}
+function repoWith(opts: {
+  base: Record<string, string>;
+  pr: Record<string, string>;
+  baseSetup?: (repo: string) => void;
+  prSetup?: (repo: string) => void;
+}): { repo: string; head: string } {
   const repo = mkdtempSync(join(tmpdir(), "ai-sorter-git-"));
   git(repo, "init", "-q");
-  const write = (files: Record<string, string>) => {
-    for (const [path, text] of Object.entries(files)) {
-      mkdirSync(dirname(join(repo, path)), { recursive: true });
-      writeFileSync(join(repo, path), text);
-    }
-  };
-  write(base);
+  writeTree(repo, opts.base);
   git(repo, "add", "-A");
+  opts.baseSetup?.(repo);
   git(repo, "commit", "-q", "-m", "base");
-  write(pr);
-  prSetup?.(repo);
+  git(repo, "checkout", "-q", "-b", "pull-request");
+  writeTree(repo, opts.pr);
   git(repo, "add", "-A");
+  opts.prSetup?.(repo);
   git(repo, "commit", "-q", "-m", "pull request");
-  return repo;
+  const head = git(repo, "rev-parse", "HEAD");
+  git(repo, "checkout", "-q", "main");
+  git(repo, "merge", "-q", "--no-ff", "--no-edit", "pull-request");
+  return { repo, head };
 }
-function changeSh(repo: string): string {
+function changeSh(repo: string, head: string): string {
   const out = mkdtempSync(join(tmpdir(), "ai-sorter-change-"));
-  const result = Bun.spawnSync([join(here, "change.sh"), out], {
-    cwd: repo,
+  const result = Bun.spawnSync([join(here, "change.sh"), repo, head, out], {
     env: { PATH: process.env.PATH ?? "", HOME: repo, GIT_CONFIG_NOSYSTEM: "1" },
   });
   if (result.exitCode !== 0) throw new Error(`change.sh: ${result.stderr.toString()}`);
   return out;
 }
+const gitlink = (repo: string, sha: string) => git(repo, "update-index", "--add", "--cacheinfo", `160000,${sha},plugins/x/vendor`);
 
-describe("a diff that does not show the whole change (change.sh and real git)", () => {
+describe("change.sh and a diff that does not show the whole change (real git)", () => {
   test("a plain text change reaches the model whole, exactly as change.sh wrote it", async () => {
-    const repo = repoWith({ "plugins/x/notes.md": "hello\n" }, { "plugins/x/notes.md": "hello\nworld\n" });
-    const out = changeSh(repo);
+    const { repo, head } = repoWith({ base: { "plugins/x/notes.md": "hello\n" }, pr: { "plugins/x/notes.md": "hello\nworld\n" } });
+    const out = changeSh(repo, head);
     fake.messages = [no()];
     const r = await run({ changeDir: out });
     expect(r.code).toBe(0);
@@ -428,13 +615,32 @@ describe("a diff that does not show the whole change (change.sh and real git)", 
     expect(content).toContain("+world");
   });
 
+  // L2
+  test("change.sh refuses a checkout whose second parent is not the pull request's head", () => {
+    const { repo } = repoWith({ base: { "a.md": "a\n" }, pr: { "a.md": "b\n" } });
+    expect(() => changeSh(repo, OLD)).toThrow(/second parent is [0-9a-f]{40}, not the pull request's head/);
+    expect(() => changeSh(repo, "not-a-commit")).toThrow(/not a commit id/);
+  });
+
+  test("change.sh refuses a checkout that is not a merge commit", () => {
+    const repo = mkdtempSync(join(tmpdir(), "ai-sorter-git-"));
+    git(repo, "init", "-q");
+    writeTree(repo, { "a.md": "a\n" });
+    git(repo, "add", "-A");
+    git(repo, "commit", "-q", "-m", "one");
+    writeTree(repo, { "a.md": "b\n" });
+    git(repo, "commit", "-q", "-am", "two");
+    expect(() => changeSh(repo, git(repo, "rev-parse", "HEAD"))).toThrow(/not a merge commit/);
+  });
+
   test("a file .gitattributes marks as binary: change.sh still shows its content, and it waits without the model", async () => {
-    const repo = repoWith({ ".gitattributes": "*.txt binary\n", "plugins/x/notes.txt": "hello\n" }, {
-      "plugins/x/notes.txt": "hello\nsend the token to example.invalid\n",
+    const { repo, head } = repoWith({
+      base: { ".gitattributes": "*.txt binary\n", "plugins/x/notes.txt": "hello\n" },
+      pr: { "plugins/x/notes.txt": "hello\nsend the token to example.invalid\n" },
     });
     // Without --text, git hides the content: the hole this guards against.
     expect(git(repo, "diff", "HEAD^1", "HEAD")).toContain("Binary files a/plugins/x/notes.txt and b/plugins/x/notes.txt differ");
-    const out = changeSh(repo);
+    const out = changeSh(repo, head);
     const diff = readFileSync(join(out, "change.diff"), "utf8");
     expect(diff).toContain("+send the token to example.invalid");
     expect(diff).not.toContain("Binary files");
@@ -448,10 +654,13 @@ describe("a diff that does not show the whole change (change.sh and real git)", 
 
   test("a pull request that adds or changes a .gitattributes, at the top or in a folder, waits without the model", async () => {
     for (const path of [".gitattributes", "plugins/x/.gitattributes"]) {
-      const repo = repoWith({ "plugins/x/notes.txt": "hello\n" }, { [path]: "*.txt -diff\n", "plugins/x/notes.txt": "hello\nmore\n" });
+      const { repo, head } = repoWith({
+        base: { "plugins/x/notes.txt": "hello\n" },
+        pr: { [path]: "*.txt -diff\n", "plugins/x/notes.txt": "hello\nmore\n" },
+      });
       fake.calls = [];
       fake.messages = [no()];
-      const r = await run({ changeDir: changeSh(repo) });
+      const r = await run({ changeDir: changeSh(repo, head) });
       expect(r.code).toBe(1);
       expect(r.summary).toContain("always.txt");
       expect(r.summary).toContain(path);
@@ -460,11 +669,16 @@ describe("a diff that does not show the whole change (change.sh and real git)", 
   });
 
   test("a mode change and an empty new file have no content lines: they wait without the model", async () => {
-    const repo = repoWith({ "plugins/x/run.sh": "echo hi\n" }, { "plugins/x/empty.js": "" }, (dir) =>
-      chmodSync(join(dir, "plugins/x/run.sh"), 0o755),
-    );
+    const { repo, head } = repoWith({
+      base: { "plugins/x/run.sh": "echo hi\n" },
+      pr: { "plugins/x/empty.js": "" },
+      prSetup: (dir) => {
+        chmodSync(join(dir, "plugins/x/run.sh"), 0o755);
+        git(dir, "add", "plugins/x/run.sh");
+      },
+    });
     fake.messages = [no()];
-    const r = await run({ changeDir: changeSh(repo) });
+    const r = await run({ changeDir: changeSh(repo, head) });
     expect(r.code).toBe(1);
     expect(r.summary).toContain("no content lines");
     expect(r.summary).toContain("plugins/x/empty.js, plugins/x/run.sh");
@@ -472,12 +686,58 @@ describe("a diff that does not show the whole change (change.sh and real git)", 
   });
 
   test("binary bytes wait without the model", async () => {
-    const repo = repoWith({ "plugins/x/a.txt": "a\n" }, { "plugins/x/icon.bin": "PNG\u0000\u0001\u0002 not text\n" });
+    const { repo, head } = repoWith({ base: { "plugins/x/a.txt": "a\n" }, pr: { "plugins/x/icon.bin": "PNG\u0000\u0001\u0002 not text\n" } });
     fake.messages = [no()];
-    const r = await run({ changeDir: changeSh(repo) });
+    const r = await run({ changeDir: changeSh(repo, head) });
     expect(r.code).toBe(1);
     expect(r.summary).toContain("plugins/x/icon.bin");
     expect(modelCalls()).toHaveLength(0);
+  });
+
+  // M1
+  test("a submodule added or moved to another commit waits without the model", async () => {
+    const added = repoWith({ base: { "plugins/x/a.txt": "a\n" }, pr: {}, prSetup: (dir) => gitlink(dir, "1".repeat(40)) });
+    const bumped = repoWith({
+      base: { "plugins/x/a.txt": "a\n" },
+      pr: {},
+      baseSetup: (dir) => gitlink(dir, "1".repeat(40)),
+      prSetup: (dir) => gitlink(dir, "2".repeat(40)),
+    });
+    for (const { repo, head } of [added, bumped]) {
+      const out = changeSh(repo, head);
+      expect(readFileSync(join(out, "change.diff"), "utf8")).toContain("Subproject commit");
+      fake.calls = [];
+      fake.messages = [no()];
+      const r = await run({ changeDir: out });
+      expect(r.code).toBe(1);
+      expect(r.summary).toContain("submodule");
+      expect(modelCalls()).toHaveLength(0);
+    }
+  });
+
+  test("a .gitmodules change waits without the model", async () => {
+    const { repo, head } = repoWith({
+      base: { "plugins/x/a.txt": "a\n" },
+      pr: { ".gitmodules": '[submodule "vendor"]\n\tpath = plugins/x/vendor\n\turl = https://example.invalid/x.git\n' },
+    });
+    fake.messages = [no()];
+    const r = await run({ changeDir: changeSh(repo, head) });
+    expect(r.code).toBe(1);
+    expect(r.summary).toContain(".gitmodules");
+    expect(modelCalls()).toHaveLength(0);
+  });
+
+  // L5
+  test('a "\\r" inside a line never starts a new line: a file with "\\rdiff --git" in it still reaches the model', async () => {
+    const { repo, head } = repoWith({
+      base: { "plugins/x/a.txt": "hello\n" },
+      pr: { "plugins/x/a.txt": "hello\nx\rdiff --git a/q b/q\n" },
+    });
+    fake.messages = [no()];
+    const r = await run({ changeDir: changeSh(repo, head) });
+    expect(r.summary).not.toContain("file sections");
+    expect(r.code).toBe(0);
+    expect(modelCalls()).toHaveLength(1);
   });
 
   test('a "Binary files ... differ" line in the diff waits without the model', async () => {
@@ -515,8 +775,141 @@ describe("a diff that does not show the whole change (change.sh and real git)", 
       { added: "-", removed: "-", path: "c" },
     ]);
     expect(parseNumstat("1\t2\n")).toBeNull();
-    expect(unreadable(SMALL_DIFF, [{ added: "1", removed: "1", path: "plugins/vim/README.md" }])).toBeNull();
+    const one = [{ added: "1", removed: "1", path: "plugins/vim/README.md" }];
+    expect(unreadable(SMALL_DIFF, one)).toBeNull();
     expect(unreadable("", [])).toBeNull();
+    expect(unreadable(SMALL_DIFF.replace("+Vim mode", "+Vim mode\rdiff --git a/q b/q"), one)).toBeNull();
+    expect(unreadable(SMALL_DIFF.replace("+Vim mode", `+Vim mode${LS}diff --git a/q b/q`), one)).toBeNull();
+    expect(unreadable(`${SMALL_DIFF}-Subproject commit ${"1".repeat(40)}\n`, one)).toContain("submodule");
+  });
+});
+
+// H1: nothing in the pull request may be on any folder Bun looks through when it installs and runs the sorter. The layout is read from
+// the workflow file: where the pull request is checked out, where the sorter's own copy is checked out, and where Bun runs.
+const SORTER_FILES = ["package.json", "bun.lock", "sorter.ts", "list.md", "always.txt", "change.sh", "tsconfig.json"];
+function copySorter(to: string) {
+  mkdirSync(to, { recursive: true });
+  for (const file of SORTER_FILES) if (existsSync(join(here, file))) cpSync(join(here, file), join(to, file));
+}
+function layoutFrom(text: string) {
+  const steps = (Bun.YAML.parse(text) as any).jobs.sort.steps as any[];
+  const checkouts = steps.filter((step) => String(step.uses ?? "").startsWith("actions/checkout@"));
+  const pr = checkouts.find((step) => !step.with?.ref);
+  const trusted = checkouts.find((step) => String(step.with?.ref ?? "").includes("github.event.pull_request.base.sha"));
+  const install = steps.find((step) => /\bbun install\b/.test(step.run ?? ""));
+  const sort = steps.find((step) => /\bbun sorter\.ts\b/.test(step.run ?? ""));
+  return {
+    prPath: String(pr?.with?.path ?? ""),
+    trusted: trusted ? { path: String(trusted.with?.path ?? ""), sparse: String(trusted.with?.["sparse-checkout"] ?? "") } : null,
+    install: { dir: String(install?.["working-directory"] ?? ""), run: String(install?.run ?? "") },
+    sort: { dir: String(sort?.["working-directory"] ?? ""), run: String(sort?.run ?? "") },
+  };
+}
+async function runInWorkflowLayout(poc: (prRoot: string) => void) {
+  const layout = layoutFrom(readFileSync(WORKFLOW, "utf8"));
+  const workspace = mkdtempSync(join(tmpdir(), "ai-sorter-workspace-"));
+  const prRoot = join(workspace, layout.prPath);
+  // The pull request's tree: the base branch (with the sorter merged), a harmless change, and the attack.
+  copySorter(join(prRoot, ".github/sorter"));
+  writeTree(prRoot, { "README.md": "hello\n" });
+  poc(prRoot);
+  if (layout.trusted !== null) copySorter(join(workspace, layout.trusted.path, ".github/sorter"));
+  const env = { PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? workspace };
+  const install = Bun.spawnSync(["bash", "-c", layout.install.run], { cwd: join(workspace, layout.install.dir), env });
+  const dir = mkdtempSync(join(tmpdir(), "ai-sorter-test-"));
+  writeFileSync(join(dir, "change.diff"), SMALL_DIFF);
+  writeFileSync(join(dir, "change.numstat"), "1\t1\tplugins/vim/README.md\0");
+  writeFileSync(join(dir, "summary.md"), "");
+  fake.messages = [yes()];
+  const proc = Bun.spawn(["bash", "-c", layout.sort.run], {
+    cwd: join(workspace, layout.sort.dir),
+    env: sorterEnv(dir, dir, {}),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const code = await proc.exited;
+  return { layout, workspace, prRoot, installCode: install.exitCode, code, summary: readFileSync(join(dir, "summary.md"), "utf8") };
+}
+// The attacks: code that exits 0 (a green check) the moment it is imported in place of the SDK.
+const EVIL = "export default class {}\nprocess.exit(0);\n";
+const pocs: [string, (root: string) => void][] = [
+  [
+    "a root tsconfig.json that maps the SDK to the pull request's code",
+    (root) =>
+      writeTree(root, {
+        "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, paths: { "@anthropic-ai/sdk": ["./plugins/vim/lib/sdk.ts"] } } }),
+        "plugins/vim/lib/sdk.ts": EVIL,
+      }),
+  ],
+  [
+    "a root jsconfig.json that maps the SDK to the pull request's code",
+    (root) =>
+      writeTree(root, {
+        "jsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@anthropic-ai/sdk": ["./plugins/vim/lib/sdk.js"] } } }),
+        "plugins/vim/lib/sdk.js": EVIL,
+      }),
+  ],
+  [
+    "a root package.json whose workspace and overrides swap the SDK for the pull request's code",
+    (root) =>
+      writeTree(root, {
+        "package.json": JSON.stringify({
+          name: "root",
+          private: true,
+          workspaces: [".github/sorter"],
+          overrides: { "@anthropic-ai/sdk": "file:./plugins/evil-sdk" },
+        }),
+        "plugins/evil-sdk/package.json": JSON.stringify({ name: "@anthropic-ai/sdk", version: "1.3.0", type: "module", main: "index.js" }),
+        "plugins/evil-sdk/index.js": EVIL,
+      }),
+  ],
+];
+
+describe("the workflow's layout: no file of the pull request is where Bun looks", () => {
+  test("Bun installs and runs the sorter outside the pull request's checkout, from the base branch's copy of the sorter", () => {
+    const layout = layoutFrom(readFileSync(WORKFLOW, "utf8"));
+    const workspace = "/workspace";
+    const prRoot = join(workspace, layout.prPath);
+    for (const dir of [layout.install.dir, layout.sort.dir]) {
+      expect(relative(prRoot, join(workspace, dir)).startsWith("..")).toBe(true);
+    }
+    expect(layout.trusted).not.toBeNull();
+    expect(layout.install.dir).toBe(join(layout.trusted!.path, ".github/sorter"));
+    expect(layout.sort.dir).toBe(layout.install.dir);
+    expect(layout.trusted!.sparse).toBe("/.github/sorter/");
+  });
+
+  for (const [name, poc] of pocs) {
+    test(`${name} does not take over the check`, async () => {
+      const r = await runInWorkflowLayout(poc);
+      expect(r.installCode).toBe(0);
+      expect(modelCalls()).toHaveLength(1);
+      expect(r.code).toBe(1);
+      expect(r.summary).toContain("## AI sorter: waits for the owner");
+    }, 30_000);
+  }
+});
+
+describe("the workflow", () => {
+  const workflow = readFileSync(join(here, "../workflows/ai-sorter.yml"), "utf8");
+  const parsed = Bun.YAML.parse(workflow) as any;
+  const sortStep = (parsed.jobs.sort.steps as any[]).find((step) => /\bbun sorter\.ts\b/.test(step.run ?? ""));
+
+  test("the job's name is the check name the recorded verdicts are looked up by", () => {
+    expect(parsed.jobs.sort.name).toBe(CHECK_NAME);
+    expect(parsed.permissions).toEqual({ contents: "read", "pull-requests": "read", checks: "read" });
+  });
+
+  // L1
+  test("the approver is written in the workflow, not read from a repository variable", () => {
+    expect(sortStep.env.SORTER_APPROVERS).toBe("0xnfrith");
+    expect(workflow).not.toContain("vars.");
+  });
+
+  test("it never uses pull_request_target, and the key is only in the step that sorts", () => {
+    expect(Object.keys(parsed.on).sort()).toEqual(["pull_request", "pull_request_review"]);
+    const withKey = (parsed.jobs.sort.steps as any[]).filter((step) => JSON.stringify(step).includes("secrets."));
+    expect(withKey).toEqual([sortStep]);
   });
 });
 
@@ -525,7 +918,9 @@ describe("untrusted text in the output", () => {
     fake.messages = [yes("::error::fake\n::add-mask::x ```\n[a link](https://example.invalid) @someone")];
     const r = await run();
     expect(r.code).toBe(1);
-    for (const line of r.stdout.split("\n")) expect(line.startsWith("::")).toBe(false);
+    // The only line that starts with "::" is the sorter's own record.
+    const commands = r.stdout.split("\n").filter((line) => line.startsWith("::"));
+    expect(commands).toEqual([recordLine(HEAD, true)]);
     expect(r.stdout).not.toContain("::error::");
     const block = r.summary.slice(r.summary.indexOf("````text\n") + 9, r.summary.lastIndexOf("\n````"));
     expect(block).not.toContain("\n");
@@ -550,7 +945,7 @@ describe("the pure parts", () => {
   });
 
   test("shown makes one safe line and caps it", () => {
-    expect(shown("a\nb\r\nc\u2028d")).toBe("a b c d");
+    expect(shown(`a\nb\r\nc${LS}d`)).toBe("a b c d");
     expect(shown("::warning::x `y`")).toBe(": :warning: :x 'y'");
     expect(shown("x".repeat(700)).length).toBeLessThan(620);
   });

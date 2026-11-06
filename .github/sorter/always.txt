@@ -1,8 +1,15 @@
 # Paths that always count as touching the sensitive list, without asking the model. One per line: a path that ends in "/" is a
-# folder and covers everything under it; "**/name" is a file of that name in any folder, the top one included; any other line is one
-# file. Lines that start with "#" and blank lines are ignored.
+# folder and covers everything under it; "**/name" is a file of that name in any folder, the top one included, and "*" in that name
+# stands for any characters but "/"; any other line is one file. Lines that start with "#" and blank lines are ignored.
 .github/
 LICENSE
 # .gitattributes can change how git shows a file in a diff (for example as binary, with no content), so a change to it is never
-# left to the model.
+# left to the model. .gitmodules points submodules at other repositories, whose content the diff never shows.
 **/.gitattributes
+**/.gitmodules
+# Lockfiles: dependency changes, as long machine-written churn the model cannot check line by line.
+**/*.lock
+**/*.lockb
+**/pnpm-lock.yaml
+**/package-lock.json
+**/npm-shrinkwrap.json
