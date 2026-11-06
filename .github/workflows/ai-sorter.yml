@@ -44,10 +44,8 @@ jobs:
         working-directory: .github/sorter
         run: bun install --frozen-lockfile --ignore-scripts
       - name: The pull request's change
-        # Plain git: no external diff programs and no text conversion, whatever the repository's attributes say.
-        run: |
-          git diff --no-color --no-ext-diff --no-textconv --find-renames HEAD^1 HEAD > "$RUNNER_TEMP/change.diff"
-          git diff --no-ext-diff --no-renames --name-only -z HEAD^1 HEAD > "$RUNNER_TEMP/change.files"
+        # Every file as text (--text) whatever .gitattributes says, no external diff programs, no text conversion, no renames.
+        run: .github/sorter/change.sh "$RUNNER_TEMP"
       - name: Sort
         working-directory: .github/sorter
         env:
@@ -59,5 +57,5 @@ jobs:
           # else the repository's owner. For a repository owned by an organization, set the variable: an organization cannot review.
           SORTER_APPROVERS: ${{ vars.SORTER_APPROVERS || github.repository_owner }}
           SORTER_DIFF_FILE: ${{ runner.temp }}/change.diff
-          SORTER_FILES_FILE: ${{ runner.temp }}/change.files
+          SORTER_NUMSTAT_FILE: ${{ runner.temp }}/change.numstat
         run: bun sorter.ts

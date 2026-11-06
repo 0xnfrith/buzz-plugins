@@ -1,6 +1,7 @@
 // The AI sorter (README.md): one required check that answers whether a pull request touches the owner's sensitive list (list.md).
 // "No" passes. "Yes" fails until the owner approves the pull request's latest commit. Every other outcome fails too: a missing key, an
-// API error or a spent cap, a refusal, an answer that is not exactly {"touches_list": boolean, "reason": string}, a diff over the cap.
+// API error or a spent cap, a refusal, an answer that is not exactly {"touches_list": boolean, "reason": string}, a diff over the cap,
+// a diff that does not show the whole change (binary, or a path with no content lines).
 // The owner's approval of the latest commit clears every one of them, because nothing is left for the sorter to ask him for.
 //
 // Run by .github/workflows/ai-sorter.yml with `bun sorter.ts`. Exit code 0 is a pass, anything else is a fail.
@@ -69,7 +70,7 @@ export function shown(text: string, max = REASON_SHOWN_CHARS): string {
   return out;
 }
 
-/** The entries of always.txt: folders end in "/", anything else is one file. */
+// The entries of always.txt: "folder/" covers everything under it, "**/name" a file of that name in any folder, anything else one file.
 export function readAlways(text: string): string[] {
   return text
     .split("\n")
@@ -78,7 +79,49 @@ export function readAlways(text: string): string[] {
 }
 
 export function alwaysHits(files: string[], always: string[]): string[] {
-  return files.filter((file) => always.some((entry) => (entry.endsWith("/") ? file.startsWith(entry) : file === entry)));
+  return files.filter((file) =>
+    always.some((entry) => {
+      if (entry.startsWith("**/")) return file === entry.slice(3) || file.endsWith(`/${entry.slice(3)}`);
+      return entry.endsWith("/") ? file.startsWith(entry) : file === entry;
+    }),
+  );
+}
+
+/** One entry of `git diff --numstat -z --no-renames`: lines added and removed, "-" for a file git counts as binary. */
+export type FileStat = { path: string; added: string; removed: string };
+
+/** The numstat records, or null when any record is not one. */
+export function parseNumstat(text: string): FileStat[] | null {
+  const stats: FileStat[] = [];
+  for (const record of text.split("\0")) {
+    if (record === "") continue;
+    const match = record.match(/^(\d+|-)\t(\d+|-)\t(.+)$/s);
+    if (!match) return null;
+    stats.push({ added: match[1], removed: match[2], path: match[3] });
+  }
+  return stats;
+}
+
+/**
+ * Why the diff does not show the whole change, or null when it does. Whatever the model cannot read counts as touching the list:
+ * a file git marks as binary (by its content or by .gitattributes), raw binary bytes, a "Binary files ... differ" line, and a changed
+ * path with no content lines (a mode change, an empty file). The last check counts the diff's own file sections against the numstat,
+ * so a path that has no section with a hunk is caught even if the counts above said otherwise.
+ */
+export function unreadable(diff: string, stats: FileStat[]): string | null {
+  const name = (paths: string[]) => paths.slice(0, 5).join(", ") + (paths.length > 5 ? ` and ${paths.length - 5} more` : "");
+  if (/^(Binary files .* differ|GIT binary patch)$/m.test(diff)) return "The diff shows a file as binary instead of its content.";
+  const binary = stats.filter((stat) => stat.added === "-" || stat.removed === "-").map((stat) => stat.path);
+  if (binary.length > 0) return `Git counts these as binary (by their content or by .gitattributes): ${name(binary)}.`;
+  if (diff.includes("\0")) return "The diff holds binary bytes the model cannot read.";
+  const empty = stats.filter((stat) => stat.added === "0" && stat.removed === "0").map((stat) => stat.path);
+  if (empty.length > 0) return `Changed with no content lines in the diff (a mode change or an empty file): ${name(empty)}.`;
+  const sections = diff.split(/^(?=diff --git )/m).filter((section) => section.startsWith("diff --git "));
+  const withHunk = sections.filter((section) => /^@@ /m.test(section)).length;
+  if (sections.length !== stats.length || withHunk !== stats.length) {
+    return `The diff has ${sections.length} file sections, ${withHunk} with content, for ${stats.length} changed paths.`;
+  }
+  return null;
 }
 
 export function systemPrompt(list: string): string {
@@ -236,33 +279,42 @@ export async function sort(env: Record<string, string | undefined>): Promise<Out
     return { result: "error", why: "the reviews could not be read", detail: String(error) };
   }
 
-  // 2. The change, as the workflow wrote it down.
-  let diff: string;
-  let files: string[];
+  // 2. The change, as change.sh wrote it down.
+  let raw: Buffer;
+  let stats: FileStat[] | null;
   let list: string;
   let always: string[];
   try {
-    diff = readFileSync(env.SORTER_DIFF_FILE ?? "", "utf8");
-    files = readFileSync(env.SORTER_FILES_FILE ?? "", "utf8").split("\0").filter((file) => file !== "");
+    raw = readFileSync(env.SORTER_DIFF_FILE ?? "");
+    stats = parseNumstat(readFileSync(env.SORTER_NUMSTAT_FILE ?? "", "utf8"));
     list = readFileSync(env.SORTER_LIST_FILE || join(here, "list.md"), "utf8");
     always = readAlways(readFileSync(env.SORTER_ALWAYS_FILE || join(here, "always.txt"), "utf8"));
   } catch (error) {
     return { result: "error", why: "the change or the sorter's own files could not be read", detail: String(error) };
   }
+  if (stats === null) return { result: "error", why: "the list of changed paths (numstat) is malformed" };
 
-  // 3. Paths that count without asking (always.txt), and a diff too big to read: both wait for the owner, and the model is not called.
-  const hits = alwaysHits(files, always);
+  // 3. What counts without asking, and the model is not called: a path in always.txt, a diff over the cap, and a diff that does not
+  //    show the whole change. Each waits for the owner.
+  const hits = alwaysHits(
+    stats.map((stat) => stat.path),
+    always,
+  );
   if (hits.length > 0) {
     const named = hits.slice(0, 5).join(", ") + (hits.length > 5 ? ` and ${hits.length - 5} more` : "");
     return { result: "waits", why: "the change touches a path in always.txt", reason: `Changes ${named}.` };
   }
-  const bytes = Buffer.byteLength(diff, "utf8");
-  if (bytes > DIFF_CAP_BYTES) {
+  if (raw.length > DIFF_CAP_BYTES) {
     return {
       result: "waits",
       why: "the diff is over the size cap, so it counts as touching the list",
-      reason: `The diff is ${bytes} bytes; the cap is ${DIFF_CAP_BYTES}.`,
+      reason: `The diff is ${raw.length} bytes; the cap is ${DIFF_CAP_BYTES}.`,
     };
+  }
+  const diff = raw.toString("utf8");
+  const hidden = unreadable(diff, stats);
+  if (hidden !== null) {
+    return { result: "waits", why: "the diff does not show the whole change, so it counts as touching the list", reason: hidden };
   }
 
   // 4. The key. A secret that is not set reaches the job as an empty string; fork pull requests never get one.

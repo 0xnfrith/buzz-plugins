@@ -17,10 +17,14 @@ listed, such as a plugin that starts sending a token somewhere new. The workflow
 
 1. **The owner approved this exact commit** (the owner's latest review that is not a comment approves the pull request's head): pass. Nothing
    is left to wait for, so the model is not asked, and this clears every failure below.
-2. **The change touches a path in [`always.txt`](always.txt)** (`.github/` and `LICENSE`): waits for the owner. The model is not asked.
+2. **The change touches a path in [`always.txt`](always.txt)** (`.github/`, `LICENSE` and any `.gitattributes`): waits for the owner.
+   The model is not asked.
 3. **The diff is over 200,000 bytes**: counts as touching the list, so it waits for the owner. The model is not asked.
-4. **The `SORTER_ANTHROPIC_API_KEY` secret is missing or empty**: fails closed.
-5. **The model's answer**, with the diff inside markers that carry a random code. Only `end_turn` with exactly one text block that is
+4. **The diff does not show the whole change**: git counts a changed file as binary (by its content or by `.gitattributes`), the diff
+   holds binary bytes or a "Binary files ... differ" line, or a changed path has no content lines (a mode change, an empty file). It
+   counts as touching the list, so it waits for the owner. The model is not asked.
+5. **The `SORTER_ANTHROPIC_API_KEY` secret is missing or empty**: fails closed.
+6. **The model's answer**, with the diff inside markers that carry a random code. Only `end_turn` with exactly one text block that is
    exactly the two fields, a boolean and a reason that says something, counts. Everything else fails closed.
 
 The reason (or the error) is shown in the check's summary, on one line inside a code block.
@@ -57,6 +61,10 @@ Until step 2, the check fails closed on every pull request. Until step 4, that b
   request's merge commit. Someone who can push a branch here can change the sorter to pass, and can change it to read the key. The
   guard is code-owner review on `.github/` (setup step 5): without it, the sorter is advice, not a gate. Using `pull_request_target`
   instead would run the base branch's copy, but it hands the key to a job that reads untrusted code, so this workflow does not use it.
+- **How git shows the change.** [`change.sh`](change.sh) diffs every file as text (`--text`), whatever `.gitattributes` says, with no
+  external diff programs, no text conversion and no rename detection. A pull request therefore cannot hide a file's content from the
+  model by marking it binary, and a change to any `.gitattributes`, binary content and paths without content lines wait for the owner
+  (step 4). Pull requests that add images wait for the owner too.
 - **Pull requests from forks get no secrets**, so the model is never asked and the check fails closed. The owner's approval of the
   latest commit still clears it (reading reviews needs no secret). That is the intended behaviour for outside contributions.
 - **It is not deterministic.** The model takes no temperature setting, so a re-run of the same diff can answer differently. A "yes"
@@ -72,13 +80,14 @@ Until step 2, the check fails closed on every pull request. Until step 4, that b
 One call per run: a push, a reopen, an edit of the pull request, or a review. Input is the diff (at most 200,000 bytes, about 50,000 to
 70,000 tokens) plus about 600 tokens of instructions; output is a short answer at low effort. At Claude Haiku 5.5's prices (USD 0.10 per
 million input tokens and 0.50 per million output tokens, below 100,000 input tokens) a large pull request costs well under one cent per
-run. Runs that end at step 1, 2, 3 or 4 make no call.
+run. Runs that end at steps 1 to 5 make no call.
 
 ## Files
 
 | File | What it is |
 | --- | --- |
 | `sorter.ts` | The check. Run as `bun sorter.ts` by the workflow; exit 0 passes. |
+| `change.sh` | Writes the change down for the check: the diff and the lines changed per path. The workflow and the tests run it. |
 | `list.md` | The sensitive list, word for word in the model's instructions. |
 | `always.txt` | Paths that always count as touching the list, without asking the model. |
 | `sorter.test.ts` | Tests, against a fake Claude API and a fake GitHub API. |
@@ -94,7 +103,10 @@ bun test
 
 They run the script the way the workflow does and check its exit code and summary: a yes and a no; malformed JSON and every other
 answer that is not exactly the schema; a refusal; a spent cap, a bad key, a server error and no API at all; a missing and an empty
-secret; an oversize diff and a `.github/` path that never reach the model; the owner's approval, including old commits, dismissals and
+secret; an oversize diff and a `.github/` path that never reach the model; real git repositories run through `change.sh`, where a
+file marked binary by `.gitattributes` still shows its content, and an added `.gitattributes` (at the top or in a folder), a mode
+change, an empty file and binary bytes all wait without the model; a "Binary files ... differ" line and a path with no section or
+no hunk; the owner's approval, including old commits, dismissals and
 other people's approvals; and output that tries to start a workflow command. `.github/workflows/ai-sorter-tests.yml` runs them in CI.
 A live call needs the real key and is not part of the tests.
 
