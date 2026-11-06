@@ -3,7 +3,7 @@
 # a separate workflow (vim-latency.yml).
 #
 # Both suites load the committed plugins/vim/plugin.js, not src/, so the `build` job checks that the committed file is the build of
-# src/: without it, a change to src/ alone would be tested as the old plugin.js.
+# src/: without it, a change to src/ alone would be tested as the old plugin.js. The functional tests run after it, and not when it fails.
 name: Vim functional tests
 
 on:
@@ -45,13 +45,23 @@ jobs:
       - name: Type check
         run: pnpm exec tsc
       - name: plugin.js is the build of the source
-        # Buzz loads the committed plugin.js and never runs a build: it has to be what this source builds to.
+        # Buzz loads the committed plugin.js and never runs a build: it has to be what this source builds to. The file is removed
+        # first, so a build that does not write it (a changed output name, a build script that does nothing) leaves it missing, and
+        # `git status` also catches a plugin.js that is missing from the commit or not tracked at all.
         run: |
+          rm -f plugin.js
           pnpm run build
-          git diff --exit-code -- plugin.js || { echo "::error::plugin.js is not the build of src/: run 'pnpm run build' in plugins/vim and commit it"; exit 1; }
+          if [ -n "$(git status --porcelain -- plugin.js)" ]; then
+            git status --short -- plugin.js
+            git diff -- plugin.js
+            echo "::error::plugin.js is not the build of src/: run 'pnpm run build' in plugins/vim and commit it"
+            exit 1
+          fi
 
   functional:
     name: Vim functional tests
+    # A stale bundle fails `build` in about a minute; the functional tests would only test the old plugin.js, so they wait for it.
+    needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 30 # a run takes about 11 minutes, setup included
     steps:

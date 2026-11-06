@@ -43,7 +43,15 @@ jobs:
           jq -e '.numTotalTests > 0 and .numPassedTests == .numTotalTests and .numFailedTests == 0 and .numPendingTests == 0' "$RUNNER_TEMP/unit.json"
           jq '{tests: .numTotalTests, passed: .numPassedTests, failed: .numFailedTests, skipped: .numPendingTests}' "$RUNNER_TEMP/unit.json"
       - name: plugin.js is the build of the source
-        # Buzz loads the committed plugin.js and never runs a build: it has to be what this source builds to.
+        # Buzz loads the committed plugin.js and never runs a build: it has to be what this source builds to. The file is removed
+        # first, so a build that does not write it (a changed output name, a build script that does nothing) leaves it missing, and
+        # `git status` also catches a plugin.js that is missing from the commit or not tracked at all.
         run: |
+          rm -f plugin.js
           pnpm run build
-          git diff --exit-code -- plugin.js || { echo "::error::plugin.js is not the build of src/: run 'pnpm run build' in plugins/beeper and commit it"; exit 1; }
+          if [ -n "$(git status --porcelain -- plugin.js)" ]; then
+            git status --short -- plugin.js
+            git diff -- plugin.js
+            echo "::error::plugin.js is not the build of src/: run 'pnpm run build' in plugins/beeper and commit it"
+            exit 1
+          fi
