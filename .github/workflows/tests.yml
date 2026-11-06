@@ -16,12 +16,12 @@ name: Tests
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, ci-proof-base]
     # `edited` covers a pull request whose base is changed to main: it has no new commit, so without it the checks of a run against
     # another base would stand. It also runs again when the title or the description is edited.
     types: [opened, synchronize, reopened, edited]
   push:
-    branches: [main]
+    branches: [main, ci-proof-base]
   merge_group:
   workflow_dispatch:
 
