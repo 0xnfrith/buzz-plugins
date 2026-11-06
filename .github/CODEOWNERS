@@ -13,9 +13,10 @@
 /plugins/artifacts/licenses/ChakraPetch-OFL.txt  @0xnfrith
 
 # Where a plugin keeps a person's token or API key. Buzz runs the committed
-# plugin.js and never builds it, and nothing checks a built file against its
-# source, so the built file is listed with its source. The manifest declares
-# the key-store commands a plugin may run and the addresses it may reach.
+# plugin.js and never builds it. No CI job checks the Beeper or Linear
+# plugin.js against its source, so each is listed with its source. The
+# manifest declares the key-store commands a plugin may run and the addresses
+# it may reach.
 /plugins/beeper/src/beeper/config.ts             @0xnfrith
 /plugins/beeper/plugin.js                        @0xnfrith
 /plugins/beeper/manifest.json                    @0xnfrith
@@ -23,5 +24,12 @@
 /plugins/linear/plugin.js                        @0xnfrith
 /plugins/linear/manifest.json                    @0xnfrith
 
-# The support plugin's login proof: the value a person's key is asked to sign.
+# The support plugin's login proof: the value a person's key is asked to sign
+# (identity.ts), the one address the proof is sent to (origin.ts, and the
+# manifest's networkOrigins, which must match it), and the built plugin.js
+# Buzz runs. Its CI job does check that plugin.js is the build of the source,
+# but no branch rule requires that check yet, so the built file is listed too.
 /plugins/megatech-support/src/support/identity.ts  @0xnfrith
+/plugins/megatech-support/src/support/origin.ts    @0xnfrith
+/plugins/megatech-support/manifest.json            @0xnfrith
+/plugins/megatech-support/plugin.js                @0xnfrith
