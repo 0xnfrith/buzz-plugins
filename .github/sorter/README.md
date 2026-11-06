@@ -54,16 +54,17 @@ The reason (or the error) is shown in the check's summary, on one line inside a 
 ## One verdict per change
 
 The run that asks the model prints one notice annotation on its own check run, titled `ai-sorter-verdict`. It holds the verdict and
-exactly what was judged: the pull request's number, its head commit, its base branch, the base commit the diff was taken against (the
-merge commit's first parent) and the sha256 of the diff. A later run (an edit of the pull request, a review, a re-run, a reopening)
-reuses it only when every one of those is the same now, so nobody, the author included, can re-roll a "yes" into a "no" by editing the
-pull request, reviewing it or re-running the check. A pull request retargeted to another branch, or whose base has moved, is a different
-change: no record matches, and the run fails closed until a new push asks again, or the owner approves. The oldest matching record wins.
-The paths, the cap and the unreadable-diff rules are checked again on every run; only the model's answer is reused.
+exactly what was judged: the head commit, the base branch and the sha256 of the diff. A later run (an edit of the pull request, a
+review, a re-run, a reopening, or another pull request from the same commit) reuses it only when all three are the same now, so nobody,
+the author included, can re-roll a "yes" into a "no" by editing the pull request, reviewing it, re-running the check or opening a second
+pull request. When the base moves without changing the diff (byte for byte), it is the same change and the record is reused. A pull
+request retargeted to another branch, or whose base moved in a way that changes the diff, is a different change: no record matches, and
+the run fails closed until a new push asks again, or the owner approves. The oldest matching record wins. The paths, the cap and the
+unreadable-diff rules are checked again on every run; only the model's answer is reused.
 
 A record counts only from this workflow's own run. Through the Checks and Actions APIs the lookup requires a check run named
 `AI sorter`, by the GitHub Actions app, on this head, whose workflow run is `.github/workflows/ai-sorter.yml`, started by a
-`pull_request` event, for this pull request, base branch and base commit. GitHub does not say which version of the workflow file ran:
+`pull_request` event, for a pull request into this base branch. GitHub does not say which version of the workflow file ran:
 a pull request that edits it touches `.github/`, which waits for the owner before any record is read. A record forged from another
 branch's copy of the workflow needs someone who can push a branch here, and they can forge the check itself anyway (see the limits).
 
@@ -115,8 +116,7 @@ closed on every pull request; until step 3, that blocks nothing.
 - **Pull requests from forks get no secrets**, so the model is never asked and the check fails closed. The owner's approval of the
   latest commit still clears it (reading reviews needs no secret). That is the intended behaviour for outside contributions.
 - **It is not deterministic.** The model takes no temperature setting, so the same diff asked twice can be answered differently. That
-  is why the first answer for a change is final; a new push asks again, for the new commit. A new pull request from the same commit
-  is a new change too (the record names the pull request), so it is asked once more.
+  is why the first answer for a change is final; a new push asks again, for the new commit.
 - **The owner cannot approve their own pull request** (GitHub never lets an author approve). A pull request the owner opens that
   touches the list stays red; CODEOWNERS has the same limit.
 - **Cost can be run up.** Each push asks the model once. Someone who can push to pull requests here can push many commits, or open many
@@ -156,9 +156,11 @@ They run the script the way the workflow does and check its exit code and summar
 - **The API and the key:** a spent cap, a bad key, a server error and no API at all; a missing and an empty secret.
 - **The owner's approval:** old commits, dismissals and other people's approvals.
 - **One verdict per change:** a recorded yes reused by an edit, a review, a re-run and a reopening; no record on those fails closed;
-  the oldest record wins. No record counts for a retargeted pull request, a moved base, another diff or another pull request, nor from
-  another workflow, a push event, a fork's run, another app, check or commit, or in another format. A pull request that edits the
-  workflow waits before any record is read.
+  the oldest record wins; a second pull request from the same commit and a base that moved without changing the diff reuse it. No
+  record counts for a retargeted pull request or a diff that changed, nor from another workflow, a push event, a fork's run, a pull
+  request into another base branch, another app, check or commit, or in another format. A pull request that edits the workflow waits
+  before any record is read. With real git, a base that moves elsewhere leaves the diff byte-identical, and one that moves the
+  changed file does not.
 - **What never reaches the model:** an oversize diff and the `always.txt` paths. With real git repositories run through `change.sh`, so
   do a file marked binary by `.gitattributes` (which still shows its content), an added `.gitattributes`, `.gitmodules` or submodule, a
   symbolic link (added, or a file turned into one), a mode change, an empty file and binary bytes; a plain deletion still reaches the

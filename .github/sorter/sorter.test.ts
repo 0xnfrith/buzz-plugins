@@ -64,7 +64,7 @@ const server = Bun.serve({
       if (!reply) return Response.json({ type: "error", error: { type: "api_error", message: "no reply set" } }, { status: 500 });
       return Response.json(reply.body, { status: reply.status, headers: reply.headers });
     }
-    if (req.method === "GET" && url.pathname === "/repos/owner/repo/pulls/7/reviews") {
+    if (req.method === "GET" && /^\/repos\/owner\/repo\/pulls\/\d+\/reviews$/.test(url.pathname)) {
       if (fake.reviewsStatus !== 200) return Response.json({ message: "nope" }, { status: fake.reviewsStatus });
       const page = Number(url.searchParams.get("page") ?? "1");
       const headers: Record<string, string> = {};
@@ -112,8 +112,8 @@ const no = (reason = "Only fixes a typo in a plugin README.") => answer(JSON.str
 const review = (login: string, state: string, commit_id: string) => ({ user: { login }, state, commit_id });
 
 const SMALL_DIFF_SHA256 = () => createHash("sha256").update(SMALL_DIFF).digest("hex");
-// What a record for the default change (SMALL_DIFF, pull request 7, on main at BASE) is bound to.
-const KEY = (): RecordKey => ({ pr: 7, head: HEAD, base_ref: "main", base_sha: BASE, diff_sha256: SMALL_DIFF_SHA256() });
+// What a record for the default change (SMALL_DIFF on HEAD, into main) is bound to.
+const KEY = (): RecordKey => ({ head: HEAD, base_ref: "main", diff_sha256: SMALL_DIFF_SHA256() });
 
 /**
  * A check run on HEAD, from this workflow's pull_request run for pull request 7 on main at BASE, with one annotation: a record of the
@@ -171,7 +171,6 @@ function sorterEnv(dir: string, change: string, opts: { key?: string | null; env
     SORTER_PR_NUMBER: "7",
     SORTER_HEAD_SHA: HEAD,
     SORTER_BASE_REF: "main",
-    SORTER_BASE_FILE: join(change, "change.base"),
     SORTER_APPROVERS: OWNER,
     SORTER_EVENT: "pull_request",
     SORTER_ACTION: "synchronize",
@@ -203,7 +202,6 @@ async function run(
     writeFileSync(join(dir, "change.diff"), opts.diff ?? SMALL_DIFF);
     const numstat = opts.numstat ?? (opts.files ?? ["plugins/vim/README.md"]).map((path) => `1\t1\t${path}\0`).join("");
     writeFileSync(join(dir, "change.numstat"), numstat);
-    writeFileSync(join(dir, "change.base"), `${BASE}\n`);
   }
   writeFileSync(join(dir, "summary.md"), "");
   const proc = Bun.spawn(["bun", "sorter.ts"], { cwd: here, env: sorterEnv(dir, change, opts), stdout: "pipe", stderr: "pipe" });
@@ -511,9 +509,16 @@ describe("one verdict per change", () => {
       {},
     ],
     ["a record naming another base branch, in this pull request's run", () => recordRun(5, false, { key: { base_ref: "feature" } }), {}],
-    ["a moved base (another base commit)", () => recordRun(5, false, { key: { base_sha: OLD } }), {}],
+    [
+      "a base that moved and changed the diff",
+      () =>
+        recordRun(5, false, {
+          key: { diff_sha256: "0".repeat(64) },
+          workflowRun: { pull_requests: [{ number: 7, base: { ref: "main", sha: OLD } }] },
+        }),
+      {},
+    ],
     ["another diff (sha256)", () => recordRun(5, false, { key: { diff_sha256: "0".repeat(64) } }), {}],
-    ["another pull request with the same head", () => recordRun(5, false, { key: { pr: 8 } }), {}],
   ] as [string, () => void, Record<string, string>][]) {
     test(`a record for ${name} does not count: fails closed`, async () => {
       setUp();
@@ -525,12 +530,31 @@ describe("one verdict per change", () => {
     });
   }
 
-  test("a moved base on a push asks the model again: a new base is a new change", async () => {
-    recordRun(5, true, { key: { base_sha: OLD } });
+  test("a push whose diff has no record asks the model again: a new diff is a new change", async () => {
+    recordRun(5, true, { key: { diff_sha256: "0".repeat(64) } });
     fake.messages = [no()];
     const r = await run();
     expect(r.code).toBe(0);
     expect(modelCalls()).toHaveLength(1);
+  });
+
+  test("a base that moved without changing the diff is the same change: the record is reused", async () => {
+    recordRun(5, true, { workflowRun: { pull_requests: [{ number: 7, base: { ref: "main", sha: OLD } }] } });
+    fake.messages = [no()];
+    const r = await run({ env: review });
+    expect(r.code).toBe(1);
+    expect(r.summary).toContain("the verdict recorded for this change (check run 5)");
+    expect(modelCalls()).toHaveLength(0);
+  });
+
+  test("a second pull request from the same head reuses the record: it cannot re-roll it", async () => {
+    // The record was made by pull request 7's run; pull request 8 has the same head, base branch and diff.
+    recordRun(5, true);
+    fake.messages = [no()];
+    const r = await run({ env: { SORTER_PR_NUMBER: "8", SORTER_ACTION: "opened" } });
+    expect(r.code).toBe(1);
+    expect(r.summary).toContain("the verdict recorded for this change (check run 5)");
+    expect(modelCalls()).toHaveLength(0);
   });
 
   // Where the record came from. A matching record from anywhere but this workflow's own pull_request run does not count.
@@ -538,9 +562,8 @@ describe("one verdict per change", () => {
     ["a forged annotation from another workflow", () => recordRun(5, false, { workflowRun: { path: ".github/workflows/other.yml" } })],
     ["a run started by a push", () => recordRun(5, false, { workflowRun: { event: "push" } })],
     ["a workflow run on another commit", () => recordRun(5, false, { workflowRun: { head_sha: OLD } })],
-    ["a workflow run for another pull request", () => recordRun(5, false, { workflowRun: { pull_requests: [{ number: 8, base: { ref: "main", sha: BASE } }] } })],
+    ["a workflow run for a pull request into another base branch", () => recordRun(5, false, { workflowRun: { pull_requests: [{ number: 7, base: { ref: "feature", sha: BASE } }] } })],
     ["a workflow run with no pull request (a fork's)", () => recordRun(5, false, { workflowRun: { pull_requests: [] } })],
-    ["a workflow run on another base commit", () => recordRun(5, false, { workflowRun: { pull_requests: [{ number: 7, base: { ref: "main", sha: OLD } }] } })],
     ["a check run with no workflow run", () => {
       recordRun(5, false);
       fake.workflowRuns = {};
@@ -548,9 +571,9 @@ describe("one verdict per change", () => {
     ["another app", () => recordRun(5, false, { over: { app: { slug: "some-other-app" } } })],
     ["another check name", () => recordRun(5, false, { over: { name: "AI sorter tests" } })],
     ["a check run on another commit", () => recordRun(5, false, { over: { head_sha: OLD } })],
-    ["a malformed record", () => recordRun(5, '{"v":2,"touches_list":false}')],
-    ["an old-format record", () => recordRun(5, JSON.stringify({ v: 1, head: HEAD, touches_list: false }))],
-    ["a record with an extra key", () => recordRun(5, JSON.stringify({ v: 2, ...KEY(), touches_list: false, by: "x" }))],
+    ["a malformed record", () => recordRun(5, '{"v":3,"touches_list":false}')],
+    ["an old-format record", () => recordRun(5, JSON.stringify({ v: 2, ...KEY(), pr: 7, base_sha: BASE, touches_list: false }))],
+    ["a record with an extra key", () => recordRun(5, JSON.stringify({ v: 3, ...KEY(), touches_list: false, by: "x" }))],
     ["another annotation title", () => recordRun(5, false, { title: "something-else" })],
   ] as [string, () => void][]) {
     test(`${name} does not count`, async () => {
@@ -594,13 +617,12 @@ describe("one verdict per change", () => {
     });
   }
 
-  test("a malformed base commit or base branch fails closed", async () => {
-    let r = await run({ env: { SORTER_BASE_REF: "" } });
-    expect(r.code).toBe(1);
-    expect(r.summary).toContain("SORTER_BASE_REF");
-    r = await run({ env: { SORTER_BASE_FILE: join(here, "always.txt") } });
-    expect(r.code).toBe(1);
-    expect(r.summary).toContain("base commit");
+  test("a missing or malformed base branch fails closed", async () => {
+    for (const ref of ["", "a\nb", "x".repeat(256)]) {
+      const r = await run({ env: { SORTER_BASE_REF: ref } });
+      expect(r.code).toBe(1);
+      expect(r.summary).toContain("SORTER_BASE_REF");
+    }
   });
 
   test("recordLine and parseRecord agree, and parseRecord takes nothing else", () => {
@@ -608,8 +630,8 @@ describe("one verdict per change", () => {
     const line = recordLine(key, true);
     expect(line.startsWith(`::notice title=${RECORD_TITLE}::`)).toBe(true);
     expect(parseRecord(line.slice(`::notice title=${RECORD_TITLE}::`.length), key)).toBe(true);
-    expect(parseRecord(JSON.stringify({ v: 2, ...key, touches_list: "true" }), key)).toBeNull();
-    expect(parseRecord(JSON.stringify({ v: 2, ...key, pr: "7", touches_list: true }), key)).toBeNull();
+    expect(parseRecord(JSON.stringify({ v: 3, ...key, touches_list: "true" }), key)).toBeNull();
+    expect(parseRecord(JSON.stringify({ v: 3, ...key, head: OLD, touches_list: true }), key)).toBeNull();
     expect(parseRecord(42, key)).toBeNull();
     // "%", "\r" and "\n" in a base branch name are escaped in the workflow command.
     expect(recordLine({ ...key, base_ref: "a%b" }, false)).toContain('"base_ref":"a%25b"');
@@ -746,8 +768,25 @@ describe("change.sh and a diff that does not show the whole change (real git)", 
     const content: string = modelCalls()[0].body.messages[0].content;
     expect(content).toContain(readFileSync(join(out, "change.diff"), "utf8"));
     expect(content).toContain("+world");
-    // The base commit the verdict is bound to: the merge commit's first parent.
-    expect(readFileSync(join(out, "change.base"), "utf8").trim()).toBe(git(repo, "rev-parse", "HEAD^1"));
+  });
+
+  test("a base that moves without touching the change gives a byte-identical diff; one that touches it does not", () => {
+    const lines = (last: string, first = "l1") => [first, "l2", "l3", "l4", "l5", "l6", "l7", "l8", "l9", last].join("\n") + "\n";
+    const { repo, head } = repoWith({
+      base: { "plugins/x/notes.md": lines("l10"), "plugins/y/other.md": "one\n" },
+      pr: { "plugins/x/notes.md": lines("l10 changed") },
+    });
+    const before = readFileSync(join(changeSh(repo, head), "change.diff"));
+    // main moves on with a change elsewhere, and the pull request is merged into it again, as GitHub does for its merge commit.
+    const remerge = (files: Record<string, string>) => {
+      git(repo, "reset", "-q", "--hard", "HEAD^1");
+      writeTree(repo, files);
+      git(repo, "commit", "-q", "-am", "main moves");
+      git(repo, "merge", "-q", "--no-ff", "--no-edit", "pull-request");
+      return readFileSync(join(changeSh(repo, head), "change.diff"));
+    };
+    expect(remerge({ "plugins/y/other.md": "two\n" }).equals(before)).toBe(true);
+    expect(remerge({ "plugins/x/notes.md": lines("l10", "l1 changed") }).equals(before)).toBe(false);
   });
 
   // The review's remaining cases: a symbolic link added, a file turned into one, and a plain deletion.
@@ -995,7 +1034,6 @@ async function runInWorkflowLayout(poc: (prRoot: string) => void) {
   const dir = mkdtempSync(join(tmpdir(), "ai-sorter-test-"));
   writeFileSync(join(dir, "change.diff"), SMALL_DIFF);
   writeFileSync(join(dir, "change.numstat"), "1\t1\tplugins/vim/README.md\0");
-  writeFileSync(join(dir, "change.base"), `${BASE}\n`);
   writeFileSync(join(dir, "summary.md"), "");
   fake.messages = [yes()];
   const proc = Bun.spawn(["bash", "-c", layout.sort.run], {

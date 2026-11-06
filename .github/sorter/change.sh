@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # usage: change.sh PR_REPOSITORY HEAD_SHA OUTPUT_FOLDER
 #
-# Writes the pull request's change for the sorter: OUTPUT_FOLDER/change.diff (the diff), OUTPUT_FOLDER/change.numstat (lines added and
-# removed per path, NUL-separated) and OUTPUT_FOLDER/change.base (the base commit), from the merge commit's first parent (the base
-# branch) to the merge commit checked out in PR_REPOSITORY. The workflow runs this file from the base branch's copy of the sorter, and
+# Writes the pull request's change for the sorter: OUTPUT_FOLDER/change.diff (the diff) and OUTPUT_FOLDER/change.numstat (lines added
+# and removed per path, NUL-separated), from the merge commit's first parent (the base branch) to the merge commit checked out in
+# PR_REPOSITORY. The workflow runs this file from the base branch's copy of the sorter, and
 # the tests run the same file.
 #
 # It refuses unless the checkout is a merge commit whose second parent is HEAD_SHA, the pull request's head: the verdict is recorded
@@ -23,4 +23,3 @@ second=$(git -C "$repo" rev-parse --verify --quiet 'HEAD^2^{commit}') || fail "t
 args=(--no-color --no-ext-diff --no-textconv --text --no-renames HEAD^1 HEAD)
 git -C "$repo" diff "${args[@]}" > "$out/change.diff"
 git -C "$repo" diff --numstat -z "${args[@]}" > "$out/change.numstat"
-git -C "$repo" rev-parse --verify 'HEAD^1^{commit}' > "$out/change.base"

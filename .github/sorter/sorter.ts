@@ -256,26 +256,27 @@ export async function approverOfHead(opts: {
 
 // ---------------------------------------------------------------------------------------------------------------------------------
 // The recorded verdict: the model is asked once for a given change, and its verdict is final for it. The run that asked prints a notice
-// annotation (recordLine) on its own check run. A later run (an edit of the pull request, a review, a re-run, a reopening) reuses it only
-// when it is for exactly the same change: the same pull request, head, base branch, base commit (the merge commit's first parent) and
-// diff (its sha256). A retargeted pull request or a moved base is a different change: no record, and the run fails closed.
+// annotation (recordLine) on its own check run. A later run (an edit of the pull request, a review, a re-run, a reopening, another pull
+// request from the same commit) reuses it only when it is for exactly the same change: the same head, base branch and diff (its sha256).
+// A base that moved without changing the diff is the same change; a retargeted pull request, or a moved base that changes the diff, is
+// not: no record, and the run fails closed.
 //
 // Where a record may come from: a check run of this check, by the GitHub Actions app, on this head, whose workflow run is this workflow
-// file (WORKFLOW_PATH), started by a pull_request event, for this pull request with this base branch and base commit. GitHub does not
-// say which version of the workflow file ran. A pull request whose change edits it touches .github/, which waits for the owner before
-// any record is read; another branch would have to be pushed to this repository, and anyone who can push a branch can forge a check
-// outright (the README's limits).
+// file (WORKFLOW_PATH), started by a pull_request event, for a pull request into this base branch. GitHub does not say which version of
+// the workflow file ran. A pull request whose change edits it touches .github/, which waits for the owner before any record is read;
+// another branch would have to be pushed to this repository, and anyone who can push a branch can forge a check outright (the README's
+// limits).
 
 export const WORKFLOW_PATH = ".github/workflows/ai-sorter.yml";
 
 /** What a verdict is bound to: exactly the change that was judged. */
-export type RecordKey = { pr: number; head: string; base_ref: string; base_sha: string; diff_sha256: string };
+export type RecordKey = { head: string; base_ref: string; diff_sha256: string };
 
 // A workflow command's message: "%", "\r" and "\n" are escaped, as the runner unescapes them.
 const escapeData = (text: string) => text.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
 
 export function recordLine(key: RecordKey, touches: boolean): string {
-  const record = { v: 2, pr: key.pr, head: key.head, base_ref: key.base_ref, base_sha: key.base_sha, diff_sha256: key.diff_sha256 };
+  const record = { v: 3, head: key.head, base_ref: key.base_ref, diff_sha256: key.diff_sha256 };
   return `::notice title=${RECORD_TITLE}::${escapeData(JSON.stringify({ ...record, touches_list: touches }))}`;
 }
 
@@ -289,10 +290,10 @@ export function parseRecord(message: unknown, key: RecordKey): boolean | null {
     return null;
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  if (Object.keys(value).sort().join(",") !== "base_ref,base_sha,diff_sha256,head,pr,touches_list,v") return null;
+  if (Object.keys(value).sort().join(",") !== "base_ref,diff_sha256,head,touches_list,v") return null;
   const record = value as Record<string, unknown>;
-  if (record.v !== 2 || typeof record.touches_list !== "boolean") return null;
-  for (const field of ["pr", "head", "base_ref", "base_sha", "diff_sha256"] as const) {
+  if (record.v !== 3 || typeof record.touches_list !== "boolean") return null;
+  for (const field of ["head", "base_ref", "diff_sha256"] as const) {
     if (record[field] !== key[field]) return null;
   }
   return record.touches_list;
@@ -312,7 +313,7 @@ async function githubGet(url: string, token: string): Promise<unknown> {
   return res.json();
 }
 
-/** Whether a check run's workflow run is this workflow, started by a pull_request event, for this pull request and base. */
+/** Whether a check run's workflow run is this workflow, started by a pull_request event on this head, into this base branch. */
 async function fromThisWorkflow(opts: { api: string; repo: string; token: string; key: RecordKey }, suite: number): Promise<boolean> {
   const list = (await githubGet(`${opts.api}/repos/${opts.repo}/actions/runs?check_suite_id=${suite}`, opts.token)) as {
     workflow_runs?: unknown;
@@ -327,7 +328,7 @@ async function fromThisWorkflow(opts: { api: string; repo: string; token: string
     run?.head_sha === opts.key.head &&
     Array.isArray(run?.pull_requests) &&
     run.pull_requests.some(
-      (pr: any) => pr?.number === opts.key.pr && pr?.base?.ref === opts.key.base_ref && pr?.base?.sha === opts.key.base_sha,
+      (pr: any) => pr?.base?.ref === opts.key.base_ref,
     )
   );
 }
@@ -446,13 +447,11 @@ export async function sort(env: Record<string, string | undefined>): Promise<Out
   // 2. The change, as change.sh wrote it down.
   let raw: Buffer;
   let stats: FileStat[] | null;
-  let baseSha: string;
   let list: string;
   let always: string[];
   try {
     raw = readFileSync(env.SORTER_DIFF_FILE ?? "");
     stats = parseNumstat(readFileSync(env.SORTER_NUMSTAT_FILE ?? "", "utf8"));
-    baseSha = readFileSync(env.SORTER_BASE_FILE ?? "", "utf8").trim();
     list = readFileSync(env.SORTER_LIST_FILE || join(here, "list.md"), "utf8");
     always = readAlways(readFileSync(env.SORTER_ALWAYS_FILE || join(here, "always.txt"), "utf8"));
   } catch (error) {
@@ -485,17 +484,10 @@ export async function sort(env: Record<string, string | undefined>): Promise<Out
 
   // 4. A verdict already recorded for exactly this change is final: reuse it, whatever started this run.
   const baseRef = env.SORTER_BASE_REF ?? "";
-  if (!/^([0-9a-f]{40}|[0-9a-f]{64})$/.test(baseSha)) return { result: "error", why: "the base commit (change.base) is not a commit id" };
   if (baseRef === "" || baseRef.length > 255 || /[\u0000-\u001f\u007f]/.test(baseRef)) {
     return { result: "error", why: "SORTER_BASE_REF is missing or malformed" };
   }
-  const key: RecordKey = {
-    pr: Number(pr),
-    head,
-    base_ref: baseRef,
-    base_sha: baseSha,
-    diff_sha256: createHash("sha256").update(raw).digest("hex"),
-  };
+  const key: RecordKey = { head, base_ref: baseRef, diff_sha256: createHash("sha256").update(raw).digest("hex") };
   let recorded: Awaited<ReturnType<typeof recordedVerdict>>;
   try {
     recorded = await recordedVerdict({ api, repo, token, key });

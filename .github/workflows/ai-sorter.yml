@@ -76,7 +76,6 @@ jobs:
           SORTER_PR_NUMBER: ${{ github.event.pull_request.number }}
           SORTER_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           SORTER_BASE_REF: ${{ github.event.pull_request.base.ref }}
-          SORTER_BASE_FILE: ${{ runner.temp }}/change.base
           SORTER_EVENT: ${{ github.event_name }}
           SORTER_ACTION: ${{ github.event.action }}
           SORTER_RUN_ATTEMPT: ${{ github.run_attempt }}
