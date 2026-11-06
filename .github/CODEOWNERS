@@ -6,9 +6,22 @@
 #
 # .github/ holds the workflows, their helper script and this file, so it also
 # protects itself.
-/.github/                                  @0xnfrith
-/LICENSE                                   @0xnfrith
+/.github/                                        @0xnfrith
 
-# Where a plugin keeps a person's token or API key.
-/plugins/beeper/src/beeper/config.ts       @0xnfrith
-/plugins/linear/src/linear/keys.ts         @0xnfrith
+# Licence text: the repository's, and the bundled font's.
+/LICENSE                                         @0xnfrith
+/plugins/artifacts/licenses/ChakraPetch-OFL.txt  @0xnfrith
+
+# Where a plugin keeps a person's token or API key. Buzz runs the committed
+# plugin.js and never builds it, and nothing checks a built file against its
+# source, so the built file is listed with its source. The manifest declares
+# the key-store commands a plugin may run and the addresses it may reach.
+/plugins/beeper/src/beeper/config.ts             @0xnfrith
+/plugins/beeper/plugin.js                        @0xnfrith
+/plugins/beeper/manifest.json                    @0xnfrith
+/plugins/linear/src/linear/keys.ts               @0xnfrith
+/plugins/linear/plugin.js                        @0xnfrith
+/plugins/linear/manifest.json                    @0xnfrith
+
+# The support plugin's login proof: the value a person's key is asked to sign.
+/plugins/megatech-support/src/support/identity.ts  @0xnfrith
