@@ -1,0 +1,63 @@
+# The AI sorter (.github/sorter/README.md). Claude Haiku reads each pull request's change and answers one question: does it touch the
+# owner's sensitive list (.github/sorter/list.md)? "No" passes. "Yes" fails until the owner approves the pull request's latest commit.
+# It fails closed: a missing key, an API error, a spent cap or an answer that is not the exact JSON fails the check too.
+#
+# Built to be a required check, so: no `paths` filter and no job-level `if` (a required check must report on every pull request, and a
+# job skipped by a condition reports success). All branching is in the script.
+#
+# Security: `pull_request`, never `pull_request_target`. The key is only in the last step, after the install. Pull requests from forks
+# get no secrets and fail closed unless the owner approves their latest commit. A pull request runs its own copy of this file and of
+# the script, so CODEOWNERS on .github/ is the guard for the sorter itself (see the README's limits).
+name: AI sorter
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+  # The owner's approval (or its dismissal) runs the check again, on the same commit.
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+# One run at a time per pull request, in the order the events came, so the newest run is the one that finishes last.
+concurrency:
+  group: ai-sorter-${{ github.event.pull_request.number }}
+
+jobs:
+  sort:
+    # The check's name. Keep it: a ruleset requires it by this name.
+    name: AI sorter
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          # The merge commit GitHub made for the pull request, and its first parent (the base branch).
+          fetch-depth: 2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+      - name: Install (frozen lockfile, no install scripts)
+        working-directory: .github/sorter
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: The pull request's change
+        # Plain git: no external diff programs and no text conversion, whatever the repository's attributes say.
+        run: |
+          git diff --no-color --no-ext-diff --no-textconv --find-renames HEAD^1 HEAD > "$RUNNER_TEMP/change.diff"
+          git diff --no-ext-diff --no-renames --name-only -z HEAD^1 HEAD > "$RUNNER_TEMP/change.files"
+      - name: Sort
+        working-directory: .github/sorter
+        env:
+          SORTER_ANTHROPIC_API_KEY: ${{ secrets.SORTER_ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          SORTER_PR_NUMBER: ${{ github.event.pull_request.number }}
+          SORTER_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # Whose approval of the latest commit clears the check: the repository variable SORTER_APPROVERS (comma-separated logins),
+          # else the repository's owner. For a repository owned by an organization, set the variable: an organization cannot review.
+          SORTER_APPROVERS: ${{ vars.SORTER_APPROVERS || github.repository_owner }}
+          SORTER_DIFF_FILE: ${{ runner.temp }}/change.diff
+          SORTER_FILES_FILE: ${{ runner.temp }}/change.files
+        run: bun sorter.ts

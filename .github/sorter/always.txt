@@ -1,0 +1,4 @@
+# Paths that always count as touching the sensitive list, without asking the model. One per line: a path that ends in "/" is a
+# folder and covers everything under it; any other line is one file. Lines that start with "#" and blank lines are ignored.
+.github/
+LICENSE

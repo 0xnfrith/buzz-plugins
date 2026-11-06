@@ -1,0 +1,40 @@
+# Tests of the AI sorter (.github/sorter/sorter.test.ts), against a fake Claude API and a fake GitHub API on localhost: no key, no
+# network beyond the install.
+name: AI sorter tests
+
+on:
+  pull_request:
+    paths:
+      - ".github/sorter/**"
+      - ".github/workflows/ai-sorter.yml"
+      - ".github/workflows/ai-sorter-tests.yml"
+  push:
+    branches: [main]
+    paths:
+      - ".github/sorter/**"
+      - ".github/workflows/ai-sorter.yml"
+      - ".github/workflows/ai-sorter-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: AI sorter tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: .github/sorter
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.4
+      - name: Install (frozen lockfile, no install scripts)
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Tests
+        run: bun test
