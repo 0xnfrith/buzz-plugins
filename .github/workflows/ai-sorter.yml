@@ -57,9 +57,19 @@ jobs:
           persist-credentials: false
           sparse-checkout: /.github/sorter/
           sparse-checkout-cone-mode: false
+      # One exact build of Bun, downloaded, never restored from the Actions cache: a pull request's run (a fork's too) can save to the
+      # cache scope its later runs restore from first, and setup-bun checks a cached binary only by asking it its version. Nothing else
+      # here restores a cache: no actions/cache, a GitHub-hosted job starts with an empty Bun install cache, and `bun install` checks
+      # each package against the integrity hash in the base branch's bun.lock.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: 1.4.4
+          bun-download-url: https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-linux-x64.zip
+          no-cache: true
+      - name: Bun is the pinned build
+        # The sha256 of the bun binary in bun-v1.4.4's bun-linux-x64.zip (the zip matches the release's SHASUMS256.txt).
+        env:
+          BUN_SHA256: 10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235
+        run: echo "$BUN_SHA256  $(command -v bun)" | sha256sum --check --strict
       - name: Install (frozen lockfile, no install scripts)
         working-directory: trusted/.github/sorter
         run: bun install --frozen-lockfile --ignore-scripts
@@ -76,6 +86,7 @@ jobs:
           SORTER_PR_NUMBER: ${{ github.event.pull_request.number }}
           SORTER_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           SORTER_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          SORTER_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           SORTER_EVENT: ${{ github.event_name }}
           SORTER_ACTION: ${{ github.event.action }}
           SORTER_RUN_ATTEMPT: ${{ github.run_attempt }}

@@ -14,21 +14,36 @@ import {
   CHECK_NAME,
   DIFF_CAP_BYTES,
   MODEL,
+  POLICY_FILES,
   RECORD_TITLE,
   REQUEST_SETTINGS,
   type RecordKey,
+  SPOTS_MAX,
+  type Spot,
+  type Verdict,
+  WARNING_TITLE,
   WORKFLOW_PATH,
   alwaysHits,
+  escapeProperty,
+  itemLabels,
+  knownItems,
+  listItems,
+  newSideRanges,
   parseAnswer,
   parseNumstat,
   parseRecord,
   policyInputs,
   policySha256,
   readAlways,
+  reasonWithItems,
   recordLine,
   shown,
+  sources,
   systemPrompt,
+  trustedFiles,
   unreadable,
+  validSpots,
+  warningLines,
 } from "./sorter.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -54,6 +69,11 @@ const fake = {
   annotations: {} as Record<number, unknown[]>,
   workflowRuns: {} as Record<number, unknown>,
   workflowRunsStatus: 200,
+  // The check runs of other commits (earlier heads), by commit; a commit with none here gets checkRuns.
+  checkRunsByCommit: {} as Record<string, any[]>,
+  // This workflow's runs on the pull request's head branch.
+  branchRuns: [] as any[],
+  branchRunsStatus: 200,
 };
 
 const server = Bun.serve({
@@ -75,9 +95,15 @@ const server = Bun.serve({
       if (page < fake.reviews.length) headers.link = `<${url.origin}${url.pathname}?per_page=100&page=${page + 1}>; rel="next"`;
       return Response.json(fake.reviews[page - 1] ?? [], { headers });
     }
-    if (req.method === "GET" && /^\/repos\/owner\/repo\/commits\/[0-9a-f]+\/check-runs$/.test(url.pathname)) {
+    const commit = url.pathname.match(/^\/repos\/owner\/repo\/commits\/([0-9a-f]+)\/check-runs$/);
+    if (req.method === "GET" && commit) {
       if (fake.checkRunsStatus !== 200) return Response.json({ message: "nope" }, { status: fake.checkRunsStatus });
-      return Response.json({ total_count: fake.checkRuns.length, check_runs: fake.checkRuns });
+      const runs = fake.checkRunsByCommit[commit[1]] ?? fake.checkRuns;
+      return Response.json({ total_count: runs.length, check_runs: runs });
+    }
+    if (req.method === "GET" && url.pathname === `/repos/owner/repo/actions/workflows/ai-sorter.yml/runs`) {
+      if (fake.branchRunsStatus !== 200) return Response.json({ message: "nope" }, { status: fake.branchRunsStatus });
+      return Response.json({ total_count: fake.branchRuns.length, workflow_runs: fake.branchRuns });
     }
     if (req.method === "GET" && url.pathname === "/repos/owner/repo/actions/runs") {
       if (fake.workflowRunsStatus !== 200) return Response.json({ message: "nope" }, { status: fake.workflowRunsStatus });
@@ -111,18 +137,32 @@ function answer(text: string, stop_reason = "end_turn"): Reply {
     },
   };
 }
-const yes = (reason = "Changes the release workflow.") => answer(JSON.stringify({ touches_list: true, reason }));
-const no = (reason = "Only fixes a typo in a plugin README.") => answer(JSON.stringify({ touches_list: false, reason }));
+const YES_REASON = "Changes the release workflow.";
+const NO_REASON = "Only fixes a typo in a plugin README.";
+const yes = (reason = YES_REASON, items: unknown[] = [], spots: unknown[] = []) =>
+  answer(JSON.stringify({ touches_list: true, reason, items, spots }));
+const no = (reason = NO_REASON, items: unknown[] = [], spots: unknown[] = []) =>
+  answer(JSON.stringify({ touches_list: false, reason, items, spots }));
+// A verdict as recorded: by default, what the run records for yes() or no() on the default change.
+const V = (touches: boolean, over: Partial<Verdict> = {}): Verdict => ({
+  touches_list: touches,
+  items: [],
+  spots: [],
+  reason: touches ? YES_REASON : NO_REASON,
+  ...over,
+});
 const review = (login: string, state: string, commit_id: string) => ({ user: { login }, state, commit_id });
 
 const SMALL_DIFF_SHA256 = () => createHash("sha256").update(SMALL_DIFF).digest("hex");
 // What a record for the default change (SMALL_DIFF on HEAD, into main, judged under this folder's policy) is bound to.
 const LIST = () => readFileSync(join(here, "list.md"), "utf8");
+const ITEMS = () => listItems(LIST());
+const POLICY = () => policySha256(policyInputs(trustedFiles({})));
 const KEY = (): RecordKey => ({
   head: HEAD,
   base_ref: "main",
   diff_sha256: SMALL_DIFF_SHA256(),
-  policy_sha256: policySha256(policyInputs(LIST())),
+  policy_sha256: POLICY(),
 });
 
 /**
@@ -132,7 +172,7 @@ const KEY = (): RecordKey => ({
  */
 function recordRun(
   id: number,
-  record: boolean | string,
+  record: boolean | Verdict | string,
   opts: { over?: Record<string, unknown>; title?: string; key?: Partial<RecordKey>; workflowRun?: Record<string, unknown> } = {},
 ) {
   const suite = 1000 + id;
@@ -156,7 +196,7 @@ function recordRun(
   const message =
     typeof record === "string"
       ? record
-      : recordLine({ ...KEY(), ...opts.key }, record).slice(`::notice title=${RECORD_TITLE}::`.length);
+      : recordLine({ ...KEY(), ...opts.key }, typeof record === "boolean" ? V(record) : record).slice(`::notice title=${RECORD_TITLE}::`.length);
   fake.annotations[id] = [{ title: opts.title ?? RECORD_TITLE, annotation_level: "notice", message }];
 }
 
@@ -181,6 +221,7 @@ function sorterEnv(dir: string, change: string, opts: { key?: string | null; env
     SORTER_PR_NUMBER: "7",
     SORTER_HEAD_SHA: HEAD,
     SORTER_BASE_REF: "main",
+    SORTER_HEAD_REF: "feature",
     SORTER_APPROVERS: OWNER,
     SORTER_EVENT: "pull_request",
     SORTER_ACTION: "synchronize",
@@ -188,6 +229,8 @@ function sorterEnv(dir: string, change: string, opts: { key?: string | null; env
     SORTER_DIFF_FILE: join(change, "change.diff"),
     SORTER_NUMSTAT_FILE: join(change, "change.numstat"),
     SORTER_ANTHROPIC_BASE_URL: base,
+    // The test files and the fake API above count only with this set.
+    SORTER_TEST: "1",
     ...opts.env,
   };
   if (opts.key !== null) env.SORTER_ANTHROPIC_API_KEY = opts.key ?? FAKE_KEY;
@@ -204,6 +247,8 @@ async function run(
     changeDir?: string;
     key?: string | null;
     env?: Record<string, string>;
+    // Another copy of the sorter's folder to run (see sorterCopy).
+    cwd?: string;
   } = {},
 ) {
   const dir = mkdtempSync(join(tmpdir(), "ai-sorter-test-"));
@@ -214,9 +259,17 @@ async function run(
     writeFileSync(join(dir, "change.numstat"), numstat);
   }
   writeFileSync(join(dir, "summary.md"), "");
-  const proc = Bun.spawn(["bun", "sorter.ts"], { cwd: here, env: sorterEnv(dir, change, opts), stdout: "pipe", stderr: "pipe" });
+  const proc = Bun.spawn(["bun", "sorter.ts"], { cwd: opts.cwd ?? here, env: sorterEnv(dir, change, opts), stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-  return { code, stdout, stderr, summary: readFileSync(join(dir, "summary.md"), "utf8") };
+  const commands = stdout.split("\n").filter((line) => line.startsWith("::"));
+  return {
+    code,
+    stdout,
+    stderr,
+    summary: readFileSync(join(dir, "summary.md"), "utf8"),
+    warnings: commands.filter((line) => line.startsWith("::warning ")),
+    commands,
+  };
 }
 const modelCalls = () => fake.calls.filter((call) => call.path === "/v1/messages");
 
@@ -230,6 +283,9 @@ beforeEach(() => {
   fake.annotations = {};
   fake.workflowRuns = {};
   fake.workflowRunsStatus = 200;
+  fake.checkRunsByCommit = {};
+  fake.branchRuns = [];
+  fake.branchRunsStatus = 200;
 });
 
 describe("the model's answer", () => {
@@ -239,7 +295,8 @@ describe("the model's answer", () => {
     expect(r.code).toBe(0);
     expect(r.summary).toContain("## AI sorter: passes");
     expect(r.summary).toContain("Only fixes a typo in a plugin README.");
-    expect(r.stdout.split("\n")).toContain(recordLine(KEY(), false));
+    expect(r.stdout.split("\n")).toContain(recordLine(KEY(), V(false)));
+    expect(r.warnings).toEqual([]);
   });
 
   test("yes: the check fails, waits for the owner, shows the reason and records the verdict", async () => {
@@ -249,7 +306,7 @@ describe("the model's answer", () => {
     expect(r.summary).toContain("## AI sorter: waits for the owner");
     expect(r.summary).toContain("Changes the release workflow.");
     expect(r.summary).toContain("the owner approves this pull request's latest commit");
-    expect(r.stdout.split("\n")).toContain(recordLine(KEY(), true));
+    expect(r.stdout.split("\n")).toContain(recordLine(KEY(), V(true)));
   });
 
   test("the request: the model id, the strict schema, low effort, no sampling settings, the diff inside a random marker", async () => {
@@ -292,15 +349,26 @@ describe("the model's answer", () => {
     expect(r.code).toBe(1);
     expect(r.summary).toContain("## AI sorter: failed closed");
     expect(r.stdout).not.toContain(RECORD_TITLE);
+    expect(r.warnings).toEqual([]);
   });
 
+  const fine = { touches_list: false, reason: "fine", items: [], spots: [] };
+  const spot = { file: "plugins/vim/README.md", line: 1 };
   for (const [name, text] of [
-    ["an extra key", JSON.stringify({ touches_list: false, reason: "fine", confidence: 0.9 })],
-    ["a missing key", JSON.stringify({ touches_list: false })],
-    ["a string instead of a boolean", JSON.stringify({ touches_list: "false", reason: "fine" })],
-    ["an empty reason", JSON.stringify({ touches_list: false, reason: "  " })],
-    ["a list", JSON.stringify([{ touches_list: false, reason: "fine" }])],
-    ["JSON with text around it", `Here you go: ${JSON.stringify({ touches_list: false, reason: "fine" })}`],
+    ["an extra key", JSON.stringify({ ...fine, confidence: 0.9 })],
+    ["a missing key", JSON.stringify({ touches_list: false, reason: "fine", items: [] })],
+    ["the old two-field answer", JSON.stringify({ touches_list: false, reason: "fine" })],
+    ["a string instead of a boolean", JSON.stringify({ ...fine, touches_list: "false" })],
+    ["an empty reason", JSON.stringify({ ...fine, reason: "  " })],
+    ["an item that is a string", JSON.stringify({ ...fine, touches_list: true, items: ["4"] })],
+    ["an item that is not a whole number", JSON.stringify({ ...fine, touches_list: true, items: [4.5] })],
+    ["items that are not a list", JSON.stringify({ ...fine, touches_list: true, items: 4 })],
+    ["a spot with no line", JSON.stringify({ ...fine, touches_list: true, spots: [{ file: spot.file }] })],
+    ["a spot whose line is a string", JSON.stringify({ ...fine, touches_list: true, spots: [{ ...spot, line: "1" }] })],
+    ["a spot with an extra key", JSON.stringify({ ...fine, touches_list: true, spots: [{ ...spot, column: 3 }] })],
+    ["a spot that is a string", JSON.stringify({ ...fine, touches_list: true, spots: ["plugins/vim/README.md:1"] })],
+    ["a list", JSON.stringify([fine])],
+    ["JSON with text around it", `Here you go: ${JSON.stringify(fine)}`],
   ]) {
     test(`${name} fails closed`, async () => {
       fake.messages = [answer(text)];
@@ -312,7 +380,7 @@ describe("the model's answer", () => {
 
   for (const stop of ["refusal", "max_tokens"]) {
     test(`a "${stop}" stop fails closed, even with a valid "no" in it`, async () => {
-      fake.messages = [answer(JSON.stringify({ touches_list: false, reason: "fine" }), stop)];
+      fake.messages = [answer(JSON.stringify({ touches_list: false, reason: "fine", items: [], spots: [] }), stop)];
       const r = await run();
       expect(r.code).toBe(1);
       expect(r.summary).toContain(`stopped with "${stop}"`);
@@ -321,7 +389,7 @@ describe("the model's answer", () => {
 
   test("two text blocks fail closed", async () => {
     const reply = no();
-    (reply.body as any).content.push({ type: "text", text: JSON.stringify({ touches_list: false, reason: "again" }) });
+    (reply.body as any).content.push({ type: "text", text: JSON.stringify({ touches_list: false, reason: "again", items: [], spots: [] }) });
     fake.messages = [reply];
     expect((await run()).code).toBe(1);
   });
@@ -585,7 +653,9 @@ describe("one verdict per change", () => {
     ["a check run on another commit", () => recordRun(5, false, { over: { head_sha: OLD } })],
     ["a malformed record", () => recordRun(5, '{"v":3,"touches_list":false}')],
     ["an old-format record", () => recordRun(5, JSON.stringify({ v: 3, head: HEAD, base_ref: "main", diff_sha256: SMALL_DIFF_SHA256(), touches_list: false }))],
-    ["a record with an extra key", () => recordRun(5, JSON.stringify({ v: 4, ...KEY(), touches_list: false, by: "x" }))],
+    ["a version 4 record", () => recordRun(5, JSON.stringify({ v: 4, ...KEY(), touches_list: false }))],
+    ["a record with an extra key", () => recordRun(5, JSON.stringify({ v: 5, ...KEY(), ...V(false), by: "x" }))],
+    ["a record with a malformed spot", () => recordRun(5, JSON.stringify({ v: 5, ...KEY(), ...V(false), spots: [{ file: "x" }] }))],
     ["another annotation title", () => recordRun(5, false, { title: "something-else" })],
   ] as [string, () => void][]) {
     test(`${name} does not count`, async () => {
@@ -653,25 +723,47 @@ describe("one verdict per change", () => {
     expect(modelCalls()[0].body.system).toContain("Analytics");
   });
 
-  for (const [what, change] of [
-    ["another model", (inputs: ReturnType<typeof policyInputs>) => ({ ...inputs, model: "claude-haiku-4-5" })],
-    ["another prompt", (inputs: ReturnType<typeof policyInputs>) => ({ ...inputs, system: `${inputs.system}\n- One more rule.` })],
-    ["other settings", (inputs: ReturnType<typeof policyInputs>) => ({ ...inputs, settings: { ...inputs.settings, effort: "high" } })],
-  ] as [string, (inputs: ReturnType<typeof policyInputs>) => unknown][]) {
-    test(`a record judged under ${what}: a review fails closed, a push asks the model`, async () => {
-      // A record made before the base branch changed the policy carries the old policy's hash.
-      const old = policySha256(change(policyInputs(LIST())) as ReturnType<typeof policyInputs>);
-      expect(old).not.toBe(KEY().policy_sha256);
-      recordRun(5, false, { key: { policy_sha256: old } });
+  test("a change of always.txt on the base branch, with an identical diff: a review fails closed, a push asks the model", async () => {
+    recordRun(5, false);
+    const dir = mkdtempSync(join(tmpdir(), "ai-sorter-always-"));
+    writeFileSync(join(dir, "always.txt"), `${readFileSync(join(here, "always.txt"), "utf8")}docs/legal/\n`);
+    fake.messages = [no()];
+    let r = await run({ env: { ...review, SORTER_ALWAYS_FILE: join(dir, "always.txt") } });
+    expect(r.code).toBe(1);
+    expect(r.summary).toContain("no verdict is recorded for this change");
+    r = await run({ env: { SORTER_ALWAYS_FILE: join(dir, "always.txt") } });
+    expect(r.code).toBe(0);
+    expect(modelCalls()).toHaveLength(1);
+  });
+
+  // The script itself is policy: the model, its settings, the schema, the prompt and the rules all live in sorter.ts. Each case runs a
+  // copy of the sorter's folder whose sorter.ts was changed, as the base branch would after a merge.
+  for (const [what, from, to] of [
+    ["another model", 'export const MODEL = "claude-haiku-5-5";', 'export const MODEL = "claude-haiku-4-5";'],
+    ["another prompt", '"- Answer false only when you are confident', '"- Answer false only when you are quite sure'],
+    ["other settings", 'effort: "low",', 'effort: "medium",'],
+  ]) {
+    test(`a record judged before the base branch changed to ${what}: a review fails closed, a push asks the model`, async () => {
+      const copy = sorterCopy((text) => {
+        expect(text).toContain(from);
+        return text.replace(from, to);
+      });
+      recordRun(5, false);
       fake.messages = [no()];
-      let r = await run({ env: review });
+      let r = await run({ cwd: copy, env: review });
       expect(r.code).toBe(1);
       expect(r.summary).toContain("no verdict is recorded for this change");
       expect(modelCalls()).toHaveLength(0);
-      r = await run();
+      r = await run({ cwd: copy });
       expect(r.code).toBe(0);
       expect(modelCalls()).toHaveLength(1);
-    });
+      // The same copy, unchanged, reuses the record: the copy itself is not what moved the policy.
+      const same = sorterCopy((text) => text);
+      fake.calls = [];
+      r = await run({ cwd: same, env: review });
+      expect(r.code).toBe(0);
+      expect(modelCalls()).toHaveLength(0);
+    }, 30_000);
   }
 
   test("an unchanged policy still reuses the record", async () => {
@@ -682,31 +774,55 @@ describe("one verdict per change", () => {
     expect(modelCalls()).toHaveLength(0);
   });
 
-  test("the policy covers the model, its settings, the schema, the prompt with the list, and the user turn's template", () => {
-    const inputs = policyInputs(LIST());
+  test("the policy is the model, its settings, and the sha256 of each of the sorter's files that decide a verdict", () => {
+    const files = trustedFiles({});
+    const inputs = policyInputs(files);
     expect(inputs.model).toBe(MODEL);
     expect(inputs.settings).toEqual(REQUEST_SETTINGS);
-    expect(inputs.schema).toEqual(ANSWER_SCHEMA);
-    expect(inputs.system).toBe(systemPrompt(LIST()));
-    expect(inputs.system).toContain("Credentials and secret handling");
-    expect(inputs.user).toContain("{diff}");
+    expect(Object.keys(inputs.files).sort()).toEqual([...POLICY_FILES].sort());
+    expect([...POLICY_FILES].sort()).toEqual(["always.txt", "bun.lock", "list.md", "package.json", "sorter.ts"]);
+    for (const name of POLICY_FILES) {
+      expect(inputs.files[name]).toBe(createHash("sha256").update(readFileSync(join(here, name))).digest("hex"));
+      // Any change to any one of them is another policy.
+      const changed = policyInputs({ ...files, [name]: Buffer.concat([files[name], Buffer.from(" ")]) });
+      expect(policySha256(changed)).not.toBe(policySha256(inputs));
+    }
     expect(policySha256(inputs)).toBe(createHash("sha256").update(JSON.stringify(inputs)).digest("hex"));
-    expect(policySha256(policyInputs(`${LIST()}7. **Analytics**.\n`))).not.toBe(policySha256(inputs));
+    expect(policySha256(inputs)).toBe(KEY().policy_sha256);
     // The record the run prints carries the policy it judged by.
-    expect(recordLine(KEY(), false)).toContain(`"policy_sha256":"${KEY().policy_sha256}"`);
+    expect(recordLine(KEY(), V(false))).toContain(`"policy_sha256":"${KEY().policy_sha256}"`);
+  });
+
+  test("the policy hashes the list and always.txt this run reads, which the tests may swap in", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ai-sorter-list-"));
+    writeFileSync(join(dir, "list.md"), `${LIST()}7. **Analytics**.\n`);
+    const swapped = trustedFiles({ SORTER_TEST: "1", SORTER_LIST_FILE: join(dir, "list.md") });
+    expect(swapped["list.md"].toString("utf8")).toContain("Analytics");
+    expect(policySha256(policyInputs(swapped))).not.toBe(KEY().policy_sha256);
+    // Without the test flag the swap is ignored.
+    expect(policySha256(policyInputs(trustedFiles({ SORTER_LIST_FILE: join(dir, "list.md") })))).toBe(KEY().policy_sha256);
   });
 
   test("recordLine and parseRecord agree, and parseRecord takes nothing else", () => {
     const key = KEY();
-    const line = recordLine(key, true);
+    const verdict = V(true, { items: [4], spots: [{ file: "plugins/vim/README.md", line: 1 }], reason: "Item 4 (legal): x." });
+    const line = recordLine(key, verdict);
     expect(line.startsWith(`::notice title=${RECORD_TITLE}::`)).toBe(true);
-    expect(parseRecord(line.slice(`::notice title=${RECORD_TITLE}::`.length), key)).toBe(true);
-    expect(parseRecord(JSON.stringify({ v: 4, ...key, touches_list: "true" }), key)).toBeNull();
-    expect(parseRecord(JSON.stringify({ v: 4, ...key, head: OLD, touches_list: true }), key)).toBeNull();
-    expect(parseRecord(JSON.stringify({ v: 4, ...key, policy_sha256: "0".repeat(64), touches_list: true }), key)).toBeNull();
+    expect(parseRecord(line.slice(`::notice title=${RECORD_TITLE}::`.length), key)).toEqual(verdict);
+    const record = { v: 5, ...key, ...verdict };
+    expect(parseRecord(JSON.stringify(record), key)).toEqual(verdict);
+    expect(parseRecord(JSON.stringify({ ...record, touches_list: "true" }), key)).toBeNull();
+    expect(parseRecord(JSON.stringify({ ...record, head: OLD }), key)).toBeNull();
+    expect(parseRecord(JSON.stringify({ ...record, policy_sha256: "0".repeat(64) }), key)).toBeNull();
+    expect(parseRecord(JSON.stringify({ ...record, v: 4 }), key)).toBeNull();
+    expect(parseRecord(JSON.stringify({ ...record, items: ["4"] }), key)).toBeNull();
+    expect(parseRecord(JSON.stringify({ ...record, spots: [{ file: "x", line: "1" }] }), key)).toBeNull();
+    expect(parseRecord(JSON.stringify({ ...record, reason: 1 }), key)).toBeNull();
+    const { reason: _, ...noReason } = record;
+    expect(parseRecord(JSON.stringify(noReason), key)).toBeNull();
     expect(parseRecord(42, key)).toBeNull();
     // "%", "\r" and "\n" in a base branch name are escaped in the workflow command.
-    expect(recordLine({ ...key, base_ref: "a%b" }, false)).toContain('"base_ref":"a%25b"');
+    expect(recordLine({ ...key, base_ref: "a%b" }, V(false))).toContain('"base_ref":"a%25b"');
   });
 });
 
@@ -1078,6 +1194,14 @@ function copySorter(to: string) {
   mkdirSync(to, { recursive: true });
   for (const file of SORTER_FILES) if (existsSync(join(here, file))) cpSync(join(here, file), join(to, file));
 }
+// A copy of the sorter's folder whose sorter.ts `edit` changed, with the installed SDK linked in, to run with run({ cwd }).
+function sorterCopy(edit: (text: string) => string): string {
+  const to = mkdtempSync(join(tmpdir(), "ai-sorter-copy-"));
+  copySorter(to);
+  writeFileSync(join(to, "sorter.ts"), edit(readFileSync(join(here, "sorter.ts"), "utf8")));
+  symlinkSync(join(here, "node_modules"), join(to, "node_modules"));
+  return to;
+}
 function layoutFrom(text: string) {
   const steps = (Bun.YAML.parse(text) as any).jobs.sort.steps as any[];
   const checkouts = steps.filter((step) => String(step.uses ?? "").startsWith("actions/checkout@"));
@@ -1177,6 +1301,10 @@ describe("the workflow's layout: no file of the pull request is where Bun looks"
   }
 });
 
+// The one Bun build both workflows run: bun-v1.4.4's bun-linux-x64.zip, and the sha256 of the bun binary in it.
+const BUN_URL = "https://github.com/oven-sh/bun/releases/download/bun-v1.4.4/bun-linux-x64.zip";
+const BUN_SHA256 = "10702245766b225e70bbf6235fd6b47214fd94b4760d00ffaed8ab0df57ac235";
+
 describe("the workflow", () => {
   const workflow = readFileSync(join(here, "../workflows/ai-sorter.yml"), "utf8");
   const parsed = Bun.YAML.parse(workflow) as any;
@@ -1198,6 +1326,51 @@ describe("the workflow", () => {
     expect(sortStep.env.SORTER_BASE_REF).toBe("${{ github.event.pull_request.base.ref }}");
   });
 
+  test("the sort step gets the head branch, for the waits recorded on its earlier commits", () => {
+    expect(sortStep.env.SORTER_HEAD_REF).toBe("${{ github.event.pull_request.head.ref }}");
+  });
+
+  // L4: the test-only overrides (another list, always.txt or Claude API) count only with SORTER_TEST=1, which only the tests set.
+  test("the check's workflow never sets SORTER_TEST; the tests' workflow does, on the step that runs them", () => {
+    expect(workflow).not.toContain("SORTER_TEST");
+    const tests = Bun.YAML.parse(readFileSync(join(here, "../workflows/ai-sorter-tests.yml"), "utf8")) as any;
+    const step = (tests.jobs.test.steps as any[]).find((step) => step.run === "bun test");
+    expect(step.env).toEqual({ SORTER_TEST: "1" });
+  });
+
+  // HIGH: a cached Bun binary could be a pull request's. Bun is downloaded from one pinned URL, never restored from a cache, and its
+  // sha256 is checked before any step runs it, in both workflows.
+  for (const [file, job] of [
+    ["ai-sorter.yml", "sort"],
+    ["ai-sorter-tests.yml", "test"],
+  ]) {
+    test(`${file}: Bun is downloaded, never cached, and checked against the pinned build before anything runs it`, () => {
+      const steps = (Bun.YAML.parse(readFileSync(join(here, "../workflows", file), "utf8")) as any).jobs[job].steps as any[];
+      const setups = steps.filter((step) => String(step.uses ?? "").startsWith("oven-sh/setup-bun@"));
+      expect(setups).toHaveLength(1);
+      const at = steps.indexOf(setups[0]);
+      expect(setups[0].with).toEqual({ "bun-download-url": BUN_URL, "no-cache": true });
+      const check = steps[at + 1];
+      expect(check.env.BUN_SHA256).toBe(BUN_SHA256);
+      expect(check.run).toBe('echo "$BUN_SHA256  $(command -v bun)" | sha256sum --check --strict');
+      // Nothing before the check runs Bun, and nothing restores a cache.
+      for (const step of steps.slice(0, at + 1)) expect(String(step.run ?? "")).not.toMatch(/\bbunx?\b/);
+      for (const step of steps) {
+        expect(String(step.uses ?? "")).not.toMatch(/^actions\/cache/);
+        expect(Object.keys(step.with ?? {}).filter((key) => /cache/.test(key))).toEqual(step === setups[0] ? ["no-cache"] : []);
+      }
+    });
+  }
+
+  test("the sha256 check fails on any other binary", () => {
+    const steps = (Bun.YAML.parse(workflow) as any).jobs.sort.steps as any[];
+    const check = steps.find((step) => step.env?.BUN_SHA256);
+    const local = createHash("sha256").update(readFileSync(Bun.which("bun")!)).digest("hex");
+    const env = (hash: string) => ({ PATH: process.env.PATH ?? "", BUN_SHA256: hash });
+    expect(Bun.spawnSync(["bash", "-c", check.run], { env: env(local) }).exitCode).toBe(0);
+    expect(Bun.spawnSync(["bash", "-c", check.run], { env: env("0".repeat(64)) }).exitCode).not.toBe(0);
+  });
+
   test("it never uses pull_request_target, and the key is only in the step that sorts", () => {
     expect(Object.keys(parsed.on).sort()).toEqual(["pull_request", "pull_request_review"]);
     const withKey = (parsed.jobs.sort.steps as any[]).filter((step) => JSON.stringify(step).includes("secrets."));
@@ -1210,9 +1383,12 @@ describe("untrusted text in the output", () => {
     fake.messages = [yes("::error::fake\n::add-mask::x ```\n[a link](https://example.invalid) @someone")];
     const r = await run();
     expect(r.code).toBe(1);
-    // The only line that starts with "::" is the sorter's own record.
-    const commands = r.stdout.split("\n").filter((line) => line.startsWith("::"));
-    expect(commands).toEqual([recordLine(KEY(), true)]);
+    // The only lines that start with "::" are the sorter's own record and its one warning, whose text is made safe.
+    const said = "::error::fake\n::add-mask::x ```\n[a link](https://example.invalid) @someone";
+    expect(r.commands).toEqual([recordLine(KEY(), V(true, { reason: shown(said) })), ...r.warnings]);
+    expect(r.warnings).toHaveLength(1);
+    expect(r.warnings[0].startsWith(`::warning file=plugins/vim/README.md,title=${escapeProperty(WARNING_TITLE)}::`)).toBe(true);
+    expect(r.warnings[0].split("::")).toHaveLength(3);
     expect(r.stdout).not.toContain("::error::");
     const block = r.summary.slice(r.summary.indexOf("````text\n") + 9, r.summary.lastIndexOf("\n````"));
     expect(block).not.toContain("\n");
@@ -1228,12 +1404,26 @@ describe("untrusted text in the output", () => {
 });
 
 describe("the pure parts", () => {
-  test("parseAnswer takes exactly the two fields", () => {
-    expect(parseAnswer('{"touches_list": true, "reason": "x"}')).toEqual({ touches_list: true, reason: "x" });
-    expect(parseAnswer('{"reason": "x", "touches_list": false}')).toEqual({ touches_list: false, reason: "x" });
+  test("parseAnswer takes exactly the four fields, and leaves the checking of items and spots to later", () => {
+    const spots = [{ file: "a", line: 0 }];
+    expect(parseAnswer(JSON.stringify({ touches_list: true, reason: "x", items: [99], spots }))).toEqual({
+      touches_list: true,
+      reason: "x",
+      items: [99],
+      spots,
+    });
+    expect(parseAnswer('{"spots": [], "reason": "x", "items": [], "touches_list": false}')).toEqual({
+      touches_list: false,
+      reason: "x",
+      items: [],
+      spots: [],
+    });
+    expect(parseAnswer('{"touches_list": true, "reason": "x"}')).toBeNull();
     expect(parseAnswer("")).toBeNull();
     expect(parseAnswer("null")).toBeNull();
-    expect(parseAnswer('{"touches_list": 1, "reason": "x"}')).toBeNull();
+    expect(parseAnswer('{"touches_list": 1, "reason": "x", "items": [], "spots": []}')).toBeNull();
+    expect(parseAnswer('{"touches_list": true, "reason": "x", "items": [null], "spots": []}')).toBeNull();
+    expect(parseAnswer('{"touches_list": true, "reason": "x", "items": [], "spots": [null]}')).toBeNull();
   });
 
   test("shown makes one safe line and caps it", () => {
@@ -1242,9 +1432,427 @@ describe("the pure parts", () => {
     expect(shown("x".repeat(700)).length).toBeLessThan(620);
   });
 
+  // L4
+  test("sources: another list, always.txt or Claude API counts only with SORTER_TEST=1", () => {
+    const asked = { SORTER_LIST_FILE: "/x/list.md", SORTER_ALWAYS_FILE: "/x/always.txt", SORTER_ANTHROPIC_BASE_URL: "http://x" };
+    const own = { listFile: join(here, "list.md"), alwaysFile: join(here, "always.txt"), anthropicBaseURL: "https://api.anthropic.com" };
+    expect(sources(asked)).toEqual(own);
+    for (const flag of ["", "0", "true", "yes", " 1"]) expect(sources({ ...asked, SORTER_TEST: flag })).toEqual(own);
+    expect(sources({ ...asked, SORTER_TEST: "1" })).toEqual({
+      listFile: "/x/list.md",
+      alwaysFile: "/x/always.txt",
+      anthropicBaseURL: "http://x",
+    });
+  });
+
+  test("without SORTER_TEST, the sorter reads its own always.txt, not the one it is pointed at", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ai-sorter-always-"));
+    writeFileSync(join(dir, "always.txt"), "plugins/\n");
+    // With the flag, the swapped always.txt makes the change wait without the model.
+    let r = await run({ key: null, env: { SORTER_ALWAYS_FILE: join(dir, "always.txt") } });
+    expect(r.summary).toContain("always.txt");
+    // Without it, the sorter's own always.txt does not name plugins/: the run goes on to the key, which is not set.
+    r = await run({ key: null, env: { SORTER_ALWAYS_FILE: join(dir, "always.txt"), SORTER_TEST: "" } });
+    expect(r.code).toBe(1);
+    expect(r.summary).not.toContain("always.txt");
+    expect(r.summary).toContain("secret is not set");
+  });
+
+  // L5
+  test("after an error, the summary says how to make the check ask again", async () => {
+    const r = await run({ env: { SORTER_EVENT: "pull_request_review", SORTER_ACTION: "submitted" } });
+    expect(r.code).toBe(1);
+    expect(r.summary).toContain("push a new commit, or close and reopen the pull request");
+    expect(r.summary).not.toContain("re-run this check");
+  });
+
   test("missing settings fail closed", async () => {
     const r = await run({ env: { SORTER_PR_NUMBER: "" } });
     expect(r.code).toBe(1);
     expect(r.summary).toContain("SORTER_PR_NUMBER");
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// What decided a wait, and where: the list items and the changed lines, checked against the list and the diff.
+
+// Two changed files: README.md (line 1 on the new side) and terms.md (lines 10 to 16 on the new side).
+const TWO_FILES = [
+  "plugins/vim/README.md",
+  "plugins/vim/terms.md",
+];
+const TWO_FILE_DIFF = [
+  "diff --git a/plugins/vim/README.md b/plugins/vim/README.md",
+  "--- a/plugins/vim/README.md",
+  "+++ b/plugins/vim/README.md",
+  "@@ -1 +1 @@",
+  "-Vim mdoe",
+  "+Vim mode",
+  "diff --git a/plugins/vim/terms.md b/plugins/vim/terms.md",
+  "--- a/plugins/vim/terms.md",
+  "+++ b/plugins/vim/terms.md",
+  "@@ -10,3 +10,7 @@ Terms",
+  " a",
+  "-b",
+  "+c",
+  "+d",
+  "+e",
+  "+f",
+  "+g",
+  " h",
+  "",
+].join("\n");
+const at = (file: string, line: number): Spot => ({ file, line });
+const README = "plugins/vim/README.md";
+const TERMS = "plugins/vim/terms.md";
+const warning = (spot: Spot | string, message: string) =>
+  typeof spot === "string"
+    ? `::warning file=${spot},title=${escapeProperty(WARNING_TITLE)}::${message}`
+    : `::warning file=${spot.file},line=${spot.line},title=${escapeProperty(WARNING_TITLE)}::${message}`;
+
+describe("what decided a wait, and where", () => {
+  test("a valid spot is kept: a warning on that line, and the items and the line at the top of the summary", async () => {
+    fake.messages = [yes("Adds new terms of use to plugins/vim/terms.md.", [4], [at(TERMS, 11)])];
+    const r = await run({ diff: TWO_FILE_DIFF, files: TWO_FILES });
+    expect(r.code).toBe(1);
+    const reason = "Item 4 (legal and licensing text): Adds new terms of use to plugins/vim/terms.md.";
+    expect(r.warnings).toEqual([warning(at(TERMS, 11), reason)]);
+    expect(r.summary.startsWith(
+      [
+        "## AI sorter: waits for the owner",
+        "",
+        "**List items:** Item 4 (legal and licensing text)",
+        "",
+        "**Where:**",
+        "",
+        "- `plugins/vim/terms.md`, line 11",
+        "",
+        "**Commit:**",
+      ].join("\n"),
+    )).toBe(true);
+    expect(r.summary).toContain(reason);
+    // The record keeps the checked items, the lines and the reason, so a later run shows them again.
+    const record = r.commands.find((line) => line.startsWith(`::notice title=${RECORD_TITLE}::`))!;
+    const key = { ...KEY(), diff_sha256: createHash("sha256").update(TWO_FILE_DIFF).digest("hex") };
+    expect(parseRecord(record.slice(`::notice title=${RECORD_TITLE}::`.length), key)).toEqual(
+      V(true, { items: [4], spots: [at(TERMS, 11)], reason }),
+    );
+  });
+
+  test("a spot in an unchanged file, outside a hunk, on a line before or after one, or on line 0 is dropped", async () => {
+    const spots = [at("plugins/vim/other.md", 1), at(TERMS, 9), at(TERMS, 17), at(TERMS, 0), at(TERMS, -3), at(README, 2), at(README, 1)];
+    fake.messages = [yes("Changes the README.", [4], spots)];
+    const r = await run({ diff: TWO_FILE_DIFF, files: TWO_FILES });
+    expect(r.warnings).toEqual([warning(at(README, 1), "Item 4 (legal and licensing text): Changes the README.")]);
+  });
+
+  test("a spot in a file that is in the diff but not among the changed paths is dropped", () => {
+    expect(validSpots([at(TERMS, 11)], TWO_FILE_DIFF, [{ path: README, added: "1", removed: "1" }])).toEqual([]);
+  });
+
+  test("with no valid spot, one warning on the whole first changed file", async () => {
+    fake.messages = [yes("Changes the terms.", [4], [at("nowhere.md", 1)])];
+    const r = await run({ diff: TWO_FILE_DIFF, files: TWO_FILES });
+    expect(r.warnings).toEqual([warning(README, "Item 4 (legal and licensing text): Changes the terms.")]);
+    expect(r.summary).toContain("**Where:**\n\n- `plugins/vim/README.md` (the whole file)\n");
+  });
+
+  test(`at most ${SPOTS_MAX} spots, each once, in the model's order; a "b/" in front of a path is taken off`, async () => {
+    const spots = [at(TERMS, 16), at(TERMS, 16), at(`b/${TERMS}`, 15), at(TERMS, 14), at(TERMS, 13), at(TERMS, 12), at(TERMS, 11)];
+    fake.messages = [yes("Changes the terms.", [4], spots)];
+    const r = await run({ diff: TWO_FILE_DIFF, files: TWO_FILES });
+    expect(r.warnings.map((line) => line.match(/line=(\d+)/)![1])).toEqual(["16", "15", "14", "13", "12"]);
+    expect(r.warnings.every((line) => line.startsWith(`::warning file=${TERMS},`))).toBe(true);
+  });
+
+  test("item numbers off the list are dropped, and a repeated one counts once", async () => {
+    fake.messages = [yes("Changes the terms.", [0, 4, 7, 4, -1, 99, 5])];
+    const r = await run({ diff: TWO_FILE_DIFF, files: TWO_FILES });
+    expect(r.summary).toContain("**List items:** Item 4 (legal and licensing text), item 5 (deleting user data)\n");
+    const record = r.commands.find((line) => line.startsWith(`::notice title=${RECORD_TITLE}::`))!;
+    expect(record).toContain('"items":[4,5]');
+  });
+
+  test("the prefix is built from the list's own titles: one item, two items, and an unknown item never appears", () => {
+    const items = ITEMS();
+    expect(items.map((item) => item.number)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(itemLabels([1], items)).toBe("Item 1 (CI and repository rules)");
+    expect(itemLabels([4], items)).toBe("Item 4 (legal and licensing text)");
+    expect(itemLabels([4, 5], items)).toBe("Item 4 (legal and licensing text), item 5 (deleting user data)");
+    expect(itemLabels([1, 2], items)).toBe("Item 1 (CI and repository rules), item 2 (credentials and secret handling)");
+    expect(itemLabels([7, 0, 99], items)).toBe("");
+    expect(knownItems([7, 3, 3, 0], items)).toEqual([3]);
+    expect(reasonWithItems([7], items, "Changes the terms.")).toBe("Changes the terms.");
+    expect(reasonWithItems([7], items, "Changes the terms.")).not.toContain("7");
+    expect(reasonWithItems([4], items, "Changes the terms.")).toBe("Item 4 (legal and licensing text): Changes the terms.");
+    // The model's own label is taken off, so it cannot mislabel the item.
+    expect(reasonWithItems([4], items, "Item 3 (payments and billing): Changes the terms.")).toBe(
+      "Item 4 (legal and licensing text): Changes the terms.",
+    );
+    expect(reasonWithItems([], items, "Items 2 and 3: Changes the terms.")).toBe("Changes the terms.");
+  });
+
+  test("the item range comes from the list the run reads", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "ai-sorter-list-"));
+    writeFileSync(join(dir, "list.md"), `${LIST()}7. **Analytics**: code that sends usage data anywhere.\n`);
+    fake.messages = [yes("Sends usage data.", [7])];
+    const r = await run({ env: { SORTER_LIST_FILE: join(dir, "list.md") } });
+    expect(r.summary).toContain("**List items:** Item 7 (analytics)\n");
+  });
+
+  test("the warning's file and text are escaped: a path or a reason cannot end the warning or start another command", async () => {
+    const file = "plugins/a,title=x::y%z.md";
+    const diff = [`diff --git a/${file} b/${file}`, `--- a/${file}`, `+++ b/${file}`, "@@ -1 +1 @@", "-a", "+b", ""].join("\n");
+    fake.messages = [yes("Changes 100% of it\n::error::x, title=y", [4], [at(file, 1)])];
+    const r = await run({ diff, files: [file] });
+    expect(r.warnings).toHaveLength(1);
+    const line = r.warnings[0];
+    expect(line.startsWith("::warning file=plugins/a%2Ctitle=x%3A%3Ay%25z.md,line=1,title=AI sorter%3A waits for the owner::")).toBe(true);
+    expect(line.split("::")).toHaveLength(3);
+    expect(line).toContain("Changes 100%25 of it : :error: :x, title=y");
+    expect(r.stdout).not.toContain("::error::");
+    expect(escapeProperty("a:b,c%d\r\ne")).toBe("a%3Ab%2Cc%25d%0D%0Ae");
+  });
+
+  test("a pass prints no warnings and keeps no items or lines, whatever the model put in them", async () => {
+    fake.messages = [no("Fixes a typo.", [4], [at(README, 1)])];
+    const r = await run({ diff: TWO_FILE_DIFF, files: TWO_FILES });
+    expect(r.code).toBe(0);
+    expect(r.warnings).toEqual([]);
+    expect(r.summary).not.toContain("List items");
+    expect(r.summary).not.toContain("Where");
+    expect(r.commands.find((line) => line.startsWith(`::notice title=${RECORD_TITLE}::`))).toContain('"items":[],"spots":[]');
+    expect(warningLines({ result: "pass", why: "x", reason: "y" })).toEqual([]);
+    expect(warningLines({ result: "error", why: "x" })).toEqual([]);
+  });
+
+  test("a wait without the model warns on the first path in always.txt", async () => {
+    const r = await run({ files: [README, ".github/workflows/x.yml", "LICENSE"] });
+    expect(r.code).toBe(1);
+    expect(r.warnings).toEqual([warning(".github/workflows/x.yml", "Changes .github/workflows/x.yml, LICENSE.")]);
+    expect(modelCalls()).toHaveLength(0);
+  });
+
+  test("a reused wait shows the recorded items and lines again", async () => {
+    const reason = "Item 4 (legal and licensing text): Changes the README.";
+    recordRun(5, V(true, { items: [4], spots: [at(README, 1)], reason }));
+    const r = await run({ env: { SORTER_EVENT: "pull_request_review", SORTER_ACTION: "submitted" } });
+    expect(r.code).toBe(1);
+    expect(r.warnings).toEqual([warning(at(README, 1), reason)]);
+    expect(r.summary).toContain("**List items:** Item 4 (legal and licensing text)\n");
+    expect(modelCalls()).toHaveLength(0);
+  });
+
+  test("the prompt carries the numbered list and asks for one sentence with no item numbers", async () => {
+    fake.messages = [no()];
+    await run();
+    const system: string = modelCalls()[0].body.system;
+    expect(system).toContain("4. **Legal and licensing text**");
+    expect(system).toContain("items: the numbers of the list's areas");
+    expect(system).toContain(`at most ${SPOTS_MAX} changed lines`);
+    expect(system).toContain("reason: one plain sentence");
+    expect(system).toContain("No item numbers");
+  });
+
+  test("newSideRanges: each file's hunks on the new side; none for a deleted file or a quoted path", () => {
+    const deleted = ["diff --git a/x b/x", "deleted file mode 100644", "--- a/x", "+++ /dev/null", "@@ -1,2 +0,0 @@", "-a", "-b", ""];
+    const quoted = ['diff --git "a/\\303\\251" "b/\\303\\251"', '--- "a/\\303\\251"', '+++ "b/\\303\\251"', "@@ -1 +1 @@", "-a", "+b", ""];
+    const spaced = ["diff --git a/a b b/a b", "--- a/a b\t", "+++ b/a b\t", "@@ -3,0 +4,2 @@", "+x", "+y", ""];
+    const ranges = newSideRanges([TWO_FILE_DIFF, ...deleted, ...quoted, ...spaced].join("\n"));
+    expect([...ranges.entries()]).toEqual([
+      [README, [[1, 1]]],
+      [TERMS, [[10, 16]]],
+      ["a b", [[4, 5]]],
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// L1: a wait recorded on an earlier commit of the branch, for the same change, carries over. A pass never does.
+
+let earlierCount = 0;
+/**
+ * An earlier head of the branch: this workflow's pull_request run on it (in the branch's list of runs), and one check run with a record
+ * of `verdict` for KEY on that head (with `key` changing some of its fields). `run` changes the workflow run, and `extra` adds check runs
+ * in the same check suite (re-runs), each with only a non-record annotation.
+ */
+function earlierHead(
+  head: string,
+  verdict: Verdict | null,
+  opts: { run?: Record<string, unknown>; key?: Partial<RecordKey>; extra?: number } = {},
+) {
+  const n = ++earlierCount;
+  const suite = 8000 + n;
+  fake.branchRuns.push({
+    id: 9000 + n,
+    check_suite_id: suite,
+    path: WORKFLOW_PATH,
+    event: "pull_request",
+    head_sha: head,
+    head_branch: "feature",
+    pull_requests: [{ number: 7, base: { ref: "main", sha: BASE } }],
+    ...opts.run,
+  });
+  const runs = (fake.checkRunsByCommit[head] ??= []);
+  for (let i = 0; i <= (opts.extra ?? 0); i++) {
+    const id = 7000 + n * 10 + i;
+    runs.push({ id, name: CHECK_NAME, head_sha: head, app: { slug: "github-actions" }, check_suite: { id: suite }, output: { annotations_count: 1 } });
+    fake.annotations[id] =
+      i === 0 && verdict !== null
+        ? [{ title: RECORD_TITLE, annotation_level: "notice", message: recordLine({ ...KEY(), head, ...opts.key }, verdict).slice(`::notice title=${RECORD_TITLE}::`.length) }]
+        : [{ title: "something-else", annotation_level: "warning", message: "x" }];
+  }
+  return { checkRun: 7000 + n * 10, suite };
+}
+const sha = (n: number) => n.toString(16).padStart(40, "d");
+
+describe("an earlier commit's wait carries over", () => {
+  test("an empty commit or an amend that changes nothing cannot turn a wait into a pass", async () => {
+    const { checkRun } = earlierHead(OLD, V(true));
+    fake.messages = [no()];
+    const r = await run();
+    expect(r.code).toBe(1);
+    expect(r.summary).toContain(`the wait recorded for this change on an earlier commit (${OLD.slice(0, 12)}, check run ${checkRun})`);
+    expect(modelCalls()).toHaveLength(0);
+    // It is recorded for this commit too, so this commit's later runs find it on their own commit.
+    expect(r.stdout.split("\n")).toContain(recordLine(KEY(), V(true)));
+  });
+
+  test("an earlier pass never carries over (an earlier commit could have forged it): the model is asked", async () => {
+    // A commit that edits ai-sorter.yml runs its own version of the workflow, which can print any record: a pass for the diff of a
+    // later commit that undoes the edit, say. Only a wait is carried over, and a forged wait only makes the same change wait again.
+    earlierHead(OLD, V(false));
+    fake.messages = [yes()];
+    const r = await run();
+    expect(r.code).toBe(1);
+    expect(modelCalls()).toHaveLength(1);
+    expect(r.summary).toContain("the model says the change touches the sensitive list");
+  });
+
+  test("a carried-over wait is recorded as this run checks it: unknown items and lines that are not in the diff are dropped", async () => {
+    earlierHead(OLD, V(true, { items: [4, 99], spots: [at(README, 1), at("elsewhere.md", 3)], reason: "Item 4 (legal and licensing text): x." }));
+    const r = await run();
+    expect(r.code).toBe(1);
+    const record = r.commands.find((line) => line.startsWith(`::notice title=${RECORD_TITLE}::`))!;
+    expect(parseRecord(record.slice(`::notice title=${RECORD_TITLE}::`.length), KEY())).toEqual(
+      V(true, { items: [4], spots: [at(README, 1)], reason: "Item 4 (legal and licensing text): x." }),
+    );
+    expect(r.warnings).toEqual([warning(at(README, 1), "Item 4 (legal and licensing text): x.")]);
+  });
+
+  test("an earlier pass and then a wait: the wait carries over", async () => {
+    earlierHead(OLD, V(false));
+    const { checkRun } = earlierHead(sha(2), V(true));
+    const r = await run();
+    expect(r.code).toBe(1);
+    expect(r.summary).toContain(`check run ${checkRun}`);
+    expect(modelCalls()).toHaveLength(0);
+  });
+
+  for (const [name, key] of [
+    ["another diff", { diff_sha256: "0".repeat(64) }],
+    ["another base branch", { base_ref: "release" }],
+    ["another policy", { policy_sha256: "0".repeat(64) }],
+  ] as [string, Partial<RecordKey>][]) {
+    test(`an earlier wait for ${name} does not count: the model is asked`, async () => {
+      earlierHead(OLD, V(true), { key });
+      fake.messages = [no()];
+      const r = await run();
+      expect(r.code).toBe(0);
+      expect(modelCalls()).toHaveLength(1);
+    });
+  }
+
+  for (const [name, change] of [
+    ["another workflow", { path: ".github/workflows/other.yml" }],
+    ["a push", { event: "push" }],
+    ["a pull request into another base branch", { pull_requests: [{ number: 7, base: { ref: "release", sha: BASE } }] }],
+    ["a fork's run (no pull request named)", { pull_requests: [] }],
+    ["another branch", { head_branch: "other" }],
+    ["this very commit", { head_sha: HEAD }],
+  ] as [string, Record<string, unknown>][]) {
+    test(`an earlier wait from ${name} does not count`, async () => {
+      earlierHead(OLD, V(true), { run: change });
+      fake.messages = [no()];
+      const r = await run();
+      expect(r.code).toBe(0);
+      expect(modelCalls()).toHaveLength(1);
+    });
+  }
+
+  test("a re-run of the earlier commit's check does not hide its record: every check run of that commit is read", async () => {
+    const { checkRun } = earlierHead(OLD, V(true), { extra: 2 });
+    // The re-runs are newer check runs in the same check suite. Put them first, as GitHub lists newest first.
+    fake.checkRunsByCommit[OLD].reverse();
+    const r = await run();
+    expect(r.code).toBe(1);
+    expect(r.summary).toContain(`check run ${checkRun}`);
+    const lists = fake.calls.filter((call) => call.path === `/repos/owner/repo/commits/${OLD}/check-runs`);
+    expect(lists).toHaveLength(1);
+    expect(new URLSearchParams(lists[0].query).get("filter")).toBe("all");
+  });
+
+  test("the lookup: one list of this workflow's pull_request runs on the head branch", async () => {
+    earlierHead(OLD, V(true));
+    await run();
+    const lists = fake.calls.filter((call) => call.path === "/repos/owner/repo/actions/workflows/ai-sorter.yml/runs");
+    expect(lists).toHaveLength(1);
+    const query = new URLSearchParams(lists[0].query);
+    expect(query.get("event")).toBe("pull_request");
+    expect(query.get("branch")).toBe("feature");
+  });
+
+  test("at most 20 earlier commits are read, the most recent ones", async () => {
+    for (let n = 1; n <= 25; n++) earlierHead(sha(n), null);
+    fake.messages = [no()];
+    const r = await run();
+    expect(r.code).toBe(0);
+    const read = fake.calls
+      .map((call) => call.path.match(/^\/repos\/owner\/repo\/commits\/([0-9a-f]+)\/check-runs$/)?.[1])
+      .filter((commit) => commit !== undefined && commit !== HEAD);
+    expect(read).toEqual(Array.from({ length: 20 }, (_, i) => sha(i + 6)));
+  });
+
+  test("a review with no record on this commit reuses an earlier wait instead of failing closed", async () => {
+    earlierHead(OLD, V(true));
+    const r = await run({ env: { SORTER_EVENT: "pull_request_review", SORTER_ACTION: "submitted" } });
+    expect(r.code).toBe(1);
+    expect(r.summary).toContain("waits for the owner");
+  });
+
+  test("a record on this commit comes first: an earlier commit is not looked up", async () => {
+    recordRun(5, false);
+    earlierHead(OLD, V(true));
+    const r = await run({ env: { SORTER_ACTION: "edited" } });
+    expect(r.code).toBe(0);
+    expect(fake.calls.filter((call) => call.path.includes("/actions/workflows/"))).toHaveLength(0);
+  });
+
+  test("earlier runs that cannot be read fail closed, without asking the model", async () => {
+    fake.branchRunsStatus = 500;
+    fake.messages = [no()];
+    const r = await run();
+    expect(r.code).toBe(1);
+    expect(r.summary).toContain("the verdicts recorded on earlier commits could not be read");
+    expect(modelCalls()).toHaveLength(0);
+  });
+
+  test("a missing or malformed head branch fails closed", async () => {
+    for (const ref of ["", "a\nb", "x".repeat(256)]) {
+      const r = await run({ env: { SORTER_HEAD_REF: ref } });
+      expect(r.code).toBe(1);
+      expect(r.summary).toContain("SORTER_HEAD_REF");
+    }
+  });
+});
+
+// L2: only this workflow's check runs count toward the cap of check runs read on a commit.
+describe("check runs of the same name from elsewhere", () => {
+  test("cannot push this workflow's record out of the ones that are read", async () => {
+    for (let id = 1; id <= 25; id++) recordRun(id, false, { workflowRun: { path: ".github/workflows/other.yml" } });
+    recordRun(100, true);
+    const r = await run({ env: { SORTER_EVENT: "pull_request_review", SORTER_ACTION: "submitted" } });
+    expect(r.code).toBe(1);
+    expect(r.summary).toContain("the verdict recorded for this change (check run 100)");
   });
 });
