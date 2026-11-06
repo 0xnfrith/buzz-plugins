@@ -23,7 +23,8 @@ permissions:
   contents: read
 
 concurrency:
-  # A newer push to a pull request cancels the run it replaces. Pushes to main are never cancelled: each one runs to the end.
+  # A newer push to a pull request cancels the run it replaces. A push to main never cancels a run that has started: the next one
+  # waits for it, and when several wait, only the newest runs.
   group: tests-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
