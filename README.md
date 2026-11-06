@@ -105,7 +105,7 @@ docs/
   building.md         how we build plugins
   install.md          how to install one
 assets/               the banner, the gallery cards and the plugin headers of these READMEs
-.github/workflows/    the checks every pull request runs
+.github/workflows/    the checks every pull request runs (all-tests is the one to require)
 CONTRIBUTING.md       how to send a change (and the key-latency rule for vim mode)
 ```
 
