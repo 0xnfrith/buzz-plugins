@@ -1,0 +1,14 @@
+# The paths whose changes wait for the owner's review, once the branch rules
+# ask for a code owner's review. Until then GitHub only requests it.
+#
+# Keep this list short: every pull request that touches a path here waits for
+# the owner.
+#
+# .github/ holds the workflows, their helper script and this file, so it also
+# protects itself.
+/.github/                                  @0xnfrith
+/LICENSE                                   @0xnfrith
+
+# Where a plugin keeps a person's token or API key.
+/plugins/beeper/src/beeper/config.ts       @0xnfrith
+/plugins/linear/src/linear/keys.ts         @0xnfrith
