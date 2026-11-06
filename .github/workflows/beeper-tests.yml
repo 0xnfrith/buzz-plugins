@@ -1,6 +1,6 @@
-# Type check and unit tests of the Beeper plugin (plugins/beeper/test/unit): the curl request, the client against the real curl and
-# a fake Beeper, the store, the formatting. No Beeper Desktop is needed. The browser suite (plugins/beeper/test/run.sh) needs a
-# block/buzz-app checkout and is run by hand.
+# Type check, unit tests and build check of the Beeper plugin (plugins/beeper/test/unit): the curl request, the client against the
+# real curl and a fake Beeper, the store, the formatting, and that the committed plugin.js is the build of src/. No Beeper Desktop is
+# needed. The browser suite (plugins/beeper/test/run.sh) needs a block/buzz-app checkout and is run by hand.
 name: Beeper tests
 
 on:
@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   test:
-    name: Beeper type check and unit tests
+    name: Beeper type check, unit tests and build
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
@@ -42,3 +42,18 @@ jobs:
           pnpm exec vitest run --reporter=json --outputFile="$RUNNER_TEMP/unit.json"
           jq -e '.numTotalTests > 0 and .numPassedTests == .numTotalTests and .numFailedTests == 0 and .numPendingTests == 0' "$RUNNER_TEMP/unit.json"
           jq '{tests: .numTotalTests, passed: .numPassedTests, failed: .numFailedTests, skipped: .numPendingTests}' "$RUNNER_TEMP/unit.json"
+      - name: plugin.js is the build of the source
+        # Buzz loads the committed plugin.js and never runs a build: it has to be what this source builds to. The file is removed
+        # first, so a build that does not write it (a changed output name, a build script that does nothing) leaves it missing, and
+        # `git status` also catches a plugin.js that is missing from the commit, not tracked or ignored. The status is its own command,
+        # so a git error fails the step.
+        run: |
+          rm -f plugin.js
+          pnpm run build
+          status=$(git status --porcelain --ignored -- plugin.js)
+          if [ -n "$status" ]; then
+            echo "$status"
+            git diff -- plugin.js
+            echo "::error::plugin.js is not the build of src/: run 'pnpm run build' in plugins/beeper and commit it"
+            exit 1
+          fi

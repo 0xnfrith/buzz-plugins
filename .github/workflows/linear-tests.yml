@@ -1,6 +1,6 @@
-# Type check and unit tests of the Linear plugin (plugins/linear/test/unit), and its key store against a real Secret Service. The
-# browser suite (plugins/linear/test/run.sh) needs a block/buzz-app checkout and is run by hand; plugins/linear/NOTES.md says what
-# it covers.
+# Type check, unit tests and build check of the Linear plugin (plugins/linear/test/unit; the build check: the committed plugin.js is
+# the build of src/), and its key store against a real Secret Service. The browser suite (plugins/linear/test/run.sh) needs a
+# block/buzz-app checkout and is run by hand; plugins/linear/NOTES.md says what it covers.
 name: Linear tests
 
 on:
@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   test:
-    name: Linear type check and unit tests
+    name: Linear type check, unit tests and build
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
@@ -40,6 +40,21 @@ jobs:
         run: pnpm exec tsc
       - name: Unit tests
         run: pnpm test
+      - name: plugin.js is the build of the source
+        # Buzz loads the committed plugin.js and never runs a build: it has to be what this source builds to. The file is removed
+        # first, so a build that does not write it (a changed output name, a build script that does nothing) leaves it missing, and
+        # `git status` also catches a plugin.js that is missing from the commit, not tracked or ignored. The status is its own command,
+        # so a git error fails the step.
+        run: |
+          rm -f plugin.js
+          pnpm run build
+          status=$(git status --porcelain --ignored -- plugin.js)
+          if [ -n "$status" ]; then
+            echo "$status"
+            git diff -- plugin.js
+            echo "::error::plugin.js is not the build of src/: run 'pnpm run build' in plugins/linear and commit it"
+            exit 1
+          fi
 
   secret-service:
     # The Linux key store (plugins/linear/test/unit/secret-service.real.test.ts) with the real `secret-tool` and a real Secret

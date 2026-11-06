@@ -171,7 +171,7 @@ Which steps behaved differently, and for any that did nothing, whether the label
 
 The source is TypeScript in `src/`, one module per concern (see "Source layout" in `NOTES.md`). The app loads only the built `plugin.js` next to the manifest and never runs a build, so the built file is committed with the source.
 
-- **Build**: `pnpm install --frozen-lockfile`, then `pnpm build` (Node 22 or newer; `npm run build` works too). It type-checks `src/` and bundles it into `plugin.js`, unminified so that what you install is readable.
+- **Build**: `pnpm install --frozen-lockfile`, then `pnpm build` (Node 22 or newer; `npm run build` works too). It type-checks `src/` and bundles it into `plugin.js`, unminified so that what you install is readable. The tests load `plugin.js`, not `src/`, and CI checks that it is what the source builds to.
 - **Browser tests**: `test/run.sh PATH_TO_BLOCK_BUZZ_APP_CHECKOUT` runs `test/vim.spec.mjs` against that checkout's browser harness. See `test/run.sh` for the one-time setup.
 - **Key latency budget**: `test/budget.sh PATH_TO_BLOCK_BUZZ_APP_CHECKOUT`, below. A change to a key adds the key to it.
 - **Measuring**: `test/perf.sh`, `test/real-app/` and "Measuring the plugin" in `NOTES.md`.

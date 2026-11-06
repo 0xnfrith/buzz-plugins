@@ -13,10 +13,10 @@
 /plugins/artifacts/licenses/ChakraPetch-OFL.txt  @0xnfrith
 
 # Where a plugin keeps a person's token or API key. Buzz runs the committed
-# plugin.js and never builds it. No CI job checks the Beeper or Linear
-# plugin.js against its source, so each is listed with its source. The
-# manifest declares the key-store commands a plugin may run and the addresses
-# it may reach.
+# plugin.js and never builds it. The Beeper and Linear CI jobs check that
+# plugin.js is the build of the source, but no branch rule requires that check
+# yet, so each plugin.js is listed with its source. The manifest declares the
+# key-store commands a plugin may run and the addresses it may reach.
 /plugins/beeper/src/beeper/config.ts             @0xnfrith
 /plugins/beeper/plugin.js                        @0xnfrith
 /plugins/beeper/manifest.json                    @0xnfrith
