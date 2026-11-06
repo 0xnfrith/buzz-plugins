@@ -4,7 +4,8 @@
 // the workflow file itself is read to build the folder layout the sorter runs in.
 
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +15,8 @@ import {
   DIFF_CAP_BYTES,
   MODEL,
   RECORD_TITLE,
+  type RecordKey,
+  WORKFLOW_PATH,
   alwaysHits,
   parseAnswer,
   parseNumstat,
@@ -29,6 +32,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const WORKFLOW = process.env.AI_SORTER_WORKFLOW || join(here, "../workflows/ai-sorter.yml");
 const HEAD = "a".repeat(40);
 const OLD = "b".repeat(40);
+const BASE = "c".repeat(40);
 const OWNER = "the-owner";
 const FAKE_KEY = "test-key-not-real";
 const LS = String.fromCharCode(0x2028);
@@ -44,6 +48,8 @@ const fake = {
   checkRuns: [] as any[],
   checkRunsStatus: 200,
   annotations: {} as Record<number, unknown[]>,
+  workflowRuns: {} as Record<number, unknown>,
+  workflowRunsStatus: 200,
 };
 
 const server = Bun.serve({
@@ -68,6 +74,11 @@ const server = Bun.serve({
     if (req.method === "GET" && /^\/repos\/owner\/repo\/commits\/[0-9a-f]+\/check-runs$/.test(url.pathname)) {
       if (fake.checkRunsStatus !== 200) return Response.json({ message: "nope" }, { status: fake.checkRunsStatus });
       return Response.json({ total_count: fake.checkRuns.length, check_runs: fake.checkRuns });
+    }
+    if (req.method === "GET" && url.pathname === "/repos/owner/repo/actions/runs") {
+      if (fake.workflowRunsStatus !== 200) return Response.json({ message: "nope" }, { status: fake.workflowRunsStatus });
+      const run = fake.workflowRuns[Number(url.searchParams.get("check_suite_id"))];
+      return Response.json({ total_count: run ? 1 : 0, workflow_runs: run ? [run] : [] });
     }
     const annotations = url.pathname.match(/^\/repos\/owner\/repo\/check-runs\/(\d+)\/annotations$/);
     if (req.method === "GET" && annotations) return Response.json(fake.annotations[Number(annotations[1])] ?? []);
@@ -100,11 +111,43 @@ const yes = (reason = "Changes the release workflow.") => answer(JSON.stringify(
 const no = (reason = "Only fixes a typo in a plugin README.") => answer(JSON.stringify({ touches_list: false, reason }));
 const review = (login: string, state: string, commit_id: string) => ({ user: { login }, state, commit_id });
 
-/** A check run on HEAD with one annotation: a verdict record, or any message given as a string. */
-function recordRun(id: number, record: boolean | string, over: Record<string, unknown> = {}, title = RECORD_TITLE) {
-  fake.checkRuns.push({ id, name: CHECK_NAME, head_sha: HEAD, app: { slug: "github-actions" }, output: { annotations_count: 1 }, ...over });
-  const message = typeof record === "string" ? record : JSON.stringify({ v: 1, head: HEAD, touches_list: record });
-  fake.annotations[id] = [{ title, annotation_level: "notice", message }];
+const SMALL_DIFF_SHA256 = () => createHash("sha256").update(SMALL_DIFF).digest("hex");
+// What a record for the default change (SMALL_DIFF, pull request 7, on main at BASE) is bound to.
+const KEY = (): RecordKey => ({ pr: 7, head: HEAD, base_ref: "main", base_sha: BASE, diff_sha256: SMALL_DIFF_SHA256() });
+
+/**
+ * A check run on HEAD, from this workflow's pull_request run for pull request 7 on main at BASE, with one annotation: a record of the
+ * given verdict for KEY (with `key` changing some of its fields), or any message given as a string. `over` changes the check run, and
+ * `workflowRun` the workflow run it belongs to.
+ */
+function recordRun(
+  id: number,
+  record: boolean | string,
+  opts: { over?: Record<string, unknown>; title?: string; key?: Partial<RecordKey>; workflowRun?: Record<string, unknown> } = {},
+) {
+  const suite = 1000 + id;
+  fake.checkRuns.push({
+    id,
+    name: CHECK_NAME,
+    head_sha: HEAD,
+    app: { slug: "github-actions" },
+    check_suite: { id: suite },
+    output: { annotations_count: 1 },
+    ...opts.over,
+  });
+  fake.workflowRuns[suite] = {
+    id: 5000 + id,
+    path: WORKFLOW_PATH,
+    event: "pull_request",
+    head_sha: HEAD,
+    pull_requests: [{ number: 7, base: { ref: "main", sha: BASE } }],
+    ...opts.workflowRun,
+  };
+  const message =
+    typeof record === "string"
+      ? record
+      : recordLine({ ...KEY(), ...opts.key }, record).slice(`::notice title=${RECORD_TITLE}::`.length);
+  fake.annotations[id] = [{ title: opts.title ?? RECORD_TITLE, annotation_level: "notice", message }];
 }
 
 const SMALL_DIFF = [
@@ -127,6 +170,8 @@ function sorterEnv(dir: string, change: string, opts: { key?: string | null; env
     GITHUB_STEP_SUMMARY: join(dir, "summary.md"),
     SORTER_PR_NUMBER: "7",
     SORTER_HEAD_SHA: HEAD,
+    SORTER_BASE_REF: "main",
+    SORTER_BASE_FILE: join(change, "change.base"),
     SORTER_APPROVERS: OWNER,
     SORTER_EVENT: "pull_request",
     SORTER_ACTION: "synchronize",
@@ -158,6 +203,7 @@ async function run(
     writeFileSync(join(dir, "change.diff"), opts.diff ?? SMALL_DIFF);
     const numstat = opts.numstat ?? (opts.files ?? ["plugins/vim/README.md"]).map((path) => `1\t1\t${path}\0`).join("");
     writeFileSync(join(dir, "change.numstat"), numstat);
+    writeFileSync(join(dir, "change.base"), `${BASE}\n`);
   }
   writeFileSync(join(dir, "summary.md"), "");
   const proc = Bun.spawn(["bun", "sorter.ts"], { cwd: here, env: sorterEnv(dir, change, opts), stdout: "pipe", stderr: "pipe" });
@@ -174,6 +220,8 @@ beforeEach(() => {
   fake.checkRuns = [];
   fake.checkRunsStatus = 200;
   fake.annotations = {};
+  fake.workflowRuns = {};
+  fake.workflowRunsStatus = 200;
 });
 
 describe("the model's answer", () => {
@@ -183,7 +231,7 @@ describe("the model's answer", () => {
     expect(r.code).toBe(0);
     expect(r.summary).toContain("## AI sorter: passes");
     expect(r.summary).toContain("Only fixes a typo in a plugin README.");
-    expect(r.stdout.split("\n")).toContain(recordLine(HEAD, false));
+    expect(r.stdout.split("\n")).toContain(recordLine(KEY(), false));
   });
 
   test("yes: the check fails, waits for the owner, shows the reason and records the verdict", async () => {
@@ -193,7 +241,7 @@ describe("the model's answer", () => {
     expect(r.summary).toContain("## AI sorter: waits for the owner");
     expect(r.summary).toContain("Changes the release workflow.");
     expect(r.summary).toContain("the owner approves this pull request's latest commit");
-    expect(r.stdout.split("\n")).toContain(recordLine(HEAD, true));
+    expect(r.stdout.split("\n")).toContain(recordLine(KEY(), true));
   });
 
   test("the request: the model id, the strict schema, low effort, no sampling settings, the diff inside a random marker", async () => {
@@ -381,11 +429,13 @@ describe("the owner's approval", () => {
   });
 });
 
-// H2: the model is asked once per commit. Edits, reviews, re-runs and reopenings reuse the recorded verdict; a "yes" cannot be re-rolled.
-describe("one verdict per commit", () => {
+// H2: the model is asked once for a given change. Edits, reviews, re-runs and reopenings reuse the verdict recorded for exactly that
+// change (pull request, head, base branch, base commit, diff), from this workflow's own run; a "yes" cannot be re-rolled.
+describe("one verdict per change", () => {
+  const review = { SORTER_EVENT: "pull_request_review", SORTER_ACTION: "submitted" };
   const laterRuns: [string, Record<string, string>][] = [
     ["an edit of the pull request", { SORTER_EVENT: "pull_request", SORTER_ACTION: "edited" }],
-    ["a review", { SORTER_EVENT: "pull_request_review", SORTER_ACTION: "submitted" }],
+    ["a review", review],
     ["a dismissed review", { SORTER_EVENT: "pull_request_review", SORTER_ACTION: "dismissed" }],
     ["a re-run", { SORTER_EVENT: "pull_request", SORTER_ACTION: "synchronize", SORTER_RUN_ATTEMPT: "2" }],
     ["a reopening", { SORTER_EVENT: "pull_request", SORTER_ACTION: "reopened" }],
@@ -399,7 +449,7 @@ describe("one verdict per commit", () => {
       const r = await run({ env });
       expect(r.code).toBe(1);
       expect(r.summary).toContain("## AI sorter: waits for the owner");
-      expect(r.summary).toContain("the verdict recorded for this commit (check run 5)");
+      expect(r.summary).toContain("the verdict recorded for this change (check run 5)");
       expect(modelCalls()).toHaveLength(0);
       expect(r.stdout).not.toContain(RECORD_TITLE);
     });
@@ -407,7 +457,7 @@ describe("one verdict per commit", () => {
 
   test("a recorded no is reused too", async () => {
     recordRun(5, false);
-    const r = await run({ env: { SORTER_EVENT: "pull_request_review", SORTER_ACTION: "submitted" }, key: null });
+    const r = await run({ env: review, key: null });
     expect(r.code).toBe(0);
     expect(modelCalls()).toHaveLength(0);
   });
@@ -417,7 +467,7 @@ describe("one verdict per commit", () => {
       fake.messages = [no()];
       const r = await run({ env });
       expect(r.code).toBe(1);
-      expect(r.summary).toContain("no verdict is recorded for this commit");
+      expect(r.summary).toContain("no verdict is recorded for this change");
       expect(modelCalls()).toHaveLength(0);
     });
   }
@@ -437,49 +487,131 @@ describe("one verdict per commit", () => {
     expect(r.summary).toContain("check run 5");
   });
 
-  test("the lookup asks for every check run of this check on the commit", async () => {
+  test("the lookup asks for every check run of this check on the commit, and for each one's workflow run", async () => {
     recordRun(5, true);
     await run({ env: { SORTER_ACTION: "edited" } });
     const list = fake.calls.find((call) => call.path.endsWith("/check-runs"))!;
     expect(list.path).toBe(`/repos/owner/repo/commits/${HEAD}/check-runs`);
     expect(new URLSearchParams(list.query).get("check_name")).toBe(CHECK_NAME);
     expect(new URLSearchParams(list.query).get("filter")).toBe("all");
+    const runs = fake.calls.find((call) => call.path === "/repos/owner/repo/actions/runs")!;
+    expect(new URLSearchParams(runs.query).get("check_suite_id")).toBe("1005");
   });
 
-  for (const [name, setUp] of [
-    ["another app", () => recordRun(5, false, { app: { slug: "some-other-app" } })],
-    ["another check name", () => recordRun(5, false, { name: "AI sorter tests" })],
-    ["another commit", () => recordRun(5, false, { head_sha: OLD })],
-    ["a record for another commit", () => recordRun(5, JSON.stringify({ v: 1, head: OLD, touches_list: false }))],
-    ["a malformed record", () => recordRun(5, '{"v":1,"touches_list":false}')],
-    ["an extra key", () => recordRun(5, JSON.stringify({ v: 1, head: HEAD, touches_list: false, by: "x" }))],
-    ["another annotation title", () => recordRun(5, false, {}, "something-else")],
-  ] as [string, () => void][]) {
-    test(`a record from ${name} does not count`, async () => {
+  // The change judged must be exactly this one. Each of these is a different change: the record does not count.
+  for (const [name, setUp, env] of [
+    ["the pull request retargeted to another base branch", () => recordRun(5, false), { SORTER_BASE_REF: "release" }],
+    [
+      "the pull request retargeted, with its record and workflow run on the old base",
+      () =>
+        recordRun(5, false, {
+          key: { base_ref: "feature" },
+          workflowRun: { pull_requests: [{ number: 7, base: { ref: "feature", sha: BASE } }] },
+        }),
+      {},
+    ],
+    ["a moved base (another base commit)", () => recordRun(5, false, { key: { base_sha: OLD } }), {}],
+    ["another diff (sha256)", () => recordRun(5, false, { key: { diff_sha256: "0".repeat(64) } }), {}],
+    ["another pull request with the same head", () => recordRun(5, false, { key: { pr: 8 } }), {}],
+  ] as [string, () => void, Record<string, string>][]) {
+    test(`a record for ${name} does not count: fails closed`, async () => {
       setUp();
       fake.messages = [no()];
-      const r = await run({ env: { SORTER_EVENT: "pull_request_review", SORTER_ACTION: "submitted" } });
+      const r = await run({ env: { ...review, ...env } });
       expect(r.code).toBe(1);
-      expect(r.summary).toContain("no verdict is recorded for this commit");
+      expect(r.summary).toContain("no verdict is recorded for this change");
+      expect(modelCalls()).toHaveLength(0);
     });
   }
 
-  test("check runs that cannot be read fail closed, without asking the model", async () => {
-    fake.checkRunsStatus = 500;
+  test("a moved base on a push asks the model again: a new base is a new change", async () => {
+    recordRun(5, true, { key: { base_sha: OLD } });
     fake.messages = [no()];
     const r = await run();
+    expect(r.code).toBe(0);
+    expect(modelCalls()).toHaveLength(1);
+  });
+
+  // Where the record came from. A matching record from anywhere but this workflow's own pull_request run does not count.
+  for (const [name, setUp] of [
+    ["a forged annotation from another workflow", () => recordRun(5, false, { workflowRun: { path: ".github/workflows/other.yml" } })],
+    ["a run started by a push", () => recordRun(5, false, { workflowRun: { event: "push" } })],
+    ["a workflow run on another commit", () => recordRun(5, false, { workflowRun: { head_sha: OLD } })],
+    ["a workflow run for another pull request", () => recordRun(5, false, { workflowRun: { pull_requests: [{ number: 8, base: { ref: "main", sha: BASE } }] } })],
+    ["a workflow run with no pull request (a fork's)", () => recordRun(5, false, { workflowRun: { pull_requests: [] } })],
+    ["a workflow run on another base commit", () => recordRun(5, false, { workflowRun: { pull_requests: [{ number: 7, base: { ref: "main", sha: OLD } }] } })],
+    ["a check run with no workflow run", () => {
+      recordRun(5, false);
+      fake.workflowRuns = {};
+    }],
+    ["another app", () => recordRun(5, false, { over: { app: { slug: "some-other-app" } } })],
+    ["another check name", () => recordRun(5, false, { over: { name: "AI sorter tests" } })],
+    ["a check run on another commit", () => recordRun(5, false, { over: { head_sha: OLD } })],
+    ["a malformed record", () => recordRun(5, '{"v":2,"touches_list":false}')],
+    ["an old-format record", () => recordRun(5, JSON.stringify({ v: 1, head: HEAD, touches_list: false }))],
+    ["a record with an extra key", () => recordRun(5, JSON.stringify({ v: 2, ...KEY(), touches_list: false, by: "x" }))],
+    ["another annotation title", () => recordRun(5, false, { title: "something-else" })],
+  ] as [string, () => void][]) {
+    test(`${name} does not count`, async () => {
+      setUp();
+      fake.messages = [no()];
+      const r = await run({ env: review });
+      expect(r.code).toBe(1);
+      expect(r.summary).toContain("no verdict is recorded for this change");
+    });
+  }
+
+  test("the workflow run's path may carry a ref after @", async () => {
+    recordRun(5, false, { workflowRun: { path: `${WORKFLOW_PATH}@refs/pull/7/merge` } });
+    expect((await run({ env: review })).code).toBe(0);
+  });
+
+  test("a record from a pull request that edits ai-sorter.yml never counts: that change waits before any record is read", async () => {
+    // GitHub does not say which version of the workflow file ran, so a pull request that edits it could make its own run record "no".
+    // Its change touches .github/, which always waits, and the records are not even looked up.
+    recordRun(5, false);
+    const r = await run({ files: [".github/workflows/ai-sorter.yml", "plugins/vim/README.md"], env: review });
     expect(r.code).toBe(1);
-    expect(r.summary).toContain("the verdict recorded for this commit could not be read");
-    expect(modelCalls()).toHaveLength(0);
+    expect(r.summary).toContain("always.txt");
+    expect(fake.calls.filter((call) => call.path.endsWith("/check-runs"))).toHaveLength(0);
+  });
+
+  for (const [what, set] of [
+    ["check runs", () => (fake.checkRunsStatus = 500)],
+    ["workflow runs", () => {
+      recordRun(5, false);
+      fake.workflowRunsStatus = 500;
+    }],
+  ] as [string, () => void][]) {
+    test(`${what} that cannot be read fail closed, without asking the model`, async () => {
+      set();
+      fake.messages = [no()];
+      const r = await run();
+      expect(r.code).toBe(1);
+      expect(r.summary).toContain("the verdict recorded for this change could not be read");
+      expect(modelCalls()).toHaveLength(0);
+    });
+  }
+
+  test("a malformed base commit or base branch fails closed", async () => {
+    let r = await run({ env: { SORTER_BASE_REF: "" } });
+    expect(r.code).toBe(1);
+    expect(r.summary).toContain("SORTER_BASE_REF");
+    r = await run({ env: { SORTER_BASE_FILE: join(here, "always.txt") } });
+    expect(r.code).toBe(1);
+    expect(r.summary).toContain("base commit");
   });
 
   test("recordLine and parseRecord agree, and parseRecord takes nothing else", () => {
-    const line = recordLine(HEAD, true);
+    const key = KEY();
+    const line = recordLine(key, true);
     expect(line.startsWith(`::notice title=${RECORD_TITLE}::`)).toBe(true);
-    expect(parseRecord(line.slice(line.indexOf("::", 2) + 2), HEAD)).toBe(true);
-    expect(parseRecord(JSON.stringify({ v: 2, head: HEAD, touches_list: true }), HEAD)).toBeNull();
-    expect(parseRecord(JSON.stringify({ v: 1, head: HEAD, touches_list: "true" }), HEAD)).toBeNull();
-    expect(parseRecord(42, HEAD)).toBeNull();
+    expect(parseRecord(line.slice(`::notice title=${RECORD_TITLE}::`.length), key)).toBe(true);
+    expect(parseRecord(JSON.stringify({ v: 2, ...key, touches_list: "true" }), key)).toBeNull();
+    expect(parseRecord(JSON.stringify({ v: 2, ...key, pr: "7", touches_list: true }), key)).toBeNull();
+    expect(parseRecord(42, key)).toBeNull();
+    // "%", "\r" and "\n" in a base branch name are escaped in the workflow command.
+    expect(recordLine({ ...key, base_ref: "a%b" }, false)).toContain('"base_ref":"a%25b"');
   });
 });
 
@@ -613,6 +745,49 @@ describe("change.sh and a diff that does not show the whole change (real git)", 
     const content: string = modelCalls()[0].body.messages[0].content;
     expect(content).toContain(readFileSync(join(out, "change.diff"), "utf8"));
     expect(content).toContain("+world");
+    // The base commit the verdict is bound to: the merge commit's first parent.
+    expect(readFileSync(join(out, "change.base"), "utf8").trim()).toBe(git(repo, "rev-parse", "HEAD^1"));
+  });
+
+  // The review's remaining cases: a symbolic link added, a file turned into one, and a plain deletion.
+  test("a symbolic link added, or a file turned into one, waits without the model", async () => {
+    const added = repoWith({
+      base: { "plugins/x/a.txt": "hello\n" },
+      pr: {},
+      prSetup: (dir) => {
+        symlinkSync("../../.github/workflows/ai-sorter.yml", join(dir, "plugins/x/link"));
+        git(dir, "add", "plugins/x/link");
+      },
+    });
+    const turned = repoWith({
+      base: { "plugins/x/a.txt": "hello\n", "plugins/x/keep.txt": "keep\n" },
+      pr: {},
+      prSetup: (dir) => {
+        git(dir, "rm", "-q", "plugins/x/a.txt");
+        symlinkSync("/etc/passwd", join(dir, "plugins/x/a.txt"));
+        git(dir, "add", "plugins/x/a.txt");
+      },
+    });
+    for (const { repo, head } of [added, turned]) {
+      fake.calls = [];
+      fake.messages = [no()];
+      const r = await run({ changeDir: changeSh(repo, head) });
+      expect(r.code).toBe(1);
+      expect(r.summary).toContain("symbolic link");
+      expect(modelCalls()).toHaveLength(0);
+    }
+  });
+
+  test("a plain deletion reaches the model, with the deleted lines", async () => {
+    const { repo, head } = repoWith({
+      base: { "plugins/x/a.txt": "hello\n", "plugins/x/b.txt": "keep\n" },
+      pr: {},
+      prSetup: (dir) => git(dir, "rm", "-q", "plugins/x/a.txt"),
+    });
+    fake.messages = [no()];
+    const r = await run({ changeDir: changeSh(repo, head) });
+    expect(r.code).toBe(0);
+    expect(modelCalls()[0].body.messages[0].content).toContain("-hello");
   });
 
   // L2
@@ -819,6 +994,7 @@ async function runInWorkflowLayout(poc: (prRoot: string) => void) {
   const dir = mkdtempSync(join(tmpdir(), "ai-sorter-test-"));
   writeFileSync(join(dir, "change.diff"), SMALL_DIFF);
   writeFileSync(join(dir, "change.numstat"), "1\t1\tplugins/vim/README.md\0");
+  writeFileSync(join(dir, "change.base"), `${BASE}\n`);
   writeFileSync(join(dir, "summary.md"), "");
   fake.messages = [yes()];
   const proc = Bun.spawn(["bash", "-c", layout.sort.run], {
@@ -897,13 +1073,18 @@ describe("the workflow", () => {
 
   test("the job's name is the check name the recorded verdicts are looked up by", () => {
     expect(parsed.jobs.sort.name).toBe(CHECK_NAME);
-    expect(parsed.permissions).toEqual({ contents: "read", "pull-requests": "read", checks: "read" });
+    expect(parsed.permissions).toEqual({ contents: "read", "pull-requests": "read", checks: "read", actions: "read" });
   });
 
   // L1
   test("the approver is written in the workflow, not read from a repository variable", () => {
     expect(sortStep.env.SORTER_APPROVERS).toBe("0xnfrith");
     expect(workflow).not.toContain("vars.");
+  });
+
+  test("one run at a time per commit, not per pull request (a waiting run is cancelled when another queues)", () => {
+    expect(parsed.concurrency).toEqual({ group: "ai-sorter-${{ github.event.pull_request.head.sha }}" });
+    expect(sortStep.env.SORTER_BASE_REF).toBe("${{ github.event.pull_request.base.ref }}");
   });
 
   test("it never uses pull_request_target, and the key is only in the step that sorts", () => {
@@ -920,7 +1101,7 @@ describe("untrusted text in the output", () => {
     expect(r.code).toBe(1);
     // The only line that starts with "::" is the sorter's own record.
     const commands = r.stdout.split("\n").filter((line) => line.startsWith("::"));
-    expect(commands).toEqual([recordLine(HEAD, true)]);
+    expect(commands).toEqual([recordLine(KEY(), true)]);
     expect(r.stdout).not.toContain("::error::");
     const block = r.summary.slice(r.summary.indexOf("````text\n") + 9, r.summary.lastIndexOf("\n````"));
     expect(block).not.toContain("\n");

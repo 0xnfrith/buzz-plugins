@@ -10,7 +10,8 @@
 # - Nothing from the pull request is ever run. The pull request is checked out into pr/ as data. The sorter runs from the base branch's
 #   copy of .github/sorter in trusted/, beside pr/ and never inside it, so no file of the pull request (a tsconfig.json, jsconfig.json
 #   or package.json at its root, say) sits in any folder that Bun looks through.
-# - The model is asked once per commit; edits, reviews and re-runs reuse the recorded verdict (the README says how).
+# - The model is asked once per change; edits, reviews and re-runs reuse the verdict recorded for exactly that change (the README says
+#   how), and fail closed when there is none.
 # - Pull requests from forks get no secrets and fail closed unless the owner approves their latest commit.
 # - This file itself comes from the pull request under `pull_request`, so CODEOWNERS on .github/ guards it (see the README's limits).
 name: AI sorter
@@ -25,12 +26,14 @@ on:
 permissions:
   contents: read
   pull-requests: read
-  # To read the verdict recorded on earlier check runs of this commit.
+  # To read the verdict recorded on earlier check runs of this commit, and to check which workflow run recorded it.
   checks: read
+  actions: read
 
-# One run at a time per pull request, in the order the events came.
+# One run at a time per commit. A run waiting in a group is cancelled when another one queues, so the group is the commit: the run that
+# asks the model is always the first for its commit and never waits, and only runs that would reuse its verdict can be cancelled.
 concurrency:
-  group: ai-sorter-${{ github.event.pull_request.number }}
+  group: ai-sorter-${{ github.event.pull_request.head.sha }}
 
 jobs:
   sort:
@@ -72,6 +75,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           SORTER_PR_NUMBER: ${{ github.event.pull_request.number }}
           SORTER_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SORTER_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          SORTER_BASE_FILE: ${{ runner.temp }}/change.base
           SORTER_EVENT: ${{ github.event_name }}
           SORTER_ACTION: ${{ github.event.action }}
           SORTER_RUN_ATTEMPT: ${{ github.run_attempt }}
