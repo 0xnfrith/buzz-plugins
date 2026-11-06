@@ -111,6 +111,9 @@ commit too. **A pass never carries over:** a commit that edits `ai-sorter.yml` r
 a pass for the diff of a later commit that undoes the edit. That commit itself waited (it touched `.github/`), and a wait it forged can
 only make the same change wait again. A fork's runs name no pull request, so they never count.
 
+The window is bounded: the list is one page of the branch's 100 most recent `pull_request` runs of this workflow, and of the earlier
+heads in it only the 20 most recent are read. A wait recorded further back than that is not found, and the model is asked again.
+
 Runs are grouped by commit (`concurrency`). GitHub runs one run of a group at a time and cancels a run that is still waiting for its
 turn when another one queues, so with one group per pull request an edit could cancel the run that asks the model. Per commit, the
 first run of a new commit has no run ahead of it, so it starts at once and nothing cancels it. A later run of the same commit can still
