@@ -9,17 +9,18 @@
 # `all-tests` waits for all of them and fails unless the list was made and each test workflow did what the list said: passed when
 # it was called, was skipped when it was not.
 #
-# To add a plugin's tests: give its workflow `on: workflow_call`, add its row to .github/tests-to-run.sh, add the same name to the
-# `outputs` of the `changes` job and as a job below that calls the workflow, and add that job to the `needs` of `all-tests`. If one of
-# these is missing, `changes` or `all-tests` fails and says so.
+# To add a plugin's tests, give its workflow `on: workflow_call` and put its name in five places: its row in .github/tests-to-run.sh,
+# the list of rows (ROWS) in .github/tests-to-run.test.mjs, the `outputs` of the `changes` job, a job below that calls the workflow,
+# and the `needs` of `all-tests`. If one of these is missing, `changes` or `all-tests` fails and says so.
 name: Tests
 
 on:
   pull_request:
     branches: [main]
-    # `edited` covers a pull request whose base is changed to main: it has no new commit, so without it the checks of a run against
-    # another base would stand. It also runs again when the title or the description is edited.
-    types: [opened, synchronize, reopened, edited]
+    # Only pull requests into main, so no `all-tests` result comes from a run against another base. No `edited`: an edit of the title
+    # or description would run the tests again and cancel the run in progress. A pull request whose base is changed to main has no
+    # `all-tests` result from this workflow at all, so it waits for its next push: a missing required check blocks the merge.
+    types: [opened, synchronize, reopened]
   push:
     branches: [main]
   merge_group:
@@ -29,7 +30,7 @@ permissions:
   contents: read
 
 concurrency:
-  # A pull request's newer run (a push, an edit) cancels the one it replaces. Any other run (a push to main, a merge group, a run by
+  # A pull request's newer run (a newer push) cancels the one it replaces. Any other run (a push to main, a merge group, a run by
   # hand) is grouped by its own commit, so it never waits for, or is replaced by, the run of another commit.
   group: tests-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -163,7 +164,7 @@ jobs:
             | (($n.changes.outputs.rows // "") | split(" ") | map(select(. != "")) | sort) as $rows
             | ($n | keys | map(select(. != "changes")) | sort) as $jobs
             | ($n.changes.outputs // {} | keys | map(select(. != "rows")) | sort) as $outputs
-            | if $n.changes.result != "success" then "the changed files could not be listed (Which plugin tests apply: \($n.changes.result))"
+            | if $n.changes.result != "success" then "Working out which plugin tests apply failed: see the `changes` job\u0027s log."
               else
                 (if $rows != $jobs then "the rows of .github/tests-to-run.sh (\($rows | join(", "))) are not the jobs all-tests needs (\($jobs | join(", ")))" else empty end),
                 (if $outputs != $jobs then "the outputs of the changes job (\($outputs | join(", "))) are not the jobs all-tests needs (\($jobs | join(", ")))" else empty end),

@@ -65,7 +65,11 @@ jobs:
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
       - name: A Secret Service and secret-tool
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends dbus gnome-keyring libsecret-tools
+        # A stuck package mirror fails this step in 3 minutes, after apt's own retries, rather than holding the job for its 15.
+        timeout-minutes: 3
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update -qq
+          sudo apt-get -o Acquire::Retries=3 install -y --no-install-recommends dbus gnome-keyring libsecret-tools
       - name: The key store against the real secret-tool
         env:
           LINEAR_REAL_SECRET_TOOL: "1"

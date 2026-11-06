@@ -1,5 +1,6 @@
 // The script that picks which plugin test workflows a change calls (.github/tests-to-run.sh), run in made-up git repositories with the
 // real list of rows. The `changes` job of tests.yml runs this test before it runs the script. Run by hand: node --test .github/tests-to-run.test.mjs
+// ROWS below is the list of rows the script must print, in its order: a row added to the script is added here too.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
