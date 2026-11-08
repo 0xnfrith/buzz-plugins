@@ -177,6 +177,31 @@ test("the page lists agents by name with their numbers, busy first, and says wha
   buzz.dispose();
 });
 
+test("nothing from a command's arguments or settings reaches the page, however the command is written", () => {
+  const buzz = fakeBuzz();
+  plugin.apply(buzz.ctx);
+  const now = Date.now();
+  const at = (offset) => new Date(now + offset).toISOString();
+  const call = (id, offset, command) => frame({ kind: "acp_read", turnId: "t1", seq: 3, timestamp: at(offset), payload: { method: "session/update", params: { update: { sessionUpdate: "tool_call", toolCallId: id, title: "buzz-dev-mcp__shell", kind: "other", rawInput: { command } } } } });
+  const records = [frame({ kind: "turn_started", turnId: "t1", seq: 1, timestamp: at(-MIN), startedAt: at(-MIN) })];
+  const hidden = [
+    ['API_KEY="s3cr3t value" make test', /s3cr3t|value|make/],
+    ['FOO="a b c" npm test', /\bb\b|\bc\b|npm/],
+    ["A=$(cat /etc/secret) go test", /secret|cat|\bgo\b/],
+    ["--token=abc", /token|abc/],
+    ["deploy --password hunter2", /hunter2|password/],
+  ];
+  hidden.forEach(([command, pattern], index) => {
+    records.push(call(`c${index}`, -1000 + index, command));
+    buzz.push([...records], [{ agent: AGENT, turnId: "t1", state: "working" }]);
+    const doing = text(find(page(buzz), (node) => node.props?.className === "megatech-agent-stats__task"));
+    assert.match(doing, /^Doing now/, command);
+    assert.doesNotMatch(doing.replace(/^Doing now/, ""), pattern, `${command} reached the page as: ${doing}`);
+    assert.doesNotMatch(text(page(buzz)), /s3cr3t|hunter2|\/etc\/secret|--token/, command);
+  });
+  buzz.dispose();
+});
+
 test("the tab shows one agent's numbers, an empty message for one that has not reported, and the model and context when known", () => {
   const buzz = fakeBuzz();
   plugin.apply(buzz.ctx);

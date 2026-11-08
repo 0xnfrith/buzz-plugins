@@ -101,14 +101,29 @@ function basename(value) {
   return name && name !== "." && name !== ".." ? name.slice(0, 80) : undefined;
 }
 
-/** The program a command line runs, and nothing after it: arguments can carry a token. Leading `NAME=value` settings are skipped. */
+/**
+ * The program a command line runs, and nothing after it: arguments can carry a token. Plain `NAME=value` settings before the program are
+ * skipped. Anything the plugin cannot read with certainty (a quoted or substituted value, a program in quotes, a first word that starts
+ * with `-` or holds an `=`) gives nothing rather than a guess, because a guess can be a piece of a secret.
+ */
 export function programName(command) {
   const line = command
     .split(/\r?\n/)
     .find((part) => part.trim())
     ?.replace(/\p{Cc}/gu, " ");
-  const word = line?.trim().split(/\s+/).find((part) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(part));
-  const name = word?.replace(/^["'(`]+|["'`;)]+$/g, "").split(/[/\\]/).filter(Boolean).at(-1);
+  const words = line?.trim().split(/\s+/) ?? [];
+  let word;
+  for (const candidate of words) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(candidate)) {
+      word = candidate;
+      break;
+    }
+    // A setting whose value could run past this word, or hide something, makes everything after it unreliable.
+    if (/["'`$()\\;&|<>{}]/.test(candidate)) return undefined;
+  }
+  word = word?.replace(/^\(+/, "").replace(/;+$/, "");
+  if (!word || word.startsWith("-") || word.includes("=") || !/^[\w.+@%~:/\\-]+$/.test(word)) return undefined;
+  const name = word.split(/[/\\]/).filter(Boolean).at(-1);
   return name ? name.slice(0, 40) : undefined;
 }
 

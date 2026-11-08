@@ -151,6 +151,23 @@ test("an empty page says so, frames it should not count are ignored, and the pag
   expect(requests.filter((url) => /stats/i.test(new URL(url).pathname))).toEqual([]);
 });
 
+test("nothing from a command's arguments or settings reaches the page, however the command is written", async ({ page, app }) => {
+  const { key, agent } = await start(page, app);
+  app.observer(frame("turn_started", "t1", { startedAt: at(-3_000) }), key);
+  await openPage(page, "Agent stats");
+  const run = (id, command) => app.observer(acp("t1", { sessionUpdate: "tool_call", toolCallId: id, title: "buzz-dev-mcp__shell", kind: "other", status: "in_progress", rawInput: { command } }), key);
+  run("c0", "npm test --token=hunter2");
+  await expect(value(card(page, agent), "Doing now")).toHaveText("Command · npm");
+  const unsure = ['API_KEY="s3cr3t value" make test', 'FOO="a b c" npm test', "A=$(cat /etc/secret) go test", "--token=abc"];
+  for (const [index, command] of unsure.entries()) {
+    run(`d${index}`, command);
+    // The program cannot be told for certain, so the line says only that a command is running.
+    await expect(value(card(page, agent), "Doing now")).toHaveText("Command");
+    await expect(page.locator('[data-agent-stats="page"]')).not.toContainText(/s3cr3t|hunter2|secret|--token|abc|value/);
+  }
+  await expect(value(card(page, agent), "Commands run")).toHaveText("5");
+});
+
 test("the host registers the plugin's tab for an agent's profile", async ({ page, app }) => {
   await open(page, app);
   const tabs = await page.evaluate(() => window.__statsCtx.agents.addedTabs().map((tab) => ({ plugin: tab.pluginId ?? tab.plugin ?? null, id: tab.id ?? tab.value?.id, title: tab.title ?? tab.value?.title })));

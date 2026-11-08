@@ -234,15 +234,50 @@ test("programName keeps the program and nothing after it", () => {
   assert.equal(programName("npm test"), "npm");
   assert.equal(programName("  \n\n git   push origin main\nrm -rf /"), "git");
   assert.equal(programName("/usr/local/bin/node script.js"), "node");
+  assert.equal(programName("./run.sh --fast"), "run.sh");
+  assert.equal(programName("~/bin/tool x"), "tool");
   assert.equal(programName("C:\\tools\\run.exe --flag"), "run.exe");
-  assert.equal(programName("API_KEY=abc123 TOKEN=x make build"), "make", "settings before the program are skipped, and never shown");
-  assert.equal(programName("API_KEY=abc123"), undefined, "a line that is only a setting has no program");
-  assert.equal(programName('"my tool" --x'), "my", "a quoted program is cut at its first word");
+  assert.equal(programName("API_KEY=abc123 TOKEN=x make build"), "make", "plain settings before the program are skipped, and never shown");
   assert.equal(programName("(cd /tmp && ls)"), "cd");
+  assert.equal(programName("ls;"), "ls");
   assert.equal(programName("curl -H 'Authorization: Bearer abc' https://example.com"), "curl");
   assert.equal(programName("a".repeat(100)), "a".repeat(40));
   assert.equal(programName("x\u0007y z"), "x", "control characters are blanked first");
-  for (const empty of ["", "   ", "\n\n", "/", "///"]) assert.equal(programName(empty), undefined, JSON.stringify(empty));
+});
+
+test("programName says nothing when it cannot be sure, so it never shows a piece of a secret", () => {
+  const unsure = [
+    'API_KEY="s3cr3t value" make test', // a quoted value runs past its word
+    'FOO="a b c" npm test',
+    "FOO='a b c' npm test",
+    "A=$(cat /etc/secret) go test", // a substituted value
+    "A=`cat /etc/secret` go test",
+    "A=b;C=d make",
+    "A=x\\ y make",
+    "--token=abc", // a first word that is an option
+    "-x run",
+    "TOKEN=abc", // only a setting
+    "API_KEY=abc123",
+    '"my tool" --x', // a program in quotes
+    "'my tool' --x",
+    "$HOME/bin/x y", // a program that is substituted
+    "$(whoami) y",
+    "`x` y",
+    "ls|grep x",
+    "ls&&x",
+    "",
+    "   ",
+    "\n\n",
+    "/",
+    "///",
+  ];
+  for (const command of unsure) assert.equal(programName(command), undefined, `${JSON.stringify(command)} gave ${JSON.stringify(programName(command))}`);
+  // An option with an = after the program is not the program, and is not shown; a plain setting holding an = is still only a setting.
+  assert.equal(programName("make -j=4"), "make");
+  assert.equal(programName("a=b=c d"), "d");
+  for (const command of ['API_KEY="s3cr3t value" make test', 'FOO="a b c" npm test', "A=$(cat /etc/secret) go test", "--token=abc"]) {
+    assert.doesNotMatch(String(toolDetail({ command })), /s3cr3t|value|\bb\b|secret|token|abc/, command);
+  }
   assert.doesNotMatch(String(toolDetail({ command: "deploy --password hunter2" })), /hunter2|password/);
 });
 
