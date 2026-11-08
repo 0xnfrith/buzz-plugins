@@ -130,7 +130,7 @@ export function createIdentity({ client, relay, prove, now = Date.now, signWaitM
     // A Buzz without the call is found out first: the service is not even asked for a code, and so is not sent the key.
     if (prove.available && !prove.available()) throw new IdentityError(CANNOT_CHECK);
     const viewer = relay.snapshot().viewer;
-    if (!viewer || !/^[0-9a-f]{64}$/.test(viewer)) throw new IdentityError("Buzz is not signed in yet. Open a community and try again.");
+    if (!viewer || !/^[0-9a-f]{64}$/.test(viewer)) throw new IdentityError("Buzz has not said which account is signed in yet. Once it has connected to a community, try again.");
     const { challenge, lifetimeMs } = await client.challenge(viewer);
     if (lifetimeMs < FRESH_MS) throw new IdentityError("Megatech support sent a code that expires too soon. Try again.");
     const abort = new AbortController();

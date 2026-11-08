@@ -81,7 +81,8 @@ export function createSettingsCard({
         </label>
         <p className="mts-muted">
           Off by default. When on, you can make an agent of the type Megatech support in Agents; it answers your own mention by asking Megatech support, and posts the
-          answer in the channel. Buzz also gives all your agents two tools, <code>{ASK_TOOL}</code> and <code>{STATUS_TOOL}</code>, with which an agent can ask
+          answer in the channel. That is on whichever relay you made the agent on, and everyone who can read the channel reads the answer, so make it where you are
+          content for that. Buzz also gives all your agents two tools, <code>{ASK_TOOL}</code> and <code>{STATUS_TOOL}</code>, with which an agent can ask
           support or open a ticket for you and check a ticket's status. They work only while this is on and your identity is verified, and only for agents that are
           yours. An agent cannot tell who asked it, so an agent that answers someone else can pass on what a tool gave it. The tools are added the next time the
           plugin starts: when Buzz starts, or when the plugin is turned off and on or updated, and agents running then start their sessions over. Turning this

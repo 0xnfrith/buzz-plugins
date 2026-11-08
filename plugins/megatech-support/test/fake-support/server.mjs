@@ -79,6 +79,8 @@ export function createFakeSupport({ now = () => Date.now() } = {}) {
         path: url.pathname + url.search,
         headers: Object.fromEntries(Object.entries(request.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v])),
         body: request.body === undefined ? undefined : JSON.parse(request.body),
+        // What the host was asked to wait: only `ask` sets it, so a test can see where it was and was not sent.
+        timeoutMs: request.timeoutMs,
       };
       fake.log.push(entry);
       if (url.origin !== ORIGIN) throw new Error("fake service: wrong origin");

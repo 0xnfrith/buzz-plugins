@@ -1,7 +1,7 @@
-// The part of Buzz's plugin API this plugin uses, trimmed from block/buzz-app at the commit the browser tests run against
-// (d92bfb2c: src/plugins/author.ts, src/features/{host,pages,settings,agents,relay}/service.ts, src/buzz-mcp/session-tools.ts). Block ships
-// the full types as a preview package built from its own repository; this copy keeps the build reproducible from this repository alone.
-// Update it with the host it was written against.
+// The part of Buzz's plugin API this plugin uses, trimmed from block/buzz-app at 5a7f4952, the commit these types were last checked
+// against (src/features/{host,pages,settings,agents,relay}/service.ts, src/buzz-mcp/session-tools.ts). The browser tests ran against
+// d92bfb2c; `timeoutMs` below is the one field newer than that. Block ships the full types as a preview package built from its own
+// repository; this copy keeps the build reproducible from this repository alone. Update it with the host it was written against.
 import type * as ReactNamespace from "react";
 
 export type HostRequest = Readonly<{
@@ -9,6 +9,11 @@ export type HostRequest = Readonly<{
   method?: "GET" | "HEAD" | "POST" | "PUT" | "PATCH" | "DELETE";
   headers?: Readonly<Record<string, string>>;
   body?: string;
+  /**
+   * Native deadline in milliseconds, 1 to 180000; the host's default is 30000. Added in b86b9f3c (first shipped in desktop-v0.7.0-beta.1). A Buzz
+   * from before that rejects the whole request for it, as a validation error before anything is sent (its request type refuses unknown fields).
+   */
+  timeoutMs?: number;
 }>;
 
 export type HostResponse = Readonly<{

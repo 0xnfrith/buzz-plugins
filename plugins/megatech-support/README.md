@@ -5,6 +5,10 @@ Ask Megatech support, open a ticket and follow your tickets without leaving Buzz
 > [!IMPORTANT]
 > **It works against a mock only, for now.** The support service it talks to does not exist yet, so the plugin points at a placeholder address, `https://support.megatech.invalid`, that never resolves. Until the service is hosted and the plugin is changed to its real address, installing it shows the page and the Settings card, and nothing more. The tests run it against a fake service.
 
+## Who it is for
+
+Anyone with a Buzz key, on any relay. You do not need a Megatech relay or a Megatech account. The plugin reads one thing of your relay, the key you are signed in with, and sends the support service only your public key, a signature, and what you type. Everything it does is available to every key; whether the service shows a given key more than its own tickets is the service's rule, and the plugin has no plans, tiers or account switches. The agent type is the one part that touches the relay you are on: it answers in the channel where you mention it, so everyone who can read that channel reads the answer.
+
 ## What it is
 
 - **A page, Megatech support**, in the page navigation: **Ask** a question (you get an answer when support has one right away, and a ticket either way), **Open a ticket** with a subject and what happened, and **My tickets** to read each ticket's messages.
@@ -31,7 +35,8 @@ From Buzz's own web build, against the fake service in `test/fake-support`, with
 
 - **Linux:** run in Buzz's own web build in a headless browser (the spec in `test/web`, which CI runs), and in the Buzz desktop app on Linux against the fake service (`test/real-app`). Source: `NOTES.md`, "What was verified".
 - **macOS** and **Windows:** not run. The plugin uses only the host's HTTPS client and the host's identity attestation, which are the same on every system, but no one has tried.
-- **Not run anywhere:** a real agent using the tools, and an agent of the Megatech support type; creating one publishes its profile on a relay, which the tests do not do. Source: `NOTES.md`, "What was not verified".
+- **Not run anywhere yet:** an agent using the tools against a real model, and an agent of the Megatech support type. Both are tested with fakes only; creating an agent also publishes its profile on a relay, which the tests do not do. Source: `NOTES.md`, "What was not verified".
+- **A call that waits:** a question may wait up to 170 seconds for support's answer on a Buzz that supports a longer wait (desktop-v0.7.0-beta.1 and later), and 30 seconds on an older one. The tests use a fake host; it has not been tried in the desktop app.
 
 ## How to install
 

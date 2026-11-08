@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ERROR_TEXT, SupportError, createClient } from "../../src/support/client";
+import { ASK_DEADLINE_MS, ERROR_TEXT, SupportError, createClient } from "../../src/support/client";
 import { SUPPORT_ORIGIN } from "../../src/support/origin";
 import { world } from "./world";
 
@@ -402,5 +402,108 @@ describe("the question's key", () => {
     expect(other.ticket_id).not.toBe(first.ticket_id);
     const keys = (w.fake.log as { path: string; headers: Record<string, string> }[]).filter((entry) => entry.path === "/v1/ask").map((entry) => entry.headers["idempotency-key"]);
     expect(keys).toEqual(["key-1", "key-1", "key-2"]);
+  });
+});
+
+describe("how long an ask may wait", () => {
+  type Seen = { path: string; timeoutMs: number | undefined; key: string | undefined };
+  type Sent = { url: string; timeoutMs?: number; headers?: Record<string, string> };
+
+  /**
+   * A verified client whose host passes everything to the fake service until a test sets `host.fail`. What the host was given is in
+   * `seen`, which starts empty once the identity check is done.
+   */
+  async function through() {
+    const w = world();
+    const seen: Seen[] = [];
+    const host = { fail: undefined as undefined | ((request: Sent) => Promise<never> | undefined), calls: 0 };
+    const client = createClient(async (request) => {
+      const sent = request as Sent;
+      host.calls += 1;
+      seen.push({ path: new URL(sent.url).pathname, timeoutMs: sent.timeoutMs, key: sent.headers?.["idempotency-key"] });
+      const refused = host.fail?.(sent);
+      if (refused) return refused;
+      return w.fake.handle(request);
+    }, () => w.clock.t);
+    const { createIdentity, hostProver } = await import("../../src/support/identity");
+    await createIdentity({ client, relay: w.relay as never, prove: hostProver(w.host), now: () => w.clock.t }).verify();
+    seen.length = 0;
+    host.calls = 0;
+    return { client, seen, host };
+  }
+  const OLD_BUZZ = "invalid args `request` for command `plugin_host_request`: unknown field `timeoutMs`, expected one of `url`, `method`, `headers`, `body`";
+
+  it("is over the host's default of 30 seconds and under its ceiling of 180", () => {
+    expect(ASK_DEADLINE_MS).toBeGreaterThan(30_000);
+    expect(ASK_DEADLINE_MS).toBeLessThan(180_000);
+  });
+
+  it("is set on ask and on no other request", async () => {
+    const { client, seen } = await through();
+    await client.ask("how do I reset my password", "k-1");
+    await client.open("subject", "body", "k-2");
+    const [ticket] = await client.list();
+    await client.detail(ticket!.ticket_id);
+    await client.logout();
+    expect(seen.map((entry) => [entry.path, entry.timeoutMs])).toEqual([
+      ["/v1/ask", ASK_DEADLINE_MS],
+      ["/v1/tickets", undefined],
+      ["/v1/tickets", undefined],
+      [expect.stringMatching(/^\/v1\/tickets\/T-/), undefined],
+      ["/v1/identity/logout", undefined],
+    ]);
+  });
+
+  it.each([
+    ["a string, which is how an older Buzz's command rejects", OLD_BUZZ],
+    ["an Error carrying the same words", new Error(OLD_BUZZ)],
+  ])("is asked again without the field when an older Buzz refuses it (%s), under the same key, and not again after", async (_form, refusal) => {
+    const { client, seen, host } = await through();
+    host.fail = (request) => (request.timeoutMs !== undefined ? Promise.reject(refusal) : undefined);
+    const first = await client.ask("my order is late", "k-1");
+    expect(first.ticket_id).toMatch(/^T-/);
+    expect(seen.map((entry) => [entry.path, entry.timeoutMs, entry.key])).toEqual([
+      ["/v1/ask", ASK_DEADLINE_MS, "k-1"],
+      ["/v1/ask", undefined, "k-1"],
+    ]);
+    // The refusal is remembered: the next ask goes out once, without the field, and a retry of the same question is still one ticket.
+    seen.length = 0;
+    const again = await client.ask("my order is late, again", "k-1");
+    expect(again.ticket_id).toBe(first.ticket_id);
+    expect(seen.map((entry) => [entry.path, entry.timeoutMs])).toEqual([["/v1/ask", undefined]]);
+  });
+
+  it.each([
+    ["a timeout", "request timed out after 170000 ms"],
+    ["a network error", "error sending request: connection refused"],
+    ["a refusal of another field", "invalid args `request` for command `plugin_host_request`: unknown field `retries`, expected one of `url`"],
+    ["a complaint about the value of the field", "Host request timeout must be between 1 and 180000 milliseconds"],
+  ])("is never asked again after %s, since the request may have arrived", async (_what, failure) => {
+    const { client, seen, host } = await through();
+    host.fail = () => Promise.reject(new Error(failure));
+    await expect(client.ask("my order is late", "k-1")).rejects.toMatchObject({ kind: "network", message: ERROR_TEXT.network });
+    expect(host.calls).toBe(1);
+    // Nothing was learned about the host: the person's next try still carries the field.
+    seen.length = 0;
+    host.fail = undefined;
+    await client.ask("my order is late", "k-1");
+    expect(seen.map((entry) => entry.timeoutMs)).toEqual([ASK_DEADLINE_MS]);
+  });
+
+  it("does not repeat a request that never carried the field, whatever the host says", async () => {
+    const { client, host } = await through();
+    host.fail = () => Promise.reject(new Error(OLD_BUZZ));
+    await expect(client.list()).rejects.toMatchObject({ kind: "network" });
+    expect(host.calls).toBe(1);
+  });
+
+  it("gives the fixed words when the second try fails too, and never the host's", async () => {
+    const { client, host } = await through();
+    host.fail = () => Promise.reject(new Error(`SECRET-HOST-WORDING ${OLD_BUZZ}`));
+    const failure = await client.ask("q", "k").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(SupportError);
+    expect((failure as SupportError).message).toBe(ERROR_TEXT.network);
+    expect(JSON.stringify(failure)).not.toMatch(SECRET_WORDING);
+    expect(host.calls).toBe(2);
   });
 });

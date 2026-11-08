@@ -34,13 +34,27 @@ var SESSION = /^[\x21-\x7e]{16,2048}$/;
 var MAX_ANSWER = 2e4;
 var MAX_MESSAGES = 500;
 /**
+* How long `ask` may wait for the service's answer. The host's own limit is 30 seconds unless a request says more, up to 180 seconds
+* (`timeoutMs`). This stops ten seconds short of that, so the plugin gives the caller a plain "could not reach" before the host's own
+* ceiling does. Past it, `ask` has still left a ticket behind, and asking again with the same key is that ticket.
+*/
+var ASK_DEADLINE_MS = 17e4;
+/**
+* What a Buzz that does not know `timeoutMs` says. Its request type refuses a field it has no name for (serde's `deny_unknown_fields`),
+* and does so while reading the request, before anything is sent. Only this exact complaint about this field is taken for it: the text is
+* read to tell the two apart and is never shown, kept or logged.
+*/
+var UNKNOWN_TIMEOUT_FIELD = /unknown field\s*[`'"]?timeoutMs\b/;
+var refusedTimeoutField = (error) => UNKNOWN_TIMEOUT_FIELD.test(typeof error === "string" ? error : error instanceof Error ? error.message : "");
+/**
 * Calls to the one origin, through the host's declared-origin HTTP client. The session token is kept here in memory only: it is
 * never persisted, rendered, logged, put in a URL or in an error. It goes into one `Authorization` header and nowhere else.
 */
 function createClient(transport, now = Date.now, origin = SUPPORT_ORIGIN) {
 	let token;
 	let epoch = 0;
-	const call = async (method, path, body, extra = {}, authed = true) => {
+	let timeoutUnknown = false;
+	const call = async (method, path, body, extra = {}, authed = true, deadlineMs) => {
 		if (authed && !token) throw new SupportError("no-session");
 		const sentIn = epoch;
 		const request = {
@@ -52,13 +66,21 @@ function createClient(transport, now = Date.now, origin = SUPPORT_ORIGIN) {
 				...authed && token ? { authorization: `Bearer ${token.value}` } : {},
 				...extra
 			},
-			...body === void 0 ? {} : { body: JSON.stringify(body) }
+			...body === void 0 ? {} : { body: JSON.stringify(body) },
+			...deadlineMs === void 0 || timeoutUnknown ? {} : { timeoutMs: deadlineMs }
 		};
 		let response;
 		try {
 			response = await transport(request);
-		} catch {
-			throw new SupportError("network");
+		} catch (error) {
+			if (request.timeoutMs === void 0 || !refusedTimeoutField(error)) throw new SupportError("network");
+			timeoutUnknown = true;
+			const { timeoutMs: _refused, ...plain } = request;
+			try {
+				response = await transport(plain);
+			} catch {
+				throw new SupportError("network");
+			}
 		}
 		return parse(response, now(), authed, () => {
 			if (authed && sentIn === epoch) token = void 0;
@@ -119,7 +141,7 @@ function createClient(transport, now = Date.now, origin = SUPPORT_ORIGIN) {
 		},
 		/** `key` makes a retry of the same question the same ticket, not a second one. */
 		async ask(question, key) {
-			const reply = obj(await call("POST", "/v1/ask", { question }, { "idempotency-key": key }));
+			const reply = obj(await call("POST", "/v1/ask", { question }, { "idempotency-key": key }, true, ASK_DEADLINE_MS));
 			if (!ticketId(reply.ticket_id)) throw new SupportError("unavailable");
 			if (reply.answer !== void 0 && (typeof reply.answer !== "string" || reply.answer.length > MAX_ANSWER)) throw new SupportError("unavailable");
 			return reply.answer === void 0 ? { ticket_id: reply.ticket_id } : {
@@ -511,7 +533,7 @@ function createIdentity({ client, relay, prove, now = Date.now, signWaitMs = SIG
 	async function run(mine) {
 		if (prove.available && !prove.available()) throw new IdentityError(CANNOT_CHECK);
 		const viewer = relay.snapshot().viewer;
-		if (!viewer || !/^[0-9a-f]{64}$/.test(viewer)) throw new IdentityError("Buzz is not signed in yet. Open a community and try again.");
+		if (!viewer || !/^[0-9a-f]{64}$/.test(viewer)) throw new IdentityError("Buzz has not said which account is signed in yet. Once it has connected to a community, try again.");
 		const { challenge, lifetimeMs } = await client.challenge(viewer);
 		if (lifetimeMs < FRESH_MS) throw new IdentityError("Megatech support sent a code that expires too soon. Try again.");
 		const abort = new AbortController();
@@ -759,7 +781,7 @@ function createSettingsCard({ identity, relay, flag, agent }) {
 			role: "switch",
 			checked: saved,
 			onChange: (event) => change(event.target.checked)
-		}), /* @__PURE__ */ React.createElement("span", null, "Add the Megatech support agent type and its tools")), /* @__PURE__ */ React.createElement("p", { className: "mts-muted" }, "Off by default. When on, you can make an agent of the type Megatech support in Agents; it answers your own mention by asking Megatech support, and posts the answer in the channel. Buzz also gives all your agents two tools, ", /* @__PURE__ */ React.createElement("code", null, ASK_TOOL), " and ", /* @__PURE__ */ React.createElement("code", null, STATUS_TOOL), ", with which an agent can ask support or open a ticket for you and check a ticket's status. They work only while this is on and your identity is verified, and only for agents that are yours. An agent cannot tell who asked it, so an agent that answers someone else can pass on what a tool gave it. The tools are added the next time the plugin starts: when Buzz starts, or when the plugin is turned off and on or updated, and agents running then start their sessions over. Turning this off stops them at once."), refused && /* @__PURE__ */ React.createElement("p", {
+		}), /* @__PURE__ */ React.createElement("span", null, "Add the Megatech support agent type and its tools")), /* @__PURE__ */ React.createElement("p", { className: "mts-muted" }, "Off by default. When on, you can make an agent of the type Megatech support in Agents; it answers your own mention by asking Megatech support, and posts the answer in the channel. That is on whichever relay you made the agent on, and everyone who can read the channel reads the answer, so make it where you are content for that. Buzz also gives all your agents two tools, ", /* @__PURE__ */ React.createElement("code", null, ASK_TOOL), " and ", /* @__PURE__ */ React.createElement("code", null, STATUS_TOOL), ", with which an agent can ask support or open a ticket for you and check a ticket's status. They work only while this is on and your identity is verified, and only for agents that are yours. An agent cannot tell who asked it, so an agent that answers someone else can pass on what a tool gave it. The tools are added the next time the plugin starts: when Buzz starts, or when the plugin is turned off and on or updated, and agents running then start their sessions over. Turning this off stops them at once."), refused && /* @__PURE__ */ React.createElement("p", {
 			role: "alert",
 			"data-tone": "error"
 		}, "Buzz would not keep that choice, so it is still ", saved ? "on" : "off", "."), saved !== agent.startedOn && /* @__PURE__ */ React.createElement("p", { role: "status" }, "Restart Buzz to ", saved ? "turn this on" : "turn this off", "."), agent.startedOn && saved === agent.startedOn && /* @__PURE__ */ React.createElement("p", { role: "status" }, "On in this session."), agent.problems.map((problem) => /* @__PURE__ */ React.createElement("p", {
