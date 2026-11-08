@@ -1,0 +1,14 @@
+{
+  "id": "megatech.agent-stats",
+  "name": "Agent Stats",
+  "apiVersion": 1,
+  "description": "What each of your agents did today: turns, time working, commands run, last active and what it is doing now. Shown in the agent's profile and on one page.",
+  "discovery": {
+    "category": "agent-tools",
+    "tags": [
+      "Agents",
+      "Activity",
+      "Stats"
+    ]
+  }
+}
