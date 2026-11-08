@@ -18,6 +18,9 @@ const files = (dir: string): string[] =>
     return statSync(path).isDirectory() ? files(path) : [path];
   });
 
+/** The relay seen through a type assertion, `relay as T` or `<T>relay`: what is read through it is not a read of `relay.` the scan above would see. */
+const castsRelay = (text: string) => text.match(/\brelay\s+as\b|<[^<>\n]*>\s*\(?\s*relay\b/g) ?? [];
+
 describe("what the plugin reads of the relay", () => {
   const sources = files(join(root, "src")).filter((file) => /\.tsx?$/.test(file) && !file.endsWith("buzz.d.ts"));
 
@@ -31,13 +34,27 @@ describe("what the plugin reads of the relay", () => {
     }
   });
 
-  it("is never taken apart, indexed or kept under another name, which the reads above would not see", () => {
+  it("is never taken apart, indexed, cast or kept under another name, which the reads above would not see", () => {
     for (const path of sources) {
       const text = readFileSync(path, "utf8");
       expect(text.match(/[}\]]\s*=\s*(?:\w+\.)*relay\b/g) ?? [], `${path} destructures the relay`).toEqual([]);
       expect(text.match(/\brelay\s*\[/g) ?? [], `${path} indexes the relay`).toEqual([]);
       expect(text.match(/\b\w+\s*=\s*(?:\w+\.)*relay\s*(?:[;,)\n]|$)/g) ?? [], `${path} keeps the relay under another name`).toEqual([]);
+      expect(castsRelay(text), `${path} reads the relay through a type assertion`).toEqual([]);
     }
+  });
+
+  it("sees a read through a cast: `(relay as any).url` in the settings card fails the scan, and the card as it is does not", () => {
+    const card = readFileSync(join(root, "src/ui/Settings.tsx"), "utf8");
+    expect(castsRelay(card)).toEqual([]);
+    const mutant = card.replace("const state =", "const url = (relay as any).url;\n    const state =");
+    expect(mutant).not.toBe(card);
+    expect(castsRelay(mutant)).toEqual(["relay as"]);
+    // The other ways to cast it, and the ways of writing `relay` that are not a cast.
+    expect(castsRelay("const url = (relay as unknown as { url: string }).url;")).toEqual(["relay as"]);
+    expect(castsRelay("const url = (<{ url: string }>relay).url;")).toEqual(["<{ url: string }>relay"]);
+    expect(castsRelay("const url = (<any>(relay)).url;")).toEqual(["<any>(relay"]);
+    expect(castsRelay("relay: RelayData; const { relay } = props; useStore(relay.subscribe, () => relay.snapshot().viewer);")).toEqual([]);
   });
 
   it("is handed to the plugin's own code in one place only: src/index.tsx passes ctx.relay on, and nothing else uses it", () => {
