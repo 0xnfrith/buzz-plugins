@@ -1,0 +1,228 @@
+// How one event of an agent's telemetry changes the tally: turns, the time they took, commands, the model, the context window and the
+// current tool call; and that hostile or garbled events change nothing.
+import test from "node:test";
+import assert from "node:assert/strict";
+import { agentStats, foldItem, frameItems, isCommand, modelLabel, toolDetail, emptyState } from "../plugin.js";
+import { AGENT, NOON, TODAY, batch, event, finished, foldAll, started, toolCall, toolUpdate, update } from "./helpers.mjs";
+
+const fold = (events, agent = AGENT, now = NOON + 3 * 3600_000) => foldAll(events, agent, now, foldItem);
+const MIN = 60_000;
+
+test("a turn from start to end counts once, and lasts from its start to its end", () => {
+  const { state } = fold([started("t1", 0), event("turn_liveness", "t1", 2 * MIN), finished("t1", 5 * MIN)]);
+  const stats = agentStats(state, AGENT, { now: NOON + 6 * MIN });
+  assert.equal(stats.turns, 1);
+  assert.equal(stats.workingMs, 5 * MIN);
+  assert.equal(stats.working, false);
+  assert.equal(stats.lastActive, NOON + 5 * MIN);
+});
+
+test("the time a turn began is its startedAt when the frame gives one, and the frame's own time otherwise", () => {
+  const early = fold([started("t1", 10_000, -20_000), finished("t1", 40_000)]).state;
+  assert.equal(agentStats(early, AGENT, { now: NOON + MIN }).workingMs, 60_000);
+  const bare = fold([event("turn_liveness", "t2", 10_000), finished("t2", 40_000)]).state;
+  assert.equal(agentStats(bare, AGENT, { now: NOON + MIN }).workingMs, 30_000);
+  // A startedAt later than the frame carrying it is nonsense and is ignored.
+  const lying = fold([started("t3", 0, 30_000), finished("t3", 10_000)]).state;
+  assert.equal(agentStats(lying, AGENT, { now: NOON + MIN }).workingMs, 10_000);
+});
+
+test("two turns add up, a second agent keeps its own numbers, and the same turn id for another agent is another turn", () => {
+  const { state } = fold([started("t1", 0), finished("t1", MIN), started("t2", 2 * MIN), finished("t2", 5 * MIN)]);
+  const other = "cd".repeat(32);
+  foldItem(state, {}, other, started("t1", 0), NOON + 3 * 3600_000);
+  assert.equal(agentStats(state, AGENT, { now: NOON + 6 * MIN }).turns, 2);
+  assert.equal(agentStats(state, AGENT, { now: NOON + 6 * MIN }).workingMs, 4 * MIN);
+  assert.equal(agentStats(state, other, { now: NOON + 6 * MIN }).turns, 1);
+});
+
+test("the same event twice changes nothing the second time", () => {
+  const state = emptyState();
+  const live = {};
+  const items = [started("t1", 0), toolCall("t1", 1000, "c1", { kind: "execute", title: "Run command" }), finished("t1", MIN)];
+  for (const item of items) assert.equal(foldItem(state, live, AGENT, item, NOON + 3600_000), true);
+  const before = JSON.stringify(state);
+  for (const item of items) assert.equal(foldItem(state, live, AGENT, item, NOON + 3600_000), false);
+  assert.equal(JSON.stringify(state), before);
+});
+
+test("the first end wins: a late heartbeat does not reopen or stretch a finished turn", () => {
+  const { state } = fold([started("t1", 0), finished("t1", MIN), event("turn_liveness", "t1", 10 * MIN)]);
+  const stats = agentStats(state, AGENT, { now: NOON + 20 * MIN });
+  assert.equal(stats.workingMs, MIN);
+  assert.equal(stats.lastActive, NOON + 10 * MIN, "it was still seen then");
+  const errored = fold([started("t2", 0), finished("t2", 3 * MIN, "turn_error"), finished("t2", 9 * MIN)]).state;
+  assert.equal(agentStats(errored, AGENT, { now: NOON + 20 * MIN }).workingMs, 3 * MIN);
+  const panic = fold([started("t3", 0), event("agent_panic", "t3", 2 * MIN)]).state;
+  assert.equal(agentStats(panic, AGENT, { now: NOON + 20 * MIN }).workingMs, 2 * MIN);
+});
+
+test("a turn Buzz says is working lasts until now, and one that went quiet without an end lasts until its last frame", () => {
+  const { state } = fold([started("t1", 0), event("turn_liveness", "t1", MIN)]);
+  const running = agentStats(state, AGENT, { now: NOON + 4 * MIN, working: new Set([`${AGENT}:t1`]) });
+  assert.equal(running.workingMs, 4 * MIN);
+  assert.equal(running.working, true);
+  const quiet = agentStats(state, AGENT, { now: NOON + 4 * MIN, working: new Set() });
+  assert.equal(quiet.workingMs, MIN);
+  assert.equal(quiet.working, false);
+  // Another agent's turn with the same id does not make this one busy.
+  assert.equal(agentStats(state, AGENT, { now: NOON + 4 * MIN, working: new Set([`${"cd".repeat(32)}:t1`]) }).working, false);
+});
+
+test("commands are counted once per tool call: ACP's execute kind, and Buzz's shell tool by name", () => {
+  const { state } = fold([
+    started("t1", 0),
+    toolCall("t1", 1000, "a", { kind: "execute", title: "Bash" }),
+    toolUpdate("t1", 2000, "a", { status: "completed" }),
+    toolUpdate("t1", 2500, "a", { kind: "execute", status: "completed" }),
+    toolCall("t1", 3000, "b", { kind: "other", title: "buzz-dev-mcp__shell" }),
+    toolCall("t1", 4000, "c", { kind: "read", title: "Read file" }),
+    toolCall("t1", 5000, "d", { kind: "edit", title: "Edit file" }),
+    toolCall("t1", 6000, "e", { kind: "other", title: "Run command" }),
+  ]);
+  assert.equal(agentStats(state, AGENT, { now: NOON + MIN }).commands, 3);
+});
+
+test("a tool call update with no kind or title does not count, and does not erase what the call showed", () => {
+  const { state, live } = fold([started("t1", 0), toolCall("t1", 1000, "a", { kind: "execute", title: "Bash", rawInput: { command: "ls -la\necho two" } }), toolUpdate("t1", 2000, "a", { status: "completed" })]);
+  assert.equal(agentStats(state, AGENT, { now: NOON + MIN }).commands, 1);
+  assert.deepEqual({ title: live[AGENT].task.title, detail: live[AGENT].task.detail, status: live[AGENT].task.status }, { title: "Bash", detail: "ls -la", status: "completed" });
+});
+
+test("the current task is the newest tool call, and an older frame arriving late does not replace it", () => {
+  const { live } = fold([started("t1", 0), toolCall("t1", 5000, "new", { title: "Edit file", rawInput: { path: "/work/src/app.js" } }), toolCall("t1", 1000, "old", { title: "Read file" })]);
+  assert.equal(live[AGENT].task.id, "new");
+  assert.equal(live[AGENT].task.detail, "app.js");
+});
+
+test("the task shown is one of a running turn, not a leftover of the turn before", () => {
+  const { state, live } = fold([started("t1", 0), toolCall("t1", 1000, "a", { title: "Old work" }), finished("t1", 2000), started("t2", 3000)]);
+  const stats = agentStats(state, AGENT, { now: NOON + MIN, working: new Set([`${AGENT}:t2`]), live });
+  assert.equal(stats.working, true);
+  assert.equal(stats.task, undefined);
+  foldItem(state, live, AGENT, toolCall("t2", 4000, "b", { title: "New work" }), NOON + MIN);
+  assert.equal(agentStats(state, AGENT, { now: NOON + MIN, working: new Set([`${AGENT}:t2`]), live }).task.title, "New work");
+  assert.equal(agentStats(state, AGENT, { now: NOON + MIN, working: new Set(), live }).task, undefined, "not shown for an agent that is idle");
+});
+
+test("the model comes from the config options, flat or grouped, and the newest report wins", () => {
+  const flat = { category: "model", id: "m", name: "Model", currentValue: "fast", options: [{ value: "fast", name: "Fast one" }, { value: "slow", name: "Slow one" }] };
+  const grouped = { id: "model", name: "Model", currentValue: "x-1", options: [{ group: "g", name: "G", options: [{ value: "x-1", name: "X One" }] }] };
+  assert.equal(modelLabel([{ id: "mode", currentValue: "plan" }, flat]), "Fast one");
+  assert.equal(modelLabel([grouped]), "X One");
+  assert.equal(modelLabel([{ name: "Model", currentValue: "raw-id", options: [] }]), "raw-id", "no label: the value itself");
+  assert.equal(modelLabel([{ id: "mode", currentValue: "plan" }]), undefined);
+  assert.equal(modelLabel("nope"), undefined);
+  assert.equal(modelLabel([{ id: "model", currentValue: 7 }]), undefined);
+  assert.equal(modelLabel([{ id: "model", currentValue: "y".repeat(500) }]).length, 80);
+  const { state } = fold([
+    event("session_config_captured", "t1", 0, { payload: { configOptions: [flat] } }),
+    update("t1", 1000, { sessionUpdate: "config_option_update", configOptions: [{ ...flat, currentValue: "slow" }] }),
+  ]);
+  assert.equal(agentStats(state, AGENT, { now: NOON + MIN }).model, "Slow one");
+});
+
+test("the context window is shown as used and size, and a missing or empty size is ignored", () => {
+  const { live } = fold([update("t1", 0, { sessionUpdate: "usage_update", used: 50, size: 200 })]);
+  assert.deepEqual(live[AGENT].context, { used: 50, size: 200, at: NOON });
+  const none = fold([update("t1", 0, { sessionUpdate: "usage_update", used: 50, size: 0 }), update("t1", 1, { sessionUpdate: "usage_update", used: "x", size: 5 })]);
+  assert.equal(none.live[AGENT], undefined);
+});
+
+test("only today's turns are counted, by the day each began; last active and model outlive the day", () => {
+  const yesterday = new Date(NOON - 24 * 3600_000 - 3600_000).getTime();
+  const state = emptyState();
+  const live = {};
+  const old = { ...started("old", 0), timestamp: new Date(yesterday + MIN).toISOString(), startedAt: new Date(yesterday).toISOString() };
+  foldItem(state, live, AGENT, old, NOON);
+  foldItem(state, live, AGENT, { ...finished("old", 0), timestamp: new Date(yesterday + 2 * MIN).toISOString() }, NOON);
+  foldItem(state, live, AGENT, started("new", 0), NOON + 3600_000);
+  const stats = agentStats(state, AGENT, { now: NOON + 3600_000 });
+  assert.equal(stats.turns, 1);
+  assert.equal(stats.workingMs, 0);
+  const idleToday = agentStats(state, AGENT, { now: NOON + 25 * 3600_000 });
+  assert.equal(idleToday.turns, 0, "the next day starts again from zero");
+  assert.equal(idleToday.lastActive, NOON, "but last active remains");
+  assert.equal(TODAY.length, 10);
+});
+
+test("a turn that began before midnight counts on the day it began", () => {
+  const before = new Date(2026, 10, 8, 23, 50, 0).getTime();
+  const after = new Date(2026, 10, 9, 0, 20, 0).getTime();
+  const state = emptyState();
+  foldItem(state, {}, AGENT, { kind: "turn_started", turnId: "late", timestamp: new Date(before).toISOString(), startedAt: new Date(before).toISOString() }, after);
+  foldItem(state, {}, AGENT, { kind: "turn_completed", turnId: "late", timestamp: new Date(after).toISOString() }, after);
+  assert.equal(agentStats(state, AGENT, { now: before + 1000 }).turns, 1);
+  assert.equal(agentStats(state, AGENT, { now: after }).turns, 0);
+  assert.equal(agentStats(state, AGENT, { now: before + 1000 }).workingMs, 30 * MIN);
+});
+
+test("events that are malformed, from the future, or for a bad key change nothing", () => {
+  const now = NOON + 3600_000;
+  const bad = [
+    { turnId: "t", timestamp: new Date(NOON).toISOString() },
+    { kind: "turn_started", timestamp: new Date(NOON).toISOString() },
+    { kind: "turn_started", turnId: "t" },
+    { kind: "turn_started", turnId: "t", timestamp: "yesterday-ish" },
+    { kind: "turn_started", turnId: "t", timestamp: new Date(now + 60_000).toISOString() },
+    { kind: "turn_started", turnId: "t".repeat(257), timestamp: new Date(NOON).toISOString() },
+    { kind: "k".repeat(65), turnId: "t", timestamp: new Date(NOON).toISOString() },
+    { kind: 5, turnId: "t", timestamp: new Date(NOON).toISOString() },
+  ];
+  for (const item of bad) {
+    const state = emptyState();
+    assert.equal(foldItem(state, {}, AGENT, item, now), false, JSON.stringify(item));
+    assert.deepEqual(Object.keys(state.agents), []);
+  }
+  for (const key of ["", "AB".repeat(32), "ab".repeat(31), "__proto__", "constructor"]) {
+    const state = emptyState();
+    assert.equal(foldItem(state, {}, key, started("t", 0), now), false, key);
+    assert.deepEqual(Object.keys(state.agents), []);
+  }
+  // Slightly ahead is a clock a little fast, and is kept.
+  assert.equal(foldItem(emptyState(), {}, AGENT, { kind: "turn_started", turnId: "t", timestamp: new Date(now + 4000).toISOString() }, now), true);
+});
+
+test("a turn id that is an object property name is only a key", () => {
+  const { state } = fold([started("__proto__", 0), finished("__proto__", MIN), started("constructor", 0), started("toString", 0)]);
+  assert.equal(agentStats(state, AGENT, { now: NOON + 2 * MIN }).turns, 3);
+  assert.equal(Object.getPrototypeOf(state.agents[AGENT].turns), null);
+  assert.equal({}.polluted, undefined);
+  assert.equal(Object.keys(state.agents[AGENT].turns).includes("__proto__"), true);
+});
+
+test("a tool call's id, title and input are bounded, and commands per turn are capped", () => {
+  const items = [started("t1", 0)];
+  for (let i = 0; i < 600; i++) items.push(toolCall("t1", 1000 + i, `c${i}`, { kind: "execute", title: "T".repeat(500) }));
+  const { state, live } = fold(items);
+  assert.equal(agentStats(state, AGENT, { now: NOON + MIN }).commands, 500);
+  assert.equal(live[AGENT].task.title.length, 120);
+  const { live: none } = fold([toolCall("t1", 0, "x".repeat(300))]);
+  assert.equal(none[AGENT], undefined, "an id too long to be one is not a tool call");
+});
+
+test("frameItems reads one event, a batch, and nothing for garbage, management requests or non-objects", () => {
+  const one = event("turn_started", "t1", 0);
+  assert.deepEqual(frameItems(JSON.stringify(one)), [one]);
+  assert.deepEqual(frameItems(JSON.stringify(batch(one, "nope", [1], event("turn_completed", "t1", 5)))).map((entry) => entry.kind), ["turn_started", "turn_completed"]);
+  assert.deepEqual(frameItems(JSON.stringify({ kind: "batch", payload: { events: "x" } })), []);
+  assert.deepEqual(frameItems(JSON.stringify({ kind: "batch" })), []);
+  assert.deepEqual(frameItems(JSON.stringify({ kind: "agent_management_request", turnId: "t" })), []);
+  for (const raw of ["{", "", "null", "7", '"str"', "[]", "[1,2]"]) assert.deepEqual(frameItems(raw), [], raw);
+});
+
+test("isCommand and toolDetail", () => {
+  assert.equal(isCommand("execute", undefined), true);
+  assert.equal(isCommand("other", "buzz-dev-mcp__shell"), true);
+  assert.equal(isCommand("other", "Run command"), true);
+  assert.equal(isCommand("read", "Read file"), false);
+  assert.equal(isCommand(undefined, undefined), false);
+  assert.equal(toolDetail({ command: "\n  \nfirst real line\nsecond" }), "first real line");
+  assert.equal(toolDetail({ command: `${"x".repeat(100)}` }), `${"x".repeat(90)}…`);
+  assert.equal(toolDetail('{"command":"echo hi"}'), "echo hi");
+  assert.equal(toolDetail({ command: "a\u0007b" }), "a b", "control characters are blanked");
+  assert.equal(toolDetail({ path: "/a/b/c.txt" }), "c.txt");
+  assert.equal(toolDetail({ file_path: "C:\\dir\\file.rs" }), "file.rs");
+  assert.equal(toolDetail({ path: "/a/b/" }), "b");
+  for (const input of ["not json", 5, null, undefined, [], {}, { path: ".." }, { path: "a\nb" }]) assert.equal(toolDetail(input), undefined, JSON.stringify(input));
+});

@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/block/buzz-app"><img alt="Works with Buzz 1.0" src="https://img.shields.io/badge/works%20with-Buzz%201.0-00d4ff?style=flat-square&labelColor=12161c"></a>
-  <a href="#the-plugins"><img alt="4 plugins, 1 cooking" src="https://img.shields.io/badge/plugins-4%20%2B%201%20cooking-00d4ff?style=flat-square&labelColor=12161c"></a>
+  <a href="#the-plugins"><img alt="4 plugins, 2 cooking" src="https://img.shields.io/badge/plugins-4%20%2B%202%20cooking-00d4ff?style=flat-square&labelColor=12161c"></a>
   <a href="LICENSE"><img alt="Apache License 2.0" src="https://img.shields.io/badge/license-Apache%202.0-00d4ff?style=flat-square&labelColor=12161c"></a>
   <br>
   <a href="https://megatech.systems"><b>megatech.systems</b></a>
@@ -79,10 +79,11 @@ Some plugins need one more step, such as pasting your own token or key: each plu
 | [Linear](plugins/linear) | should work, untested | **works, tested** | should work, untested ² |
 | [Artifacts](plugins/artifacts) | should work, untested ³ | not supported | not supported |
 | [Agent Skills Highlighter](plugins/agent-skills-highlighter) 🍳 | **works, tested** ⁵ | **works, tested** | not supported ⁴ |
+| [Agent Stats](plugins/agent-stats) 🍳 | should work, untested | should work, untested ⁶ | should work, untested |
 
 "Tested" means run by hand in the Buzz 1.0 desktop app on that system. Every plugin is also tested in Buzz's own web build, in headless Chromium, and each plugin's page says what was and was not checked.
 
-<sub>¹ Against a fake Beeper Desktop; it has not been run against a real one yet. ² Windows has no key store the plugin can reach, so the key is kept in the app's profile as plain text, and the plugin says so. ³ Needs macOS 14 or later. The built-in browser it opens pages in has not been run yet; its page and Settings card have, on Linux. ⁴ It needs <code>sh</code>, which Windows does not have. ⁵ On a Mac, the highlight, the card, its description and its source line were run; the rest of its checks ran on Linux and in the browser tests.</sub>
+<sub>¹ Against a fake Beeper Desktop; it has not been run against a real one yet. ² Windows has no key store the plugin can reach, so the key is kept in the app's profile as plain text, and the plugin says so. ³ Needs macOS 14 or later. The built-in browser it opens pages in has not been run yet; its page and Settings card have, on Linux. ⁴ It needs <code>sh</code>, which Windows does not have. ⁵ On a Mac, the highlight, the card, its description and its source line were run; the rest of its checks ran on Linux and in the browser tests. ⁶ In Buzz's web build only, in headless Chromium; the desktop app has not run it.</sub>
 
 ## For builders
 
@@ -100,6 +101,7 @@ plugins/              plugins you can install, one folder each
   linear/             your Linear board inside Buzz
   artifacts/          your saved web pages in a sidebar page, opened in Buzz's browser
   agent-skills-highlighter/  /skill names in messages, highlighted, with a card that says what each is
+  agent-stats/        what each of your agents did today: turns, time working, commands, last active
   key-probe/          a measuring tool used by the vim tests
 docs/
   building.md         how we build plugins
@@ -121,6 +123,7 @@ CONTRIBUTING.md       how to send a change (and the key-latency rule for vim mod
 | Linear | Your Linear board inside Buzz: a column for each workflow state, in Linear's order, with cards like Linear's own. Drag a card to another column to change its state; click one for details and an Open in Linear link. Each person pastes their own personal API key | [`plugins/linear`](plugins/linear) | Tested against a fake Linear and by hand against a throwaway real workspace; see its notes for what is still unchecked |
 | Artifacts | A sidebar page with your saved web pages (for example Claude artifact links), opened in Buzz's built-in browser with the sign-in kept between restarts. You add, rename and remove the links in Settings; no address is built in. Needs the macOS desktop app, macOS 14 or later | [`plugins/artifacts`](plugins/artifacts) | Prototype; the page and the Settings card have run in the Buzz 1.0 Linux app, the built-in browser has not run yet |
 | Agent Skills Highlighter 🍳 | A `/skill-name` in a message is highlighted when it matches a skill file on your computer (your Claude Code skills folder, installed Claude Code plugins, and one extra folder you may add); hover it or tab to it and a card says what the skill is. The message's text never changes or moves. Reads the skill files with one declared `sh` program that only reads; the script is printed in its README | [`plugins/agent-skills-highlighter`](plugins/agent-skills-highlighter) | Cooking (work in progress). Unit- and browser-tested, speed-checked on a 2,400-message channel, run by hand in the Linux desktop app and on a Mac (the highlight, the card, its description and source); not run on Windows |
+| Agent Stats 🍳 | What each of your agents did today, added up from the live telemetry Buzz receives from the agents you own: turns, time working, commands run, last active and what it is doing now, plus the model and context window when the agent reports them. A Stats tab in the agent's profile and one page that lists every agent. Reads only your own agents' telemetry, publishes nothing and makes no request. No tokens or cost: a plugin cannot read the metrics events | [`plugins/agent-stats`](plugins/agent-stats) | Cooking (work in progress). Unit- and browser-tested in Buzz's web build; not run in the desktop app, and the profile tab has not been seen in a real profile panel |
 | Key probe | Times every key from press to paint, for measuring other plugins. Not needed to use anything | [`plugins/key-probe`](plugins/key-probe) | Tool for the vim tests |
 
 </details>

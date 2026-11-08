@@ -19,6 +19,7 @@ set -euo pipefail
 # calls every row anyway; the AI sorter's paths there name what its tests cover.
 rows=(
   "agent-skills-highlighter  plugins/agent-skills-highlighter/"
+  "agent-stats               plugins/agent-stats/"
   "ai-sorter                 .github/sorter/ .github/workflows/ai-sorter.yml .github/workflows/ai-sorter-tests.yml"
   "artifacts                 plugins/artifacts/"
   "artifacts-browser         plugins/artifacts/"

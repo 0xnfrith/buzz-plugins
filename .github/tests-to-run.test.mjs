@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const script = join(dirname(fileURLToPath(import.meta.url)), "tests-to-run.sh");
-const ROWS = ["agent-skills-highlighter", "ai-sorter", "artifacts", "artifacts-browser", "beeper", "linear", "megatech-support", "megatech-support-browser", "vim-tests", "vim-latency"];
+const ROWS = ["agent-skills-highlighter", "agent-stats", "ai-sorter", "artifacts", "artifacts-browser", "beeper", "linear", "megatech-support", "megatech-support-browser", "vim-tests", "vim-latency"];
 const ZERO = "0".repeat(40);
 
 // A throwaway repository. `commit(files, deleted)` writes and deletes files and returns the new commit.
@@ -79,6 +79,7 @@ test("a name git would quote (non-ASCII, a quote, a backslash, a newline) still 
 test("a change to one plugin calls only that plugin's tests", () => {
   assert.deepEqual(pullRequest({ "plugins/beeper/plugin.js": "changed\n" }), ["beeper"]);
   assert.deepEqual(pullRequest({ "plugins/linear/plugin.js": "changed\n" }), ["linear"]);
+  assert.deepEqual(pullRequest({ "plugins/agent-stats/plugin.js": "changed\n" }), ["agent-stats"]);
 });
 
 test("a change outside plugins/ and .github/ calls none", () => {
