@@ -457,6 +457,9 @@ describe("how long an ask may wait", () => {
   it.each([
     ["a string, which is how an older Buzz's command rejects", OLD_BUZZ],
     ["an Error carrying the same words", new Error(OLD_BUZZ)],
+    ["a colon after the words", "unknown field: timeoutMs"],
+    ["double quotes round the name", 'unknown field "timeoutMs", expected one of "url", "method"'],
+    ["the words in a wrapper", new Error("plugin_host_request failed: invalid request: Unknown field `timeoutMs`")],
   ])("is asked again without the field when an older Buzz refuses it (%s), under the same key, and not again after", async (_form, refusal) => {
     const { client, seen, host } = await through();
     host.fail = (request) => (request.timeoutMs !== undefined ? Promise.reject(refusal) : undefined);
@@ -477,6 +480,7 @@ describe("how long an ask may wait", () => {
     ["a timeout", "request timed out after 170000 ms"],
     ["a network error", "error sending request: connection refused"],
     ["a refusal of another field", "invalid args `request` for command `plugin_host_request`: unknown field `retries`, expected one of `url`"],
+    ["a refusal of a field that only starts with its name", "unknown field `timeoutMsExtra`, expected one of `url`"],
     ["a complaint about the value of the field", "Host request timeout must be between 1 and 180000 milliseconds"],
   ])("is never asked again after %s, since the request may have arrived", async (_what, failure) => {
     const { client, seen, host } = await through();

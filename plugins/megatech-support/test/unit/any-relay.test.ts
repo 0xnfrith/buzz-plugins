@@ -7,6 +7,8 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createTools } from "../../src/support/agent";
+import { createIdentity, hostProver } from "../../src/support/identity";
+import { createSupport } from "../../src/support/service";
 import { world } from "./world";
 
 const root = join(import.meta.dirname, "../..");
@@ -17,8 +19,10 @@ const files = (dir: string): string[] =>
   });
 
 describe("what the plugin reads of the relay", () => {
+  const sources = files(join(root, "src")).filter((file) => /\.tsx?$/.test(file) && !file.endsWith("buzz.d.ts"));
+
   it("is the signed-in key and a way to hear that it changed, in every file of the source", () => {
-    for (const path of files(join(root, "src")).filter((file) => /\.tsx?$/.test(file) && !file.endsWith("buzz.d.ts"))) {
+    for (const path of sources) {
       const text = readFileSync(path, "utf8");
       // `relay.snapshot().viewer` and `relay.subscribe` are the only things done with the relay object. Anything else, a url, a
       // community, a channel, a member list, an event, would be a way to depend on which relay this is.
@@ -27,17 +31,42 @@ describe("what the plugin reads of the relay", () => {
     }
   });
 
+  it("is never taken apart, indexed or kept under another name, which the reads above would not see", () => {
+    for (const path of sources) {
+      const text = readFileSync(path, "utf8");
+      expect(text.match(/[}\]]\s*=\s*(?:\w+\.)*relay\b/g) ?? [], `${path} destructures the relay`).toEqual([]);
+      expect(text.match(/\brelay\s*\[/g) ?? [], `${path} indexes the relay`).toEqual([]);
+      expect(text.match(/\b\w+\s*=\s*(?:\w+\.)*relay\s*(?:[;,)\n]|$)/g) ?? [], `${path} keeps the relay under another name`).toEqual([]);
+    }
+  });
+
+  it("is handed to the plugin's own code in one place only: src/index.tsx passes ctx.relay on, and nothing else uses it", () => {
+    for (const path of sources) {
+      const text = readFileSync(path, "utf8");
+      const uses = text.match(/\bctx\.relay\b/g)?.length ?? 0;
+      if (path.endsWith("src/index.tsx")) expect(uses, `${path}: every use of ctx.relay is the value of a \`relay:\` property`).toBe(text.match(/\brelay:\s*ctx\.relay\b/g)?.length ?? 0);
+      else expect(uses, `${path} uses ctx.relay`).toBe(0);
+    }
+  });
+
   it("is the key and nothing else, through a whole session of verifying, asking and listing", async () => {
     const w = world();
-    const reads = new Set<string | symbol>();
+    const onRelay = new Set<string | symbol>();
+    const onSnapshot = new Set<string | symbol>();
     const real = w.relay.snapshot;
-    w.relay.snapshot = (() => new Proxy(real(), { get: (target, key, receiver) => (reads.add(key), Reflect.get(target, key, receiver)) })) as never;
-    await w.identity.verify();
-    await w.support.askOrOpen("how do I reset my password");
-    await w.support.open("a subject", "what happened");
-    await w.support.list();
-    w.support.verifiedKey();
-    expect([...reads]).toEqual(["viewer"]);
+    w.relay.snapshot = (() => new Proxy(real(), { get: (target, key, receiver) => (onSnapshot.add(key), Reflect.get(target, key, receiver)) })) as never;
+    // The identity and what uses it are built again here, over a relay that records every property read on it.
+    const relay = new Proxy(w.relay, { get: (target, key, receiver) => (onRelay.add(key), Reflect.get(target, key, receiver)) });
+    const identity = createIdentity({ client: w.client, relay: relay as never, prove: hostProver(w.host), now: () => w.clock.t });
+    const support = createSupport({ client: w.client, identity });
+    await identity.verify();
+    await support.askOrOpen("how do I reset my password");
+    await support.open("a subject", "what happened");
+    await support.list();
+    support.verifiedKey();
+    identity.dispose();
+    expect([...onRelay].sort()).toEqual(["snapshot", "subscribe"]);
+    expect([...onSnapshot]).toEqual(["viewer"]);
   });
 });
 

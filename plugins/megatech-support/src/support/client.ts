@@ -54,10 +54,12 @@ export const ASK_DEADLINE_MS = 170_000;
 
 /**
  * What a Buzz that does not know `timeoutMs` says. Its request type refuses a field it has no name for (serde's `deny_unknown_fields`),
- * and does so while reading the request, before anything is sent. Only this exact complaint about this field is taken for it: the text is
- * read to tell the two apart and is never shown, kept or logged.
+ * and does so while reading the request, before anything is sent. Only a complaint of an unknown field named `timeoutMs` is taken for it:
+ * the text is read to tell the two apart and is never shown, kept or logged. The exact words of such a Buzz were not captured (serde's
+ * form is "unknown field `timeoutMs`, expected one of ..."), so whatever stands between "unknown field" and the name (quotes, backticks,
+ * a colon) is allowed; anything else is not a reason to send the request again.
  */
-const UNKNOWN_TIMEOUT_FIELD = /unknown field\s*[`'"]?timeoutMs\b/;
+const UNKNOWN_TIMEOUT_FIELD = /unknown field\W*timeoutMs\b/i;
 const refusedTimeoutField = (error: unknown): boolean =>
   UNKNOWN_TIMEOUT_FIELD.test(typeof error === "string" ? error : error instanceof Error ? error.message : "");
 

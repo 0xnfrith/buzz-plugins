@@ -41,10 +41,12 @@ var MAX_MESSAGES = 500;
 var ASK_DEADLINE_MS = 17e4;
 /**
 * What a Buzz that does not know `timeoutMs` says. Its request type refuses a field it has no name for (serde's `deny_unknown_fields`),
-* and does so while reading the request, before anything is sent. Only this exact complaint about this field is taken for it: the text is
-* read to tell the two apart and is never shown, kept or logged.
+* and does so while reading the request, before anything is sent. Only a complaint of an unknown field named `timeoutMs` is taken for it:
+* the text is read to tell the two apart and is never shown, kept or logged. The exact words of such a Buzz were not captured (serde's
+* form is "unknown field `timeoutMs`, expected one of ..."), so whatever stands between "unknown field" and the name (quotes, backticks,
+* a colon) is allowed; anything else is not a reason to send the request again.
 */
-var UNKNOWN_TIMEOUT_FIELD = /unknown field\s*[`'"]?timeoutMs\b/;
+var UNKNOWN_TIMEOUT_FIELD = /unknown field\W*timeoutMs\b/i;
 var refusedTimeoutField = (error) => UNKNOWN_TIMEOUT_FIELD.test(typeof error === "string" ? error : error instanceof Error ? error.message : "");
 /**
 * Calls to the one origin, through the host's declared-origin HTTP client. The session token is kept here in memory only: it is
@@ -781,7 +783,7 @@ function createSettingsCard({ identity, relay, flag, agent }) {
 			role: "switch",
 			checked: saved,
 			onChange: (event) => change(event.target.checked)
-		}), /* @__PURE__ */ React.createElement("span", null, "Add the Megatech support agent type and its tools")), /* @__PURE__ */ React.createElement("p", { className: "mts-muted" }, "Off by default. When on, you can make an agent of the type Megatech support in Agents; it answers your own mention by asking Megatech support, and posts the answer in the channel. That is on whichever relay you made the agent on, and everyone who can read the channel reads the answer, so make it where you are content for that. Buzz also gives all your agents two tools, ", /* @__PURE__ */ React.createElement("code", null, ASK_TOOL), " and ", /* @__PURE__ */ React.createElement("code", null, STATUS_TOOL), ", with which an agent can ask support or open a ticket for you and check a ticket's status. They work only while this is on and your identity is verified, and only for agents that are yours. An agent cannot tell who asked it, so an agent that answers someone else can pass on what a tool gave it. The tools are added the next time the plugin starts: when Buzz starts, or when the plugin is turned off and on or updated, and agents running then start their sessions over. Turning this off stops them at once."), refused && /* @__PURE__ */ React.createElement("p", {
+		}), /* @__PURE__ */ React.createElement("span", null, "Add the Megatech support agent type and its tools")), /* @__PURE__ */ React.createElement("p", { className: "mts-muted" }, "Off by default. When on, you can make an agent of the type Megatech support in Agents; it answers your own mention by asking Megatech support, and posts the answer in the channel. That is on whichever relay you made the agent on, and everyone who can read the channel reads the answer, so create the agent on a relay where you are happy for the channel to read its answers. Buzz also gives all your agents two tools, ", /* @__PURE__ */ React.createElement("code", null, ASK_TOOL), " and ", /* @__PURE__ */ React.createElement("code", null, STATUS_TOOL), ", with which an agent can ask support or open a ticket for you and check a ticket's status. They work only while this is on and your identity is verified, and only for agents that are yours. An agent cannot tell who asked it, so an agent that answers someone else can pass on what a tool gave it. The tools are added the next time the plugin starts: when Buzz starts, or when the plugin is turned off and on or updated, and agents running then start their sessions over. Turning this off stops them at once."), refused && /* @__PURE__ */ React.createElement("p", {
 			role: "alert",
 			"data-tone": "error"
 		}, "Buzz would not keep that choice, so it is still ", saved ? "on" : "off", "."), saved !== agent.startedOn && /* @__PURE__ */ React.createElement("p", { role: "status" }, "Restart Buzz to ", saved ? "turn this on" : "turn this off", "."), agent.startedOn && saved === agent.startedOn && /* @__PURE__ */ React.createElement("p", { role: "status" }, "On in this session."), agent.problems.map((problem) => /* @__PURE__ */ React.createElement("p", {
