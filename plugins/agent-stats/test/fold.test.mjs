@@ -2,7 +2,7 @@
 // current tool call; and that hostile or garbled events change nothing.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { agentStats, foldItem, frameItems, isCommand, modelLabel, toolDetail, emptyState } from "../plugin.js";
+import { SHELL_TOOL, agentStats, foldItem, frameItems, isCommand, modelLabel, programName, toolDetail, emptyState } from "../plugin.js";
 import { AGENT, NOON, TODAY, batch, event, finished, foldAll, started, toolCall, toolUpdate, update } from "./helpers.mjs";
 
 const fold = (events, agent = AGENT, now = NOON + 3 * 3600_000) => foldAll(events, agent, now, foldItem);
@@ -69,24 +69,26 @@ test("a turn Buzz says is working lasts until now, and one that went quiet witho
   assert.equal(agentStats(state, AGENT, { now: NOON + 4 * MIN, working: new Set([`${"cd".repeat(32)}:t1`]) }).working, false);
 });
 
-test("commands are counted once per tool call: ACP's execute kind, and Buzz's shell tool by name", () => {
+test("commands are counted once per tool call: ACP's execute kind, and Buzz's shell tool by its exact name", () => {
   const { state } = fold([
     started("t1", 0),
     toolCall("t1", 1000, "a", { kind: "execute", title: "Bash" }),
     toolUpdate("t1", 2000, "a", { status: "completed" }),
     toolUpdate("t1", 2500, "a", { kind: "execute", status: "completed" }),
-    toolCall("t1", 3000, "b", { kind: "other", title: "buzz-dev-mcp__shell" }),
+    toolCall("t1", 3000, "b", { kind: "other", title: SHELL_TOOL }),
     toolCall("t1", 4000, "c", { kind: "read", title: "Read file" }),
     toolCall("t1", 5000, "d", { kind: "edit", title: "Edit file" }),
-    toolCall("t1", 6000, "e", { kind: "other", title: "Run command" }),
   ]);
-  assert.equal(agentStats(state, AGENT, { now: NOON + MIN }).commands, 3);
+  assert.equal(agentStats(state, AGENT, { now: NOON + MIN }).commands, 2);
+  // Names that merely look like a shell are not commands: the display title Buzz's own UI draws, and another server's tool of a like name.
+  const lookalikes = fold([started("t2", 0), toolCall("t2", 1000, "x", { kind: "other", title: "Run command" }), toolCall("t2", 2000, "y", { kind: "other", title: "other-server__shell" }), toolCall("t2", 3000, "z", { kind: "other", title: "shell" })]);
+  assert.equal(agentStats(lookalikes.state, AGENT, { now: NOON + MIN }).commands, 0);
 });
 
 test("a tool call update with no kind or title does not count, and does not erase what the call showed", () => {
   const { state, live } = fold([started("t1", 0), toolCall("t1", 1000, "a", { kind: "execute", title: "Bash", rawInput: { command: "ls -la\necho two" } }), toolUpdate("t1", 2000, "a", { status: "completed" })]);
   assert.equal(agentStats(state, AGENT, { now: NOON + MIN }).commands, 1);
-  assert.deepEqual({ title: live[AGENT].task.title, detail: live[AGENT].task.detail, status: live[AGENT].task.status }, { title: "Bash", detail: "ls -la", status: "completed" });
+  assert.deepEqual({ title: live[AGENT].task.title, detail: live[AGENT].task.detail, status: live[AGENT].task.status }, { title: "Bash", detail: "ls", status: "completed" });
 });
 
 test("the current task is the newest tool call, and an older frame arriving late does not replace it", () => {
@@ -213,16 +215,48 @@ test("frameItems reads one event, a batch, and nothing for garbage, management r
 
 test("isCommand and toolDetail", () => {
   assert.equal(isCommand("execute", undefined), true);
-  assert.equal(isCommand("other", "buzz-dev-mcp__shell"), true);
-  assert.equal(isCommand("other", "Run command"), true);
+  assert.equal(isCommand("other", SHELL_TOOL), true);
+  assert.equal(SHELL_TOOL, "buzz-dev-mcp__shell");
+  assert.equal(isCommand("other", "Run command"), false);
+  assert.equal(isCommand("other", "x__shell"), false);
+  assert.equal(isCommand("other", `${SHELL_TOOL}2`), false);
   assert.equal(isCommand("read", "Read file"), false);
   assert.equal(isCommand(undefined, undefined), false);
-  assert.equal(toolDetail({ command: "\n  \nfirst real line\nsecond" }), "first real line");
-  assert.equal(toolDetail({ command: `${"x".repeat(100)}` }), `${"x".repeat(90)}…`);
-  assert.equal(toolDetail('{"command":"echo hi"}'), "echo hi");
-  assert.equal(toolDetail({ command: "a\u0007b" }), "a b", "control characters are blanked");
+  assert.equal(toolDetail({ command: "\n  \nnpm test --token=secret\nsecond" }), "npm", "a command shows its program and never its arguments");
+  assert.equal(toolDetail('{"command":"echo hi"}'), "echo");
   assert.equal(toolDetail({ path: "/a/b/c.txt" }), "c.txt");
   assert.equal(toolDetail({ file_path: "C:\\dir\\file.rs" }), "file.rs");
   assert.equal(toolDetail({ path: "/a/b/" }), "b");
   for (const input of ["not json", 5, null, undefined, [], {}, { path: ".." }, { path: "a\nb" }]) assert.equal(toolDetail(input), undefined, JSON.stringify(input));
+});
+
+test("programName keeps the program and nothing after it", () => {
+  assert.equal(programName("npm test"), "npm");
+  assert.equal(programName("  \n\n git   push origin main\nrm -rf /"), "git");
+  assert.equal(programName("/usr/local/bin/node script.js"), "node");
+  assert.equal(programName("C:\\tools\\run.exe --flag"), "run.exe");
+  assert.equal(programName("API_KEY=abc123 TOKEN=x make build"), "make", "settings before the program are skipped, and never shown");
+  assert.equal(programName("API_KEY=abc123"), undefined, "a line that is only a setting has no program");
+  assert.equal(programName('"my tool" --x'), "my", "a quoted program is cut at its first word");
+  assert.equal(programName("(cd /tmp && ls)"), "cd");
+  assert.equal(programName("curl -H 'Authorization: Bearer abc' https://example.com"), "curl");
+  assert.equal(programName("a".repeat(100)), "a".repeat(40));
+  assert.equal(programName("x\u0007y z"), "x", "control characters are blanked first");
+  for (const empty of ["", "   ", "\n\n", "/", "///"]) assert.equal(programName(empty), undefined, JSON.stringify(empty));
+  assert.doesNotMatch(String(toolDetail({ command: "deploy --password hunter2" })), /hunter2|password/);
+});
+
+test("turns of one agent that overlap are counted once, so time working never passes the clock", () => {
+  const MIN = 60_000;
+  // Two channels at once: 0-10 and 5-15 minutes is fifteen minutes of working, not twenty.
+  const overlapping = fold([started("a", 0), finished("a", 10 * MIN), started("b", 5 * MIN), finished("b", 15 * MIN)]).state;
+  assert.equal(agentStats(overlapping, AGENT, { now: NOON + 20 * MIN }).workingMs, 15 * MIN);
+  assert.equal(agentStats(overlapping, AGENT, { now: NOON + 20 * MIN }).turns, 2, "both turns still count as turns");
+  // One inside another, one touching, and one apart.
+  const shapes = fold([started("a", 0), finished("a", 10 * MIN), started("b", 2 * MIN), finished("b", 4 * MIN), started("c", 10 * MIN), finished("c", 12 * MIN), started("d", 20 * MIN), finished("d", 21 * MIN)]).state;
+  assert.equal(agentStats(shapes, AGENT, { now: NOON + 30 * MIN }).workingMs, 13 * MIN);
+  // Order of arrival does not matter, and a running turn is merged with a finished one up to now.
+  const running = fold([started("late", 8 * MIN), started("early", 0), finished("early", 10 * MIN)]).state;
+  assert.equal(agentStats(running, AGENT, { now: NOON + 12 * MIN, working: new Set([`${AGENT}:late`]) }).workingMs, 12 * MIN);
+  assert.equal(agentStats(running, AGENT, { now: NOON + 12 * MIN, working: new Set([`${AGENT}:late`]) }).turns, 2);
 });

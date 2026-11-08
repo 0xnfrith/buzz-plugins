@@ -35,10 +35,10 @@ The agents, keys and numbers in the screenshots are made up.
 | | |
 | --- | --- |
 | **Turns today** | The turns that began today, by your computer's clock. A turn that began before midnight counts on the day it began. |
-| **Time working** | From the start of each turn to its end. A turn that is running now counts up to this moment. A turn that stopped reporting without an end counts up to its last report. |
-| **Commands run** | The tool calls that ran a command, each counted once: those ACP calls the agent marks as `execute`, and Buzz's own shell tool. |
+| **Time working** | From the start of each turn to its end. A turn that is running now counts up to this moment. A turn that stopped reporting without an end counts up to its last report. Turns of one agent that overlap (two channels at once) count once, so the total never passes the clock. |
+| **Commands run** | The tool calls that ran a command, each counted once: those the agent marks as ACP kind `execute`, and Buzz's own shell tool, recognised by its exact name `buzz-dev-mcp__shell`. A tool with a similar name is not counted. |
 | **Last active** | The last time anything was heard from the agent, on any day. |
-| **Doing now** | The agent's latest tool call, with the first line of its command or the name of its file. Shown only while a turn is running. |
+| **Doing now** | The agent's latest tool call. For a command it shows only the program that runs (`Command · npm`), never the arguments, which can carry a token. For a file tool it shows the file's name. Shown only while a turn is running, and never saved. |
 | **Model** | The model the agent reports in its session settings, as it names it. Shown only when it reports one. |
 | **Context window used** | How full the agent's context window is, as the agent reports it. This is the window, not the tokens spent. |
 

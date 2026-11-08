@@ -79,10 +79,21 @@ export function modelLabel(options) {
   return undefined;
 }
 
-/** Whether a tool call is a command: ACP's own kind for running one, or Buzz's shell tool. */
+/** Buzz's own shell tool, as it is named on the wire: it is published with ACP kind `other`, so the kind alone does not say it runs a command. */
+export const SHELL_TOOL = "buzz-dev-mcp__shell";
+
+/** Whether a tool call is a command: ACP's own kind for running one, or Buzz's shell tool by its exact name. */
 export function isCommand(kind, title) {
-  return kind === "execute" || (typeof title === "string" && (title === "Run command" || title.endsWith("__shell")));
+  return kind === "execute" || title === SHELL_TOOL;
 }
+
+/** Plain labels for the tools Buzz itself provides; any other tool is shown under the name its agent gave it. */
+const TOOL_LABELS = new Map([
+  [SHELL_TOOL, "Command"],
+  ["buzz-dev-mcp__read_file", "Read file"],
+  ["buzz-dev-mcp__str_replace", "Edit file"],
+  ["buzz-dev-mcp__view_image", "View image"],
+]);
 
 function basename(value) {
   if (typeof value !== "string" || !value.trim() || /[\r\n]/.test(value)) return undefined;
@@ -90,7 +101,18 @@ function basename(value) {
   return name && name !== "." && name !== ".." ? name.slice(0, 80) : undefined;
 }
 
-/** A short line that says what a tool call is working on: the first line of a command, or the name of a file. */
+/** The program a command line runs, and nothing after it: arguments can carry a token. Leading `NAME=value` settings are skipped. */
+export function programName(command) {
+  const line = command
+    .split(/\r?\n/)
+    .find((part) => part.trim())
+    ?.replace(/\p{Cc}/gu, " ");
+  const word = line?.trim().split(/\s+/).find((part) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(part));
+  const name = word?.replace(/^["'(`]+|["'`;)]+$/g, "").split(/[/\\]/).filter(Boolean).at(-1);
+  return name ? name.slice(0, 40) : undefined;
+}
+
+/** A short line that says what a tool call is working on: the program of a command (never its arguments), or the name of a file. */
 export function toolDetail(rawInput) {
   let input = rawInput;
   if (typeof input === "string") {
@@ -103,12 +125,8 @@ export function toolDetail(rawInput) {
   input = object(input);
   if (!input) return undefined;
   if (typeof input.command === "string") {
-    const line = input.command
-      .split(/\r?\n/)
-      .find((part) => part.trim())
-      ?.replace(/\p{Cc}/gu, " ")
-      .trim();
-    if (line) return line.length > 90 ? `${line.slice(0, 90)}…` : line;
+    const program = programName(input.command);
+    if (program) return program;
   }
   return basename(input.path) ?? basename(input.file_path) ?? basename(input.filePath);
 }
@@ -275,7 +293,7 @@ export function agentStats(state, agent, { now = Date.now(), working = new Set()
   if (!entry) return undefined;
   const today = dayKey(now);
   let turns = 0;
-  let workingMs = 0;
+  const spans = [];
   let commands = 0;
   const running = new Set();
   for (const [id, turn] of Object.entries(entry.turns)) {
@@ -285,8 +303,19 @@ export function agentStats(state, agent, { now = Date.now(), working = new Set()
     const open = turn.e === undefined && working.has(`${agent}:${id}`);
     if (open) running.add(id);
     // A finished turn lasts until its end; a running one until now; one that stopped reporting without an end, until its last frame.
-    workingMs += Math.max(0, (turn.e ?? (open ? now : turn.l)) - turn.s);
+    spans.push([turn.s, Math.max(turn.s, turn.e ?? (open ? now : turn.l))]);
   }
+  // Turns of one agent can overlap (two channels at once): the time they share counts once, so the total never passes the clock.
+  let workingMs = 0;
+  let current;
+  for (const span of spans.sort((a, b) => a[0] - b[0])) {
+    if (current && span[0] <= current[1]) current[1] = Math.max(current[1], span[1]);
+    else {
+      if (current) workingMs += current[1] - current[0];
+      current = [...span];
+    }
+  }
+  if (current) workingMs += current[1] - current[0];
   const busy = running.size > 0;
   const slot = live[agent] ?? {};
   return {
@@ -332,7 +361,8 @@ export function formatContext(context) {
 /** What an agent is doing right now, from its current tool call. */
 export function formatTask(task) {
   if (!task?.title) return undefined;
-  return task.detail ? `${task.title} · ${task.detail}` : task.title;
+  const title = TOOL_LABELS.get(task.title) ?? task.title;
+  return task.detail ? `${title} · ${task.detail}` : title;
 }
 
 /**
@@ -440,12 +470,12 @@ export function createStatsStore({ storage, key = STORAGE_KEY, now = () => Date.
 // The look. Colours and type come from the host's tokens, each with a fallback; every class is the plugin's own.
 
 export const CSS = `
-.megatech-agent-stats{box-sizing:border-box;display:flex;flex-direction:column;gap:16px;min-width:0;padding:16px;color:var(--text-standard,inherit);container-type:inline-size}
+.megatech-agent-stats{box-sizing:border-box;display:flex;flex-direction:column;gap:16px;min-width:0;padding:16px;color:var(--text-standard,inherit)}
 .megatech-agent-stats--page{height:100%;min-height:0;overflow:auto;padding:24px 28px 32px}
 .megatech-agent-stats__head{display:flex;flex-direction:column;gap:4px}
 .megatech-agent-stats__title{margin:0;font-size:1.25rem;font-weight:600}
 .megatech-agent-stats__note,.megatech-agent-stats__status,.megatech-agent-stats__empty{margin:0;font-size:.8125rem;line-height:1.45;color:var(--text-subtle,var(--text-metadata,inherit))}
-.megatech-agent-stats__status[data-state="interrupted"],.megatech-agent-stats__status[data-state="unavailable"]{color:var(--text-standard,inherit);border-left:3px solid var(--accent-9,currentColor);padding-left:10px}
+.megatech-agent-stats__status[data-state="interrupted"],.megatech-agent-stats__status[data-state="unavailable"],.megatech-agent-stats__status[data-state="missing"]{color:var(--text-standard,inherit);border-left:3px solid var(--accent-9,currentColor);padding-left:10px}
 .megatech-agent-stats__list{display:flex;flex-direction:column;gap:12px;margin:0;padding:0;list-style:none}
 .megatech-agent-stats__card{display:flex;flex-direction:column;gap:12px;padding:14px 16px;border:1px solid var(--border-standard,color-mix(in srgb,currentColor 18%,transparent));border-radius:10px;background:var(--surface-panel,transparent)}
 .megatech-agent-stats__who{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 12px}
@@ -468,7 +498,8 @@ const STATUS_TEXT = {
   connecting: "Connecting to your agents' telemetry…",
   disabled: "Waiting to listen to your agents.",
   interrupted: "The connection to your agents' telemetry was interrupted. Counts may miss what happened meanwhile.",
-  unavailable: "This version of Buzz does not share agent telemetry with plugins, so there is nothing to show.",
+  unavailable: "Buzz is not offering agent telemetry for this community right now, so there is nothing to show.",
+  missing: "This version of Buzz does not share agent telemetry with plugins, so there is nothing to show.",
 };
 const NOTE = "Counted while Buzz is open, from today's activity of your own agents. Kept on this computer, never sent anywhere.";
 
@@ -510,7 +541,7 @@ export function apply(ctx) {
       store.useScope(String(connection.scope ?? connection.origin ?? ""));
       const activity = next.agentActivity;
       if (!activity || typeof activity.activate !== "function" || typeof activity.snapshot !== "function" || typeof activity.subscribe !== "function") {
-        store.setStatus("unavailable");
+        store.setStatus("missing");
         return;
       }
       release = activity.activate();

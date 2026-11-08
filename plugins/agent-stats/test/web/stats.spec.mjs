@@ -46,7 +46,7 @@ test("a turn is added up on the page as it happens: working, what it runs, the m
   const { key, agent } = await start(page, app);
   app.observer(frame("turn_started", "t1", { startedAt: at(-40_000) }), key);
   app.observer(frame("session_config_captured", "t1", { payload: { configOptions: [model] } }), key);
-  app.observer(acp("t1", { sessionUpdate: "tool_call", toolCallId: "c1", title: "Run command", kind: "execute", status: "in_progress", rawInput: { command: "npm test\nsecond line" } }), key);
+  app.observer(acp("t1", { sessionUpdate: "tool_call", toolCallId: "c1", title: "buzz-dev-mcp__shell", kind: "other", status: "in_progress", rawInput: { command: "npm test --token=hunter2\nsecond line" } }), key);
   app.observer(acp("t1", { sessionUpdate: "usage_update", used: 50_000, size: 200_000 }), key);
   await openPage(page, "Agent stats");
   const mine = card(page, agent);
@@ -54,7 +54,8 @@ test("a turn is added up on the page as it happens: working, what it runs, the m
   await expect(badge(mine, "Working")).toBeVisible();
   await expect(value(mine, "Turns today")).toHaveText("1");
   await expect(value(mine, "Commands run")).toHaveText("1");
-  await expect(value(mine, "Doing now")).toHaveText("Run command · npm test");
+  await expect(value(mine, "Doing now")).toHaveText("Command · npm");
+  await expect(page.locator('[data-agent-stats="page"]')).not.toContainText("hunter2");
   await expect(value(mine, "Model")).toHaveText("Model One");
   await expect(value(mine, "Context window used")).toHaveText("25% of 200,000");
   await expect(value(mine, "Time working")).toHaveText(/^(?:[4-5]\ds|1m [0-5]\ds)$/);
@@ -198,13 +199,13 @@ test("the page reads in light and dark: every text has 4.5 to 1 against what is 
   const otherKey = generateSecretKey();
   app.observer(frame("turn_started", "t1", { startedAt: at(-40_000) }), key);
   app.observer(frame("session_config_captured", "t1", { payload: { configOptions: [model] } }), key);
-  app.observer(acp("t1", { sessionUpdate: "tool_call", toolCallId: "c1", title: "Run command", kind: "execute", status: "in_progress", rawInput: { command: "npm test" } }), key);
+  app.observer(acp("t1", { sessionUpdate: "tool_call", toolCallId: "c1", title: "buzz-dev-mcp__shell", kind: "other", status: "in_progress", rawInput: { command: "npm test" } }), key);
   app.observer(acp("t1", { sessionUpdate: "usage_update", used: 84_000, size: 200_000 }), key);
   app.observer(frame("turn_started", "b1", { startedAt: at(-300_000) }), otherKey);
   app.observer(acp("b1", { sessionUpdate: "tool_call", toolCallId: "d1", title: "Bash", kind: "execute" }), otherKey);
   app.observer(frame("turn_completed", "b1"), otherKey);
   await openPage(page, "Agent stats");
-  await expect(value(card(page, agent), "Doing now")).toHaveText("Run command · npm test");
+  await expect(value(card(page, agent), "Doing now")).toHaveText("Command · npm");
   const text = [".megatech-agent-stats__title", ".megatech-agent-stats__note", ".megatech-agent-stats__status", ".megatech-agent-stats__name", ".megatech-agent-stats__badge", ".megatech-agent-stats__label", ".megatech-agent-stats__value"];
   for (const mode of ["dark", "light"]) {
     await page.emulateMedia({ colorScheme: mode });

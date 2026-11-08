@@ -37,6 +37,12 @@ test("the context window is a percentage of its size, held between 0 and 100", (
 test("the task reads as its title, then its detail", () => {
   assert.equal(formatTask(undefined), undefined);
   assert.equal(formatTask({ id: "a" }), undefined);
-  assert.equal(formatTask({ title: "Run command" }), "Run command");
-  assert.equal(formatTask({ title: "Run command", detail: "npm test" }), "Run command · npm test");
+  assert.equal(formatTask({ title: "Bash" }), "Bash");
+  assert.equal(formatTask({ title: "Bash", detail: "npm" }), "Bash · npm");
+  assert.equal(formatTask({ title: "buzz-dev-mcp__shell", detail: "npm" }), "Command · npm", "Buzz's own tools get a plain label");
+  assert.equal(formatTask({ title: "buzz-dev-mcp__read_file", detail: "app.js" }), "Read file · app.js");
+  assert.equal(formatTask({ title: "buzz-dev-mcp__str_replace" }), "Edit file");
+  assert.equal(formatTask({ title: "buzz-dev-mcp__view_image" }), "View image");
+  assert.equal(formatTask({ title: "constructor" }), "constructor", "a tool called like an object property is only a name");
+  assert.equal(formatTask({ title: "other__shell", detail: "x" }), "other__shell · x");
 });

@@ -124,10 +124,21 @@ test("a Buzz that does not share the telemetry gets a plain message, not an erro
   for (const agentActivity of [false, { snapshot: () => ({}) }, { activate: 5, snapshot: () => ({}), subscribe: () => () => {} }, { activate: () => () => {}, snapshot: () => ({}) }]) {
     const buzz = fakeBuzz({ agentActivity });
     assert.doesNotThrow(() => plugin.apply(buzz.ctx));
-    assert.match(text(page(buzz)), /does not share agent telemetry with plugins/);
-    assert.match(text(tab(buzz)), /does not share agent telemetry/);
+    assert.match(text(page(buzz)), /This version of Buzz does not share agent telemetry with plugins/);
+    assert.match(text(tab(buzz)), /This version of Buzz does not share agent telemetry/);
     buzz.dispose();
   }
+});
+
+test("when Buzz itself says the telemetry is unavailable, the page says that, not that the plugin is unsupported", () => {
+  const buzz = fakeBuzz();
+  plugin.apply(buzz.ctx);
+  buzz.push([], [], "unavailable");
+  const shown = text(page(buzz));
+  assert.match(shown, /Buzz is not offering agent telemetry for this community right now/);
+  assert.doesNotMatch(shown, /This version of Buzz/);
+  assert.equal(find(page(buzz), (node) => node.props?.["data-state"] === "unavailable") !== undefined, true);
+  buzz.dispose();
 });
 
 test("an older Buzz with no tabs still gets the page", () => {
@@ -156,7 +167,8 @@ test("the page lists agents by name with their numbers, busy first, and says wha
   assert.match(rows, new RegExp(`Agent ${OTHER.slice(0, 8)}`), "an agent Buzz does not name is shown by its key");
   assert.ok(rows.indexOf("Scout") < rows.indexOf(`Agent ${OTHER.slice(0, 8)}`), "the busy one first");
   assert.match(rows, /Working/);
-  assert.match(rows, /Doing now Bash · npm test/);
+  assert.match(rows, /Doing now Bash · npm\b/);
+  assert.doesNotMatch(rows, /npm test/, "the arguments of a command are never shown");
   assert.match(rows, /Turns today 1/);
   assert.match(rows, /Commands run 1/);
   assert.match(rows, /Idle/);

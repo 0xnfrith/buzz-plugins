@@ -34,7 +34,7 @@ What the plugin reads:
 | `turn_started` | The turn, its start (`startedAt`) |
 | any frame with a `turnId` | The turn's last report, the agent's last activity |
 | `turn_completed`, `turn_error`, `agent_panic` | The turn's end (the first one wins) |
-| `acp_read` or `acp_write` with `session/update` and `tool_call` or `tool_call_update` | Commands run (once per `toolCallId`: ACP kind `execute`, or the shell tool by title), and the current task (title and the first line of the command, or a file's name) |
+| `acp_read` or `acp_write` with `session/update` and `tool_call` or `tool_call_update` | Commands run (once per `toolCallId`: ACP kind `execute`, or Buzz's shell tool by its exact wire name `buzz-dev-mcp__shell`, which Buzz publishes with kind `other`), and the current task (the tool's title, and for a command only its program, or for a file tool the file's name) |
 | `session_config_captured`, `session/update` with `config_option_update` | The model, from the option whose category, id or name is `model` |
 | `session/update` with `usage_update` | The context window, `{ used, size }` |
 
@@ -50,7 +50,9 @@ What they do not carry: **tokens or cost.** `usage_update` is the size of the co
 - **Idempotent folding.** Everything is keyed by agent and turn id (and tool call id), so the same frame twice, or Buzz handing over its buffer again after the plugin is updated in place, changes nothing. The store also remembers the frame ids it has folded.
 - **The tally is saved a second after it changes**, and when the plugin goes. A full or blocked `localStorage` only means a restart forgets the day.
 - **Turn ids are agent-chosen**, so the maps are made without a prototype (a turn called `__proto__` is only a key), ids are bounded to 256 characters, a turn keeps at most 500 command ids, an agent at most 1,000 turns, and the store at most 200 agents.
-- **The current task is not saved**, and is shown only for a turn Buzz says is running now, so a leftover of the turn before is never shown as current.
+- **The current task is not saved**, and is shown only for a turn Buzz says is running now, so a leftover of the turn before is never shown as current. For a command it shows the program only (`npm`, never `npm test --token=…`): arguments can carry a secret, and a shared screen is a screen. The tools Buzz itself provides get plain labels (`Command`, `Read file`, `Edit file`, `View image`); any other tool is shown under the name its agent gave it.
+- **Overlapping turns are merged** before their time is added, so an agent working in two channels at once is not counted twice and the total cannot pass wall-clock time.
+- **Two kinds of "unavailable".** The plugin says "This version of Buzz does not share agent telemetry with plugins" when the surface is missing, and a different line when Buzz itself reports the telemetry as unavailable for the community.
 - **The Stats tab is shown for every agent Buzz gives a tab to** (no `when`). For an agent that has not reported it says so.
 
 ## What was and was not checked
@@ -64,7 +66,7 @@ Not checked:
 
 - **The desktop app.** Nothing was installed in it; the install review, macOS WebKit and Windows are untried.
 - **The Stats tab in a real profile panel.** The harness has no agent that Buzz runs or hosts, so a profile with plugin tabs cannot be opened there. The browser test confirms the host registered the tab; the tab's body is exercised only with a stand-in for React, in the unit tests.
-- **Real agents.** The frames in the tests have the shape of Buzz's own parser and NIP-AO, made up. What a real agent bridge sends for a shell tool (its ACP `kind`, its title) was not seen, so the command count rests on `execute` and on the titles `Run command` and `*__shell`.
+- **Real agents.** The frames in the tests have the shape of Buzz's own parser and NIP-AO, made up. What a real agent bridge sends for a shell tool (its ACP `kind`, its title) was not seen, so the command count rests on `execute` and on the exact tool name `buzz-dev-mcp__shell`, as Buzz's own source publishes it (`current-activity.ts`, `activity-presentation.ts`). A harness that names its shell tool otherwise and does not mark it `execute` is not counted.
 - **A burst of frames.** Buzz notifies the plugin as each frame arrives, so none should be lost to the 200-envelope buffer; this was reasoned from `activity.ts`, not tried with a flood.
 - **Midnight, in the browser tests.** The spec sends turns that began seconds ago and expects them to be today's, so a run that starts within two minutes of local midnight waits it out. The unit tests use a fixed clock and were run under six time zones.
 - **The look, by eye.** The contrast and the overflow are measured; the screenshots were produced by the test run and the page's design was not reviewed by a person when this was written.
