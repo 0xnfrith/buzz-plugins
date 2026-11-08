@@ -453,9 +453,9 @@ export const CSS = `
 .megatech-agent-stats__badge{font-size:.75rem;font-weight:500;color:var(--text-subtle,inherit)}
 .megatech-agent-stats__badge[data-working="true"]{color:var(--text-standard,inherit)}
 .megatech-agent-stats__badge[data-working="true"]::before{content:"";display:inline-block;width:8px;height:8px;margin-right:6px;border-radius:50%;background:var(--accent-9,currentColor)}
-.megatech-agent-stats__grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px 16px;margin:0}
+.megatech-agent-stats__grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px 16px;margin:0}
 .megatech-agent-stats__item{display:flex;flex-direction:column;gap:2px;min-width:0;margin:0}
-.megatech-agent-stats__item--wide{grid-column:1/-1}
+.megatech-agent-stats__task{margin:0}
 .megatech-agent-stats__label{font-size:.75rem;color:var(--text-subtle,var(--text-metadata,inherit))}
 .megatech-agent-stats__value{margin:0;font-size:1.125rem;font-weight:600;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 .megatech-agent-stats__value--text{font-size:.875rem;font-weight:500}
@@ -545,27 +545,33 @@ export function apply(ctx) {
     return React.useMemo(() => new Map([...(snap?.running ?? []), ...(snap?.agents ?? [])].map((agent) => [agent.pubkey, agent.name])), [snap]);
   };
 
-  const item = (label, value, wide) =>
+  const item = (label, value) =>
     h(
       "div",
-      { className: `megatech-agent-stats__item${wide ? " megatech-agent-stats__item--wide" : ""}`, key: label },
+      { className: "megatech-agent-stats__item", key: label },
       h("dt", { className: "megatech-agent-stats__label" }, label),
-      h("dd", { className: `megatech-agent-stats__value${typeof value === "string" && value.length > 14 ? " megatech-agent-stats__value--text" : ""}` }, value),
+      h("dd", { className: `megatech-agent-stats__value${typeof value === "string" && value.length > 12 ? " megatech-agent-stats__value--text" : ""}` }, value),
     );
 
   /** The numbers of one agent, as a list of terms. */
   function Numbers({ stats, now }) {
     const task = formatTask(stats.task);
+    // The task is a line of its own, outside the grid: an item that spans every column would keep the grid from collapsing its empty
+    // columns, and the figures of a working agent would sit in narrow columns while an idle agent's spread across the card.
     return h(
-      "dl",
-      { className: "megatech-agent-stats__grid" },
-      item("Turns today", String(stats.turns)),
-      item("Time working", formatDuration(stats.workingMs)),
-      item("Commands run", String(stats.commands)),
-      item("Last active", stats.lastActive ? formatAgo(stats.lastActive, now) : "never"),
-      stats.working ? item("Doing now", task ?? "Working", true) : null,
-      stats.model ? item("Model", stats.model) : null,
-      stats.context ? item("Context window used", formatContext(stats.context)) : null,
+      React.Fragment,
+      null,
+      h(
+        "dl",
+        { className: "megatech-agent-stats__grid" },
+        item("Turns today", String(stats.turns)),
+        item("Time working", formatDuration(stats.workingMs)),
+        item("Commands run", String(stats.commands)),
+        item("Last active", stats.lastActive ? formatAgo(stats.lastActive, now) : "never"),
+        stats.model ? item("Model", stats.model) : null,
+        stats.context ? item("Context window used", formatContext(stats.context)) : null,
+      ),
+      stats.working ? h("dl", { className: "megatech-agent-stats__task" }, item("Doing now", task ?? "Working")) : null,
     );
   }
 

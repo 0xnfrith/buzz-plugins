@@ -87,6 +87,10 @@ test("several agents are listed, the one working first, and a second turn of the
   await expect(value(card(page, other), "Turns today")).toHaveText("1");
   await expect(badge(card(page, agent), "Working")).toBeVisible();
   await expect(badge(card(page, other), "Idle")).toBeVisible();
+  // A working agent and an idle one lay their figures out alike: the task is a line of its own, not a cell that spans the grid.
+  const first = async (agentKey) => (await card(page, agentKey).locator(".megatech-agent-stats__item", { hasText: "Turns today" }).boundingBox()).width;
+  expect(Math.abs((await first(agent)) - (await first(other)))).toBeLessThan(1);
+  await expect(card(page, agent).locator(".megatech-agent-stats__grid .megatech-agent-stats__item", { hasText: "Doing now" })).toHaveCount(0);
   const order = await page.locator('[data-agent-stats="page"] [data-agent]').evaluateAll((rows) => rows.map((row) => row.getAttribute("data-agent")));
   expect(order).toEqual([agent, other]);
 });
