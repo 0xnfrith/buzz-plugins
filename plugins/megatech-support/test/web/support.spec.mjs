@@ -173,6 +173,12 @@ test("asking shows the answer and the ticket, or says a ticket is open when ther
   await expect(reply).toContainText("No answer yet");
   await expect(reply).not.toContainText("reset it from Account");
   expect(fake.ticketsOf(fake.user.pubkey)).toHaveLength(2);
+  // Only a question waits longer than the host's default: Ask is the one request that carries a deadline.
+  const deadlines = fake.log.filter((entry) => entry.timeoutMs !== undefined);
+  expect(deadlines.map((entry) => [entry.method, entry.path, entry.timeoutMs])).toEqual([
+    ["POST", "/v1/ask", 170_000],
+    ["POST", "/v1/ask", 170_000],
+  ]);
 });
 
 test("an error from the service shows fixed words, never the service's own", async ({ page, app }) => {

@@ -46,6 +46,24 @@ const MAX_ANSWER = 20_000;
 const MAX_MESSAGES = 500;
 
 /**
+ * How long `ask` may wait for the service's answer. The host's own limit is 30 seconds unless a request says more, up to 180 seconds
+ * (`timeoutMs`). This stops ten seconds short of that, so the plugin gives the caller a plain "could not reach" before the host's own
+ * ceiling does. Past it, `ask` has still left a ticket behind, and asking again with the same key is that ticket.
+ */
+export const ASK_DEADLINE_MS = 170_000;
+
+/**
+ * What a Buzz that does not know `timeoutMs` says. Its request type refuses a field it has no name for (serde's `deny_unknown_fields`),
+ * and does so while reading the request, before anything is sent. Only a complaint of an unknown field named `timeoutMs` is taken for it:
+ * the text is read to tell the two apart and is never shown, kept or logged. The exact words of such a Buzz were not captured (serde's
+ * form is "unknown field `timeoutMs`, expected one of ..."), so whatever stands between "unknown field" and the name (quotes, backticks,
+ * a colon) is allowed; anything else is not a reason to send the request again.
+ */
+const UNKNOWN_TIMEOUT_FIELD = /unknown field\W*timeoutMs\b/i;
+const refusedTimeoutField = (error: unknown): boolean =>
+  UNKNOWN_TIMEOUT_FIELD.test(typeof error === "string" ? error : error instanceof Error ? error.message : "");
+
+/**
  * Calls to the one origin, through the host's declared-origin HTTP client. The session token is kept here in memory only: it is
  * never persisted, rendered, logged, put in a URL or in an error. It goes into one `Authorization` header and nowhere else.
  */
@@ -54,8 +72,17 @@ export function createClient(transport: Transport, now: () => number = Date.now,
   // Counts the sessions this client has held, and ends of them by hand: a request that was sent with an older session must not end
   // a newer one when its 401 comes back late.
   let epoch = 0;
+  // Set once a host has refused `timeoutMs`: that Buzz is older than the field, so no later request carries it.
+  let timeoutUnknown = false;
 
-  const call = async (method: "GET" | "POST", path: string, body?: unknown, extra: Record<string, string> = {}, authed = true): Promise<unknown> => {
+  const call = async (
+    method: "GET" | "POST",
+    path: string,
+    body?: unknown,
+    extra: Record<string, string> = {},
+    authed = true,
+    deadlineMs?: number,
+  ): Promise<unknown> => {
     if (authed && !token) throw new SupportError("no-session");
     const sentIn = epoch;
     const request: HostRequest = {
@@ -68,13 +95,23 @@ export function createClient(transport: Transport, now: () => number = Date.now,
         ...extra,
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      ...(deadlineMs === undefined || timeoutUnknown ? {} : { timeoutMs: deadlineMs }),
     };
     let response: HostResponse;
     try {
       response = await transport(request);
-    } catch {
-      // The host's own failure text can name the request; keep ours fixed.
-      throw new SupportError("network");
+    } catch (error) {
+      // The host's own failure text can name the request; ours is fixed. The one failure that is tried again is a Buzz refusing the
+      // `timeoutMs` field itself: that happens before anything is sent, so nothing can have reached the service. A timeout or a network
+      // error is never tried again here, since the request may have arrived (a retry is the person's, or the agent's, with the same key).
+      if (request.timeoutMs === undefined || !refusedTimeoutField(error)) throw new SupportError("network");
+      timeoutUnknown = true;
+      const { timeoutMs: _refused, ...plain } = request;
+      try {
+        response = await transport(plain);
+      } catch {
+        throw new SupportError("network");
+      }
     }
     return parse(response, now(), authed, () => {
       if (authed && sentIn === epoch) token = undefined;
@@ -125,7 +162,7 @@ export function createClient(transport: Transport, now: () => number = Date.now,
 
     /** `key` makes a retry of the same question the same ticket, not a second one. */
     async ask(question: string, key: string): Promise<Asked> {
-      const reply = obj(await call("POST", "/v1/ask", { question }, { "idempotency-key": key })) as Partial<Asked>;
+      const reply = obj(await call("POST", "/v1/ask", { question }, { "idempotency-key": key }, true, ASK_DEADLINE_MS)) as Partial<Asked>;
       if (!ticketId(reply.ticket_id)) throw new SupportError("unavailable");
       if (reply.answer !== undefined && (typeof reply.answer !== "string" || reply.answer.length > MAX_ANSWER)) throw new SupportError("unavailable");
       return reply.answer === undefined ? { ticket_id: reply.ticket_id } : { ticket_id: reply.ticket_id, answer: reply.answer };

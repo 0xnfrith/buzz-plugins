@@ -153,7 +153,7 @@ describe("the identity check", () => {
       for (const viewer of [null, "not-a-key", "ABC".repeat(21) + "A"]) {
         const w = world({ viewer });
         await expect(w.identity.verify()).rejects.toBeDefined();
-        expect(w.identity.state()).toEqual({ status: "failed", text: "Buzz is not signed in yet. Open a community and try again." });
+        expect(w.identity.state()).toEqual({ status: "failed", text: "Buzz has not said which account is signed in yet. Once it has connected to a community, try again." });
         expect(w.fake.log).toEqual([]);
         expect(w.host.calls).toEqual([]);
       }
