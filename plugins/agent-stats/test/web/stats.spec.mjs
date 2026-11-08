@@ -22,7 +22,20 @@ const openPlugins = async (page) => {
 };
 const model = { category: "model", id: "model", name: "Model", currentValue: "m1", options: [{ value: "m1", name: "Model One" }] };
 
+// The spec sends turns that began seconds ago and expects them to be today's. A run that starts within two minutes of local midnight would
+// see them fall on the other side of it, so it waits that out.
+async function stayClearOfMidnight(testInfo) {
+  const now = new Date();
+  const sinceMidnight = now - new Date(now).setHours(0, 0, 0, 0);
+  const untilMidnight = new Date(now).setHours(24, 0, 0, 0) - now;
+  const wait = untilMidnight < 120_000 ? untilMidnight + 60_000 : sinceMidnight < 60_000 ? 60_000 - sinceMidnight : 0;
+  if (!wait) return;
+  testInfo.setTimeout(testInfo.timeout + wait);
+  await new Promise((resolve) => setTimeout(resolve, wait));
+}
+
 async function start(page, app) {
+  await stayClearOfMidnight(test.info());
   await open(page, app);
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   const key = generateSecretKey();
@@ -31,7 +44,7 @@ async function start(page, app) {
 
 test("a turn is added up on the page as it happens: working, what it runs, the model, the context window, then idle", async ({ page, app }, testInfo) => {
   const { key, agent } = await start(page, app);
-  app.observer(frame("turn_started", "t1", { startedAt: at(-90_000) }), key);
+  app.observer(frame("turn_started", "t1", { startedAt: at(-40_000) }), key);
   app.observer(frame("session_config_captured", "t1", { payload: { configOptions: [model] } }), key);
   app.observer(acp("t1", { sessionUpdate: "tool_call", toolCallId: "c1", title: "Run command", kind: "execute", status: "in_progress", rawInput: { command: "npm test\nsecond line" } }), key);
   app.observer(acp("t1", { sessionUpdate: "usage_update", used: 50_000, size: 200_000 }), key);
@@ -44,7 +57,7 @@ test("a turn is added up on the page as it happens: working, what it runs, the m
   await expect(value(mine, "Doing now")).toHaveText("Run command · npm test");
   await expect(value(mine, "Model")).toHaveText("Model One");
   await expect(value(mine, "Context window used")).toHaveText("25% of 200,000");
-  await expect(value(mine, "Time working")).toHaveText(/^1m [0-5]\ds$/);
+  await expect(value(mine, "Time working")).toHaveText(/^(?:[4-5]\ds|1m [0-5]\ds)$/);
   await expect(page.getByText("Listening to your agents.", { exact: true })).toBeVisible();
   await expect(mine.getByRole("heading", { level: 2 })).toContainText(`Agent ${agent.slice(0, 8)}`);
 
@@ -179,7 +192,7 @@ async function contrastOf(page, selectors) {
 test("the page reads in light and dark: every text has 4.5 to 1 against what is behind it, and it fits a narrow window", async ({ page, app }) => {
   const { key, agent } = await start(page, app);
   const otherKey = generateSecretKey();
-  app.observer(frame("turn_started", "t1", { startedAt: at(-75_000) }), key);
+  app.observer(frame("turn_started", "t1", { startedAt: at(-40_000) }), key);
   app.observer(frame("session_config_captured", "t1", { payload: { configOptions: [model] } }), key);
   app.observer(acp("t1", { sessionUpdate: "tool_call", toolCallId: "c1", title: "Run command", kind: "execute", status: "in_progress", rawInput: { command: "npm test" } }), key);
   app.observer(acp("t1", { sessionUpdate: "usage_update", used: 84_000, size: 200_000 }), key);

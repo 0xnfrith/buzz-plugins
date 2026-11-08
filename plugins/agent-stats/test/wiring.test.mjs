@@ -1,10 +1,10 @@
 // `apply` against a made-up Buzz: the telemetry lease is taken for each ready session and given back, the plugin says so when Buzz does
 // not share the telemetry, the tab and the page are registered and show the numbers, and disabling the plugin leaves nothing behind.
 // The components are called as plain functions with a stand-in for React, so what they would draw can be read as text.
-import test, { afterEach, beforeEach } from "node:test";
+import test, { afterEach, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import * as plugin from "../plugin.js";
-import { AGENT, OTHER, frame } from "./helpers.mjs";
+import { AGENT, NOON, OTHER, frame } from "./helpers.mjs";
 
 const MIN = 60_000;
 const text = (node) => (node == null || node === false ? "" : Array.isArray(node) ? node.map(text).join(" ") : typeof node === "object" ? text(node.children) : String(node));
@@ -26,6 +26,8 @@ let appended;
 let removed;
 let storage;
 beforeEach(() => {
+  // A fixed clock, three hours past local noon: the tests build their times from it, so no run depends on the time of day it is made.
+  mock.method(Date, "now", () => NOON + 3 * 3600_000);
   appended = 0;
   removed = 0;
   const data = new Map();
@@ -34,6 +36,7 @@ beforeEach(() => {
   globalThis.window = { localStorage: storage };
 });
 afterEach(() => {
+  mock.restoreAll();
   delete globalThis.document;
   delete globalThis.window;
 });

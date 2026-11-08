@@ -66,6 +66,7 @@ Not checked:
 - **The Stats tab in a real profile panel.** The harness has no agent that Buzz runs or hosts, so a profile with plugin tabs cannot be opened there. The browser test confirms the host registered the tab; the tab's body is exercised only with a stand-in for React, in the unit tests.
 - **Real agents.** The frames in the tests have the shape of Buzz's own parser and NIP-AO, made up. What a real agent bridge sends for a shell tool (its ACP `kind`, its title) was not seen, so the command count rests on `execute` and on the titles `Run command` and `*__shell`.
 - **A burst of frames.** Buzz notifies the plugin as each frame arrives, so none should be lost to the 200-envelope buffer; this was reasoned from `activity.ts`, not tried with a flood.
+- **Midnight, in the browser tests.** The spec sends turns that began seconds ago and expects them to be today's, so a run that starts within two minutes of local midnight waits it out. The unit tests use a fixed clock and were run under six time zones.
 - **The look, by eye.** The contrast and the overflow are measured; the screenshots were produced by the test run and the page's design was not reviewed by a person when this was written.
 - **Several communities at once.** The tally is kept per community scope; only one community was exercised.
 
