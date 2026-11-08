@@ -6,7 +6,7 @@ What works through the plugin API, what the plugin does not do, what was verifie
 
 An MVP built **against a mock**. The service it talks to is run by another team and has no address yet, so the origin is a placeholder (`https://support.megatech.invalid`; the `.invalid` top-level domain never resolves) kept in one constant, `src/support/origin.ts`, and in the manifest's `host.networkOrigins`. A test checks that the two are the same. **That is the one open seam:** the placeholder and the manifest stay as they are until the service has a real address, and the two change together. The contract below is a **proposal**: the service's team has not agreed it yet. The plugin does nothing useful until the hosted service exists and the origin is changed.
 
-**Tested against two Buzz commits.** The browser spec and the design were written against block/buzz-app `d92bfb2c`. The identity route, the host's request fields and the plugin API this plugin uses were read again against `5a7f4952` (see "Checked again" below); `src/buzz.d.ts` is trimmed from that commit.
+**Tested against two Buzz commits.** The design was written against block/buzz-app `d92bfb2c`, the commit CI runs the browser spec on. The identity route, the host's request fields and the plugin API this plugin uses were read again against `5a7f4952` (see "Checked again" below), `src/buzz.d.ts` is trimmed from that commit, and the browser spec was also run on it (20 of 20), which is where the screenshots in the README come from. CI stays on `d92bfb2c`.
 
 ## Works on any relay
 
@@ -88,7 +88,7 @@ JSON in and out; `Authorization: Bearer <session>` on everything except the firs
 
 ## What was verified
 
-Where, and against what: `test/unit` (Node, vitest) and `test/web/support.spec.mjs` (the web build of block/buzz-app at `d92bfb2c`, headless Chromium, run by `test/run.sh`; CI runs both). In the real desktop app on Linux (see the README for the version): see "In the real app" below.
+Where, and against what: `test/unit` (Node, vitest) and `test/web/support.spec.mjs` (the web build of block/buzz-app, headless Chromium, run by `test/run.sh`; CI runs both, the spec on `d92bfb2c`, and it was also run by hand on `5a7f4952`: 20 of 20). In the real desktop app on Linux (see the README for the version): see "In the real app" below.
 
 - Every request goes to the one origin; the session is sent only in `Authorization`; the identity calls carry no credential; nothing is sent before **Verify**; ask, open (once, even after a failed try), list, read, refresh; a lost session returns to the Verify card; fixed text for every error class, with the service's own words never on the page.
 - Forget, a lost session or switching the plugin off while a check is running: the check keeps nothing and starts no timer (and tells the service if its answer arrives late); a late 401 for an old session does not end a newer one; a session that ends in the middle of a form says so and keeps what was typed.
@@ -97,7 +97,7 @@ Where, and against what: `test/unit` (Node, vitest) and `test/web/support.spec.m
 - Agent type and tools: not added when the switch is off (nothing saved, `off`, or any other word), added once when it is on as the plugin starts, usable by the user's own agents (the owner Buzz records for the agent is the verified key) while the switch is on and the identity verified and Buzz confirms which key is signed in, refused with fixed words otherwise (switched off, not verified, Buzz not saying which key is signed in, not this person's agent), with no request made.
 - No `fetch`, WebSocket, `eval`, remote image or other way out of the page in the source (a test scans it); nothing in storage but the switch; the one call that signs for the user is in one file.
 - Any relay: the source reads nothing of the relay but the signed-in key (a scan, and a record of every read through a whole session); every request carries only the contract's fields and headers; a key the service has never seen verifies, asks, opens and lists (`test/unit/any-relay.test.ts`).
-- The ask deadline: `ask` carries `timeoutMs: 170000` and no other request does; an older Buzz's refusal of the field gets one more try without it under the same key and is remembered; a timeout, a network error, a refusal of another field or a complaint about the value is never tried again (`test/unit/client.test.ts`).
+- The ask deadline: `ask` carries `timeoutMs: 170000` and no other request does; an older Buzz's refusal of the field gets one more try without it under the same key and is remembered; a timeout, a network error, a refusal of another field or a complaint about the value is never tried again (`test/unit/client.test.ts`). The browser spec checks the first part through the page: the two questions it asks carry the deadline and no other request does (a deadline changed to 30 seconds fails it). The web build has no native request, so the browser spec cannot show what the real host does with the field.
 - The identity route, the host's request fields and the write rules, read in Buzz's source at `5a7f4952` (see "Checked again" above).
 
 ## What was not verified
@@ -105,7 +105,7 @@ Where, and against what: `test/unit` (Node, vitest) and `test/web/support.spec.m
 - **Against a real service.** There is none yet. The contract is a proposal, and so is its rule about a key the service has never seen.
 - **An agent using the tools against a real model, and an agent of the support type.** Neither has been run in Buzz: the tools and the type are tested with fakes (`test/unit/agent.test.ts`) and the web build checks that the type is registered. Running them needs an agent harness with model access inside Buzz, which has not been available; creating an agent also publishes its profile on a relay.
 - **The exact refusal of an older Buzz.** The fallback for `timeoutMs` depends on how a Buzz from before that field words its refusal. No such Buzz was run: the text in the tests is serde's usual form ("unknown field `timeoutMs`, expected one of ..."), written by hand, and the pattern allows quotes, backticks or a colon between "unknown field" and the name. If the real words differ more than that, the plugin does not send the request again and `ask` fails with "could not reach" on those Buzz versions until the pattern is changed.
-- **The browser spec on `5a7f4952`.** The spec ran on `d92bfb2c`; the 900 or so commits since then are covered by the source reading above and the unit tests, not by a browser run.
+- **The desktop app, for this change.** The browser spec and the screenshots are from Buzz's web build. The desktop app was not run for this change; its earlier run is the one under "In the real app".
 - **macOS and Windows.** Linux only, and the web build.
 - **The web build's own host call.** The browser tests give the plugin a fake host for the attestation (the web build's broker does not serve it); the real call ran only in the desktop app.
 - **`timeoutMs` in the desktop app.** The request goes through a fake host in the tests. Whether a real service can hold a call for 170 seconds through Buzz's client has not been tried.

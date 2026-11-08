@@ -17,7 +17,7 @@ Anyone with a Buzz key, on any relay. You do not need a Megatech relay or a Mega
 
 ## Screenshots
 
-From Buzz's own web build, against the fake service in `test/fake-support`, with a made-up key (the install review under "How to install" is from the Buzz desktop app on Linux). Nothing here comes from a real service.
+From Buzz's own web build (block/buzz-app `5a7f4952`), against the fake service in `test/fake-support`, with a made-up key. The install review under "How to install" is from the Buzz desktop app on Linux, from an earlier run; none of the others is. Nothing here comes from a real service, and there is no screenshot of an agent using the tools, because that has not been run.
 
 | The identity card, before anything is sent | The card when Buzz's answer is not accepted |
 | --- | --- |
@@ -33,7 +33,7 @@ From Buzz's own web build, against the fake service in `test/fake-support`, with
 | --- | --- | --- |
 | should work, untested | **works against the mock, tested** | should work, untested |
 
-- **Linux:** run in Buzz's own web build in a headless browser (the spec in `test/web`, which CI runs), and in the Buzz desktop app on Linux against the fake service (`test/real-app`). Source: `NOTES.md`, "What was verified".
+- **Linux:** run in Buzz's own web build in a headless browser (the spec in `test/web`, which CI runs, and which was also run by hand on block/buzz-app `5a7f4952`: 20 of 20), and, in an earlier run, in the Buzz desktop app on Linux against the fake service (`test/real-app`). The desktop app was not run for the latest change. Source: `NOTES.md`, "What was verified".
 - **macOS** and **Windows:** not run. The plugin uses only the host's HTTPS client and the host's identity attestation, which are the same on every system, but no one has tried.
 - **Not run anywhere yet:** an agent using the tools against a real model, and an agent of the Megatech support type. Both are tested with fakes only; creating an agent also publishes its profile on a relay, which the tests do not do. Source: `NOTES.md`, "What was not verified".
 - **A call that waits:** a question may wait up to 170 seconds for support's answer on a Buzz that supports a longer wait (desktop-v0.7.0-beta.1 and later), and 30 seconds on an older one. The tests use a fake host; it has not been tried in the desktop app.
