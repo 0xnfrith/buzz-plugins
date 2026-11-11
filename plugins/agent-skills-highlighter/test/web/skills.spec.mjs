@@ -3,9 +3,9 @@
 // the Settings card, and that disabling the plugin leaves nothing behind. The program that reads skill files is a stand-in the spec
 // supplies (`window.__skillsRun`); run with plugins/agent-skills-highlighter/test/run.sh.
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { open, settle } from "./timeline.mjs";
 import { hoverMessage } from "./message-actions.mjs";
-import { openSettings, selectSettingsSection, settingsDialog, settingsSections } from "./navigation.mjs";
+import { closeSettings, openSettings, selectSettingsSection, settingsDialog, settingsSections } from "./navigation.mjs";
 import { setPluginEnabled } from "./plugin-settings.mjs";
 import { DESCRIPTION_LINES, SIGNAL } from "../fixtures/agent-skills-highlighter/plugin.js";
 
@@ -43,6 +43,14 @@ const say = async (page, text) => {
 const tokens = (page) => page.locator("[data-skill]");
 const token = (page, name) => page.locator(`[data-skill="${name}"]`);
 const card = (page) => page.locator(".megatech-skills__card");
+// Closing Settings is not done when the click returns: the dialog leaves with an animation, and a pointer sent to a skill while it is still
+// there can lose the hover, or find the skill moved (the message list was seen to scroll just as the dialog went). Waiting for the dialog to
+// be gone is what fixes that. `settle` (the wait `open` uses: the timeline's geometry stops moving) is a guard that keeps the pointer off a
+// timeline that may still be moving.
+const leaveSettings = async (page) => {
+  await closeSettings(page);
+  await settle(page);
+};
 // A timer of the page's own: the time the card waits before it closes is what is under test, not the speed of this runner.
 const pageTimer = (page, ms) => page.evaluate((delay) => new Promise((resolve) => setTimeout(resolve, delay)), ms);
 
@@ -565,7 +573,7 @@ test("reading again picks up a new skill and highlights it in a message that is 
   await openSettings(page);
   await settingsSections(page).getByRole("button", { name: "Agent Skills", exact: true }).click();
   await settingsDialog(page).getByRole("button", { name: "Read again", exact: true }).click();
-  await settingsDialog(page).getByRole("button", { name: "Close Settings", exact: true }).click();
+  await leaveSettings(page);
   await expect(tokens(page)).toHaveCount(2);
   await token(page, "fresh-skill").hover();
   await expect(card(page).locator(".megatech-skills__desc")).toHaveText("Just added.");
@@ -579,7 +587,7 @@ test("disabling the plugin leaves no highlight, no card and no style; enabling i
   await openSettings(page);
   await selectSettingsSection(page, "Manage plugins");
   await setPluginEnabled(page, PLUGIN, false);
-  await settingsDialog(page).getByRole("button", { name: "Close Settings", exact: true }).click();
+  await leaveSettings(page);
   await expect(tokens(page)).toHaveCount(0);
   await expect(card(page)).toHaveCount(0);
   await expect(page.locator("style[data-megatech-skills]")).toHaveCount(0);
@@ -588,7 +596,7 @@ test("disabling the plugin leaves no highlight, no card and no style; enabling i
   await openSettings(page);
   await selectSettingsSection(page, "Manage plugins");
   await setPluginEnabled(page, PLUGIN, true);
-  await settingsDialog(page).getByRole("button", { name: "Close Settings", exact: true }).click();
+  await leaveSettings(page);
   await expect(tokens(page)).toHaveCount(1);
   await expect(page.locator("style[data-megatech-skills]")).toHaveCount(1);
   await expect.poll(() => state.calls.length).toBeGreaterThan(calls);
