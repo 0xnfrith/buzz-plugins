@@ -1,0 +1,23 @@
+# Tests of the merge-by-policy job (.github/merge-by-policy/test_merge_by_policy.py): its script against a stand-in gh, and the shape of
+# merge-by-policy.yml and merge-by-policy-wake.yml. Standard-library Python and jq only; no key, no network.
+name: Merge-by-policy tests
+
+on:
+  # Called by tests.yml, which runs on every pull request into main and every push to main, and calls this workflow when anything under
+  # .github/ changes (the `merge-by-policy` row of .github/tests-to-run.sh). Its `all-tests` check is the one to require.
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Merge-by-policy tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Tests
+        run: python3 -I .github/merge-by-policy/test_merge_by_policy.py

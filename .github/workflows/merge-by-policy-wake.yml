@@ -1,0 +1,24 @@
+name: merge-by-policy-wake
+
+# The wake of merge-by-policy.yml on a review. It holds nothing and does nothing: no permission, no secret, no environment, no checkout, no action,
+# one echo. merge-by-policy.yml listens for this workflow's runs finishing (workflow_run), and that run, main's copy of merge-by-policy.yml, reads the
+# pull request from the API and decides.
+#
+# Why a separate workflow: a pull_request_review run uses the pull request's own merge-ref copy of its workflow file, so a branch can rewrite this file
+# to anything. That is harmless here because this job is given nothing (its token has no permission, and the merge App's key lives in an environment
+# whose deployment branches are main only). merge-by-policy.yml takes from this run only the pull request's number, which GitHub writes into the
+# workflow_run event, and reads every fact again.
+on:
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions: {}
+
+jobs:
+  wake:
+    name: wake merge-by-policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - name: Wake merge-by-policy
+        run: echo "a review changed; merge-by-policy reads this pull request again"

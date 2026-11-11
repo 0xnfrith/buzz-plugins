@@ -1,0 +1,640 @@
+name: merge-by-policy
+
+# Merge by policy: nobody presses merge. For an open, ready pull request into main, this job decides from the API whether the pull request qualifies,
+# and then switches GitHub's squash auto-merge on (`gh pr merge <n> --auto --squash --match-head-commit <head>`, as a GitHub App), leaves it off, or
+# switches it off. It never merges past a rule: GitHub merges only when main's ruleset is satisfied, and the App has no bypass. When every rule is
+# already met, gh merges at once at the pinned head (gh's own behaviour for a pull request that is already clean).
+#
+# A PULL REQUEST QUALIFIES only when every one of these holds, read from the API at the time (the first false one ends the run with its reason in the
+# job summary; an answer the script cannot read fails the job, red):
+#   - it is open, not a draft, targets main, and its head is a branch of this repository (not a fork, not a deleted fork), with no merge conflict;
+#   - its title does not start with `HOLD:` (any case, after leading whitespace; the event's title and the live one) and it has no `hold` label. A held
+#     pull request has auto-merge switched off, whoever switched it on;
+#   - main's ruleset requires what makes auto-merge safe: a pull_request rule asking for at least one approving review, stale approvals dismissed on a
+#     push, the most recent push approved by someone other than its pusher, a code owner's approval for CODEOWNERS paths, and the tests summary check
+#     `all-tests` required, pinned to GitHub Actions (15368); and the repository allows auto-merge (or main has a merge queue). Without these the job
+#     switches nothing on: auto-merge stays on across a later push by someone with write access, and only the ruleset stops that push from merging;
+#   - the list of changed files is whole (it matches the pull request's changed_files and is under GitHub's 3,000 cap); every path, rename sources
+#     included, is plain printable ASCII and a regular file at the head and at the base (no symlink, no submodule, no mode-only change);
+#   - NO changed path matches a line of main's .github/CODEOWNERS (compared case-folded). Those wait for a code owner; the job does not lean on the
+#     code-owner rule alone. CODEOWNERS lines this script cannot read exactly (anything but an anchored path or folder) fail the job;
+#   - every check main requires has its newest run on the head, from the app it is pinned to, completed with success, computed after the pull request
+#     was opened and after its last base change; `all-tests` must also come from a run of .github/workflows/tests.yml on a pull_request event for
+#     THIS pull request into main. A check still running is "not yet": its completion runs this job again. A required check not pinned to an app
+#     fails closed;
+#   - as many approving reviews as main requires are on THIS head (a review's commit_id), each the reviewer's latest, after the last base change, from
+#     someone other than the pull request's author and the merge App; and no reviewer's latest review requests changes. An approval of an older head
+#     does not count, so a push after the review waits for a new review;
+#   - the head is the head of no other pull request (open, or closed from the same branch): a check run belongs to a commit, not to a base;
+#   - the head read after all of the above is the head read before it (the reads describe one head, and --match-head-commit pins it).
+# A pull request that does not qualify gets no auto-merge, and auto-merge that THIS App switched on is switched off. Auto-merge a person switched on
+# is a person's press and is left alone, except on a hold.
+#
+# RE-ARMING. GitHub switches auto-merge off itself when its merge attempt meets a required check still running. So the job also runs when the
+# `Tests` workflow finishes (workflow_run, only a run of .github/workflows/tests.yml on a pull_request event from this repository) and when a review
+# is submitted or dismissed (through merge-by-policy-wake.yml, a workflow that holds nothing). Each run reads the pull request as it is now, and
+# switches auto-merge back on after GitHub's own switch-off (one with a reason code) or this App's, at most three GitHub switch-offs per pull request.
+# A switch-off by a person stays.
+#
+# WHAT RUNS, AND WITH WHICH TOKEN. pull_request_target and workflow_run run THIS file as it is on the default branch, so the script below is always
+# main's; a branch or a fork cannot change it. Nothing is checked out and no action but GitHub's token action runs. From an event this job takes only
+# the pull request's number, and for pull_request_target its head sha and title; every other fact is read from the API. Two tokens:
+#   - the job's own GITHUB_TOKEN, read-only (contents, pull-requests, checks, actions, issues: read), for the pull request, its files, reviews and
+#     timeline, main's CODEOWNERS, the checks and the workflow run behind `all-tests`;
+#   - the merge App's installation token (Contents write and Pull requests write, this repository alone), minted only after the job's `if` passed,
+#     revoked when the job ends, never printed; used for the repository's merge settings (which need Contents write to be shown), main's rules, and
+#     the two writes (`--auto` and `--disable-auto`). A merge made with GITHUB_TOKEN would start no workflow on main; the App's does.
+#
+# SETTINGS THIS FILE READS, BY NAME (none of their values are in this repository):
+#   - the repository variable MERGE_APP_CLIENT_ID: the merge App's client ID. It is the on-switch: unset, every run is skipped and no token is minted,
+#     so merging this file changes nothing;
+#   - the secret MERGE_APP_PRIVATE_KEY of the environment `merge-by-policy`, whose deployment branches are main only, so no branch's copy of a
+#     workflow can mint this token.
+#
+# FAIL CLOSED. A read that fails, an answer it cannot read, a crash, a cancel or a timeout ends the job red, and the last step then switches off
+# auto-merge this App had switched on for the pull request, and any auto-merge on a held one.
+#
+# Tests: .github/merge-by-policy/test_merge_by_policy.py holds this file's shape and runs the script against a stand-in gh. A pull request that
+# changes this file is judged by main's copy, not its own. Never write a ${{ }} expression inside `run:`: values reach the shell only through env.
+
+on:
+  pull_request_target:
+    types: [opened, edited, ready_for_review, reopened, synchronize, labeled, unlabeled]
+  workflow_run:
+    workflows: [Tests, merge-by-policy-wake]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  merge-by-policy:
+    name: merge-by-policy
+    if: >-
+      vars.MERGE_APP_CLIENT_ID != '' &&
+      ((github.event_name == 'pull_request_target' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      ((github.event.pull_request.draft == false && github.event.pull_request.base.ref == 'main') ||
+      (github.event.action == 'edited' && github.event.changes.base != null))) ||
+      (github.event_name == 'workflow_run' &&
+      ((github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.path == '.github/workflows/tests.yml') ||
+      (github.event.workflow_run.event == 'pull_request_review' && github.event.workflow_run.path == '.github/workflows/merge-by-policy-wake.yml')) &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.pull_requests[0].number != null))
+    # One job per pull request at a time, and a running job is never cancelled half-way (it holds a credential). GitHub keeps ONE pending job per
+    # group and a newer one replaces it whatever cancel-in-progress says; that is safe because every job reads the pull request live and judges its
+    # hold first. The group is the JOB's, so only a job that passed its `if` takes the slot.
+    concurrency:
+      group: merge-by-policy-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: merge-by-policy
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+      actions: read
+      issues: read
+    steps:
+      - name: Mint the merge App's token
+        id: token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.MERGE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.MERGE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Switch auto-merge on or off by the policy
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          READ_TOKEN: ${{ github.token }}
+          APP_SLUG: ${{ steps.token.outputs.app-slug }}
+          GH_REPO: ${{ github.repository }}
+          MAIN_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_CHANGED: ${{ github.event_name == 'pull_request_target' && github.event.action == 'edited' && github.event.changes.base != null }}
+        run: |
+          python3 -I - <<'PY'
+          import base64, json, os, re, subprocess, sys, urllib.parse
+
+          # The tests summary check main must require, pinned to its app (15368 is GitHub Actions), and the workflow file that must have made it.
+          TESTS_CHECK = ("all-tests", 15368)
+          TESTS_WORKFLOW = ".github/workflows/tests.yml"
+          MIN_APPROVALS = 1  # main must require at least this many approving reviews
+          FILE_CAP = 3000
+          MODE_CAP = 300  # the changed paths whose mode this job reads; more is refused
+          RE_ARM_CAP = 3  # GitHub's own switch-offs of auto-merge on one pull request after which this job stops switching it back on
+          TS = r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"
+
+          repo, pr, main_sha, event = os.environ["GH_REPO"], os.environ["PR_NUMBER"], os.environ["MAIN_SHA"], os.environ["EVENT_NAME"]
+          event_head, slug = os.environ["HEAD_SHA"], os.environ["APP_SLUG"]
+          base_changed = os.environ["BASE_CHANGED"]
+          summary = os.environ["GITHUB_STEP_SUMMARY"]
+          seen = {}
+          # what the summary shows is a number, a hex sha, a fixed sentence of this script or a line of main's CODEOWNERS that matched [A-Za-z0-9._/-]+
+          pr_shown = pr if re.fullmatch(r"[0-9]+", pr) else "?"
+
+          def report(result):
+              with open(summary, "a") as f:
+                  f.write("### merge-by-policy: pull request #%s\n\n| | |\n|---|---|\n" % pr_shown)
+                  for k, v in seen.items():
+                      f.write("| %s | %s |\n" % (k, v))
+                  f.write("| result | %s |\n" % result)
+
+          def finish(result):
+              report(result)
+              print("merge-by-policy: " + result)
+              sys.exit(0)
+
+          def fail(result):
+              # red, never silent; the job's last step then switches off auto-merge that this App switched on
+              report("FAILED: " + result)
+              print("::error title=merge-by-policy::" + result)
+              sys.exit(1)
+
+          if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+", repo) or repo.split("/")[1] in (".", ".."):
+              fail("the repository name is not owner/name")
+          if not re.fullmatch(r"[0-9]+", pr):
+              fail("the pull request number is not a number")
+          if not re.fullmatch(r"[0-9a-f]{40}", main_sha):
+              fail("main's sha is not a full lowercase sha")
+          if event not in ("pull_request_target", "workflow_run"):
+              fail("the event is not one this job runs on")
+          if event == "pull_request_target" and not re.fullmatch(r"[0-9a-f]{40}", event_head):
+              fail("the head is not a full lowercase sha")
+          if base_changed not in ("true", "false"):
+              fail("whether the event changed the base could not be read")
+          if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug):
+              fail("the merge App's slug could not be read")
+          ours = slug + "[bot]"
+
+          def gh(app, *args):
+              # app=False reads with the job's read-only token, app=True with the merge App's. gh's error text is shown with a prefix, so no line of it can
+              # start a workflow command; args are words of this script, the repository, the number and shas, all matched above.
+              e = dict(os.environ)
+              if not app:
+                  e["GH_TOKEN"] = os.environ["READ_TOKEN"]
+              p = subprocess.run(["gh", *args], capture_output=True, text=True, env=e)
+              if p.returncode != 0:
+                  for line in p.stderr.splitlines():
+                      print("gh: " + line.replace("::", ": :"))
+                  fail("gh %s %s failed" % (args[0], args[1].split("?")[0]))
+              try:
+                  return json.loads(p.stdout)
+              except ValueError:
+                  fail("gh %s %s did not answer JSON" % (args[0], args[1].split("?")[0]))
+
+          def change(failed, *args):
+              # a write, always with the merge App's token; a write that failed fails the job
+              p = subprocess.run(["gh", *args], capture_output=True, text=True)
+              for line in (p.stdout + p.stderr).splitlines():
+                  print("gh: " + line.replace("::", ": :"))
+              if p.returncode != 0:
+                  fail(failed)
+
+          # One function judges every title. A title is its author's text: it is compared and goes nowhere else.
+          def is_held(t):
+              return t.lstrip().lower().startswith("hold:")
+
+          def has_hold_label(x):
+              return any(l["name"].strip().lower() == "hold" for l in x["labels"])
+
+          def read_pr():
+              p = gh(False, "api", "repos/%s/pulls/%s" % (repo, pr))
+              if not isinstance(p, dict):
+                  fail("the pull request could not be read")
+              for k, t in (("state", str), ("draft", bool), ("title", str), ("base", dict), ("head", dict), ("labels", list), ("changed_files", int), ("user", dict)):
+                  if not isinstance(p.get(k), t) or (t is int and isinstance(p.get(k), bool)):
+                      fail("the pull request has no readable %s" % k)
+              if "auto_merge" not in p or not (p["auto_merge"] is None or isinstance(p["auto_merge"], dict)):
+                  fail("the pull request has no readable auto_merge")
+              if not isinstance(p["head"].get("sha"), str) or not re.fullmatch(r"[0-9a-f]{40}", p["head"]["sha"]) or not isinstance(p["base"].get("ref"), str):
+                  fail("the pull request's head or base could not be read")
+              if not isinstance(p["base"].get("sha"), str) or not re.fullmatch(r"[0-9a-f]{40}", p["base"]["sha"]):
+                  fail("the pull request's base commit could not be read")
+              if not isinstance(p.get("created_at"), str) or not re.fullmatch(TS, p["created_at"]):
+                  fail("the pull request's creation time could not be read")
+              if not all(isinstance(l, dict) and isinstance(l.get("name"), str) for l in p["labels"]):
+                  fail("the pull request's labels could not be read")
+              if not isinstance(p["user"].get("login"), str):
+                  fail("the pull request's author could not be read")
+              return p
+
+          def enabled_by(amr):
+              if amr is None:
+                  return None
+              who = amr.get("enabled_by")
+              login = who.get("login") if isinstance(who, dict) else None
+              return login if isinstance(login, str) else "?"
+
+          # 0. The event's title (pull_request_target only). A guard that cannot read its input must not read it as "no hold".
+          if event == "pull_request_target" and not os.environ["PR_TITLE"].strip():
+              fail("the pull request's title is empty in the event")
+          seen["woken by"] = event
+
+          # 1. The pull request as it is now
+          p = read_pr()
+          head = p["head"]["sha"]
+          amr = p["auto_merge"]
+          seen["head"] = "`%s`" % head
+          seen["auto-merge before"] = "off" if amr is None else ("on, switched on by this job" if enabled_by(amr) == ours else "on, switched on by someone else")
+
+          held = (event == "pull_request_target" and is_held(os.environ["PR_TITLE"])) or is_held(p["title"])
+          labelled = has_hold_label(p)
+          seen["held"] = "yes, a HOLD: title" if held else ("yes, the hold label" if labelled else "no")
+          if held or labelled:
+              # a hold that a later edit cannot enforce is no hold: auto-merge that is on is switched off, whoever switched it on (only ever toward not merging)
+              if amr is None:
+                  finish("nothing done: the pull request is held (a HOLD: title or the hold label); lifting the hold runs this job again")
+              change("gh pr merge --disable-auto failed", "pr", "merge", pr, "--disable-auto")
+              finish("auto-merge switched off: the pull request is held (a HOLD: title or the hold label)")
+
+          # A retarget: every check on the head was computed for the old base, so auto-merge is switched off, whoever switched it on, and nothing else
+          # is done. The checks computed after the change run this job again.
+          if base_changed == "true":
+              if amr is None:
+                  finish("nothing done: the base changed; the checks computed after the change run this job again")
+              change("gh pr merge --disable-auto failed", "pr", "merge", pr, "--disable-auto")
+              finish("auto-merge switched off: the base changed; the checks computed after the change run this job again")
+
+          def refuse(reason):
+              # does not qualify: no auto-merge, and auto-merge this App switched on is switched off; a person's is left
+              if enabled_by(amr) == ours:
+                  change("gh pr merge --disable-auto failed", "pr", "merge", pr, "--disable-auto")
+                  finish("auto-merge switched off: " + reason)
+              finish("nothing done: " + reason)
+
+          if p["state"] != "open":
+              finish("nothing done: the pull request is not open")
+          if p["draft"]:
+              refuse("the pull request is a draft")
+          if p["base"]["ref"] != "main":
+              refuse("the pull request does not target main")
+          hr = p["head"].get("repo")
+          if not isinstance(hr, dict) or hr.get("full_name") != repo:
+              refuse("the pull request comes from a fork, or its head repository is gone")
+          if event == "pull_request_target" and head != event_head:
+              finish("nothing done: the head is no longer the one of this event; the push that moved it runs this job again")
+          if p.get("mergeable_state") == "dirty":
+              refuse("the branch has a merge conflict with main; the push that resolves it runs this job again")
+
+          # 2. The repository's setting and main's rules
+          settings = gh(True, "api", "repos/" + repo)
+          allow_auto = settings.get("allow_auto_merge") if isinstance(settings, dict) else None
+          if not isinstance(allow_auto, bool):
+              fail("the repository's allow_auto_merge could not be read")
+          seen["auto-merge allowed"] = "yes" if allow_auto else "no"
+          rules = gh(True, "api", "repos/%s/rules/branches/main?per_page=100" % repo)
+          if not isinstance(rules, list) or not all(isinstance(r, dict) for r in rules):
+              fail("main's rules could not be read")
+          if len(rules) >= 100:
+              fail("main has 100 rules or more, which may be more than the one page read")
+          approvals, queue, dismiss, last_push, owners, checks = None, False, False, False, False, []
+          for r in rules:
+              if r.get("type") == "pull_request":
+                  params = r.get("parameters") or {}
+                  n = params.get("required_approving_review_count")
+                  if not isinstance(n, int) or isinstance(n, bool):
+                      fail("a pull_request rule of main has no readable approval count")
+                  approvals = n if approvals is None else max(approvals, n)
+                  if params.get("dismiss_stale_reviews_on_push") is True:
+                      dismiss = True
+                  if params.get("require_last_push_approval") is True:
+                      last_push = True
+                  if params.get("require_code_owner_review") is True:
+                      owners = True
+              elif r.get("type") == "merge_queue":
+                  queue = True
+              elif r.get("type") == "required_status_checks":
+                  listed = (r.get("parameters") or {}).get("required_status_checks")
+                  if not isinstance(listed, list) or not all(isinstance(c, dict) for c in listed):
+                      fail("a required_status_checks rule of main could not be read")
+                  checks += [(c.get("context"), c.get("integration_id")) for c in listed]
+          for n, a in checks:
+              if not isinstance(n, str) or not re.fullmatch(r"[A-Za-z0-9 ._()/:-]{1,100}", n):
+                  fail("main requires a check whose name this job does not read")
+          pinned = sorted({(n, a) for n, a in checks if isinstance(a, int) and not isinstance(a, bool)})
+
+          def required(g):
+              return g in pinned
+
+          seen["approvals main requires"] = "none (no pull_request rule)" if approvals is None else str(approvals)
+          seen["stale approvals dismissed on a push"] = "yes" if dismiss else "no"
+          seen["last push approved by someone else"] = "yes" if last_push else "no"
+          seen["code owners' approval required"] = "yes" if owners else "no"
+          seen["the tests required, pinned to their app"] = "yes" if required(TESTS_CHECK) else "no"
+          if approvals is None:
+              refuse("main has no active pull_request rule")
+          if approvals < MIN_APPROVALS:
+              refuse("main requires no approving review, so auto-merge could merge a pull request nobody reviewed")
+          if not dismiss:
+              refuse("main's ruleset does not dismiss stale approvals on a push")
+          if not last_push:
+              refuse("main's ruleset does not require the most recent push to be approved by someone other than its pusher")
+          if not owners:
+              refuse("main's ruleset does not require a code owner's approval")
+          if not required(TESTS_CHECK):
+              refuse("main's required checks do not include all-tests pinned to GitHub Actions")
+          if len(pinned) != len(checks):
+              refuse("main requires a check that is not pinned to an app, so its run cannot be told apart")
+          if not allow_auto and not queue:
+              refuse("the repository does not allow auto-merge and main has no merge queue rule")
+
+          # 3. The changed paths: the files API, rename sources included, whole or not at all
+          files = []
+          for page in range(1, FILE_CAP // 100 + 1):
+              batch = gh(False, "api", "repos/%s/pulls/%s/files?per_page=100&page=%d" % (repo, pr, page))
+              if not isinstance(batch, list) or not all(isinstance(f, dict) for f in batch):
+                  fail("the pull request's files could not be read")
+              files += batch
+              if len(batch) < 100 or len(files) >= FILE_CAP:
+                  break
+          seen["changed files"] = str(len(files))
+          if len(files) >= FILE_CAP:
+              refuse("the list of changed files reached GitHub's 3,000-file cap")
+          if len(files) != p["changed_files"] or not files:
+              refuse("the list of changed files does not match the pull request's count")
+          paths = []
+          for f in files:
+              for k in ("filename", "previous_filename"):
+                  if k in f and f[k] is not None:
+                      paths.append(f[k])
+          for x in paths:
+              if not isinstance(x, str) or not re.fullmatch(r"[\x20-\x7e]{1,1024}", x) or x.startswith("/") or any(s in ("", ".", "..") for s in x.split("/")):
+                  refuse("a changed path is not a plain printable ASCII repository path")
+          folded = [x.lower() for x in paths]
+
+          # Only regular files may change: no symlink, no submodule, no mode-only change. The files API shows no mode, so the modes come from two reads
+          # of the whole tree, at the head and at the base commit (a tree GitHub cut short is refused).
+          if len(paths) > MODE_CAP:
+              refuse("more changed paths than this job reads the modes of (%d)" % MODE_CAP)
+          base_sha = p["base"]["sha"]
+
+          def tree(sha, label):
+              t = gh(False, "api", "repos/%s/git/trees/%s?recursive=1" % (repo, sha))
+              entries = t.get("tree") if isinstance(t, dict) else None
+              if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries) or not isinstance(t.get("truncated"), bool):
+                  fail("the %s tree could not be read" % label)
+              if t["truncated"]:
+                  refuse("GitHub cut the %s tree short, so the modes of the changed paths cannot be read" % label)
+              return {e.get("path"): (e.get("type"), e.get("mode")) for e in entries}
+
+          at_head, at_base = tree(head, "head"), tree(base_sha, "base")
+
+          def plain(modes, path):
+              return modes.get(path) in (("blob", "100644"), ("blob", "100755"))
+
+          for f in files:
+              st = f.get("status")
+              if st not in ("added", "modified", "removed", "renamed"):
+                  refuse("a change that is not an add, an edit, a delete or a rename (a mode change, a copy)")
+              looks = []
+              if st != "removed":
+                  looks.append((at_head, f["filename"]))
+              if st in ("modified", "removed"):
+                  looks.append((at_base, f["filename"]))
+              if st == "renamed":
+                  if not isinstance(f.get("previous_filename"), str):
+                      fail("a rename has no readable source")
+                  looks.append((at_base, f["previous_filename"]))
+              for modes, path in looks:
+                  if not plain(modes, path):
+                      refuse("a changed path is a symlink, a submodule or not a plain file")
+
+          # 4. Main's CODEOWNERS, at the commit this workflow was loaded from
+          co = gh(False, "api", "repos/%s/contents/.github/CODEOWNERS?ref=%s" % (repo, main_sha))
+          if not isinstance(co, dict) or co.get("type") != "file" or co.get("encoding") != "base64" or not isinstance(co.get("content"), str):
+              fail("main's .github/CODEOWNERS could not be read")
+          try:
+              text = base64.b64decode(co["content"].replace("\n", ""), validate=True).decode("utf-8")
+          except Exception:
+              fail("main's .github/CODEOWNERS could not be decoded")
+          patterns = []
+          for line in text.splitlines():
+              s = line.strip()
+              if not s or s.startswith("#"):
+                  continue
+              pat = s.split()[0]
+              if not re.fullmatch(r"/[A-Za-z0-9._-][A-Za-z0-9._/-]*", pat) or "//" in pat or any(seg in (".", "..") for seg in pat.split("/")):
+                  fail("main's .github/CODEOWNERS has a line this job does not read (only anchored files and folders), so it decides nothing")
+              patterns.append(pat)
+          if not patterns:
+              fail("main's .github/CODEOWNERS names no path")
+
+          def owned(x, pat):
+              q = pat[1:].lower()
+              return x.startswith(q) if q.endswith("/") else (x == q or x.startswith(q + "/"))
+
+          hits = [pat for pat in patterns if any(owned(x, pat) for x in folded)]
+          seen["CODEOWNERS paths touched"] = "none" if not hits else "yes: `%s`" % hits[0]
+          if hits:
+              refuse("the pull request touches a CODEOWNERS path, which waits for a code owner")
+
+          # 5. The checks and the reviews, bound to this pull request into main as it is now. A check run is bound to a COMMIT, not to a pull request or
+          # a base: a head first opened against another branch, then retargeted to main, would carry checks never computed for main. So every check and
+          # approval this job trusts must be newer than the pull request's opening and its last base change.
+          last_base_change = None
+          for page in range(1, 11):
+              tl = gh(False, "api", "repos/%s/issues/%s/timeline?per_page=100&page=%d" % (repo, pr, page))
+              if not isinstance(tl, list) or not all(isinstance(t, dict) for t in tl):
+                  fail("the pull request's timeline could not be read")
+              for t in tl:
+                  if t.get("event") == "base_ref_changed":
+                      at = t.get("created_at")
+                      if not isinstance(at, str) or not re.fullmatch(TS, at):
+                          fail("a base change on the pull request's timeline has no readable time")
+                      last_base_change = at if last_base_change is None or at > last_base_change else last_base_change
+              if len(tl) < 100:
+                  break
+          else:
+              fail("the pull request's timeline is longer than the ten pages this job reads")
+          seen["last base change"] = "none" if last_base_change is None else last_base_change
+          opened = p["created_at"]
+
+          def after_base_change(at):
+              # GitHub's UTC timestamps are fixed width, so the strings order as the times do; the same second as the opening counts
+              return isinstance(at, str) and re.fullmatch(TS, at) is not None and at >= opened and (last_base_change is None or at > last_base_change)
+
+          others = gh(False, "api", "repos/%s/commits/%s/pulls?per_page=100" % (repo, head))
+          if not isinstance(others, list) or not all(isinstance(o, dict) for o in others) or len(others) >= 100:
+              fail("the pull requests of the head could not be read")
+          if any(o.get("number") != int(pr) and o.get("state") == "open" for o in others):
+              seen["head shared"] = "yes, with another open pull request"
+              refuse("the head is also the head of another open pull request, and a check on it cannot be told apart")
+          ref = p["head"].get("ref")
+          if not isinstance(ref, str) or not ref.strip():
+              fail("the pull request's head branch could not be read")
+          owner = repo.split("/")[0]
+          sibs = gh(False, "api", "repos/%s/pulls?state=all&head=%s&per_page=100" % (repo, urllib.parse.quote(owner + ":" + ref, safe="")))
+          if not isinstance(sibs, list) or not all(isinstance(o, dict) for o in sibs) or len(sibs) >= 100:
+              fail("the pull requests of the head branch could not be read")
+          if any(o.get("number") != int(pr) and isinstance(o.get("head"), dict) and o["head"].get("sha") == head for o in sibs):
+              seen["head shared"] = "yes, with another pull request from this branch (open or closed)"
+              refuse("the head is also the head of another pull request from this branch, open or closed, and a check on it cannot be told apart")
+          seen["head shared"] = "no"
+
+          def newest_run(g):
+              r = gh(False, "api", "repos/%s/commits/%s/check-runs?check_name=%s&app_id=%d&filter=all&per_page=100" % (repo, head, urllib.parse.quote(g[0], safe=""), g[1]))
+              runs = r.get("check_runs") if isinstance(r, dict) else None
+              total = r.get("total_count") if isinstance(r, dict) else None
+              if not isinstance(runs, list) or not isinstance(total, int) or not all(isinstance(c, dict) for c in runs):
+                  fail("the check runs of a required check could not be read")
+              if total >= 100 or len(runs) != total:
+                  fail("the check runs of a required check are more than one page")
+              mine = [c for c in runs if c.get("name") == g[0] and isinstance(c.get("app"), dict) and c["app"].get("id") == g[1] and not isinstance(c["app"].get("id"), bool)
+                      and c.get("head_sha") == head and isinstance(c.get("id"), int) and not isinstance(c.get("id"), bool)]
+              return max(mine, key=lambda c: c["id"]) if mine else None
+
+          for g in pinned:
+              label = "`%s`" % g[0] if re.fullmatch(r"[A-Za-z0-9._-]+", g[0]) else "a required check"
+              last = newest_run(g)
+              if last is None:
+                  seen[label] = "none on the head from its app"
+                  refuse("a required check has no run on the head from the app it is pinned to")
+              if last.get("status") != "completed":
+                  seen[label] = "still running"
+                  refuse("a required check on the head has not finished; its completion runs this job again")
+              if last.get("conclusion") != "success":
+                  seen[label] = "did not pass"
+                  refuse("a required check on the head did not pass")
+              if not after_base_change(last.get("started_at")):
+                  seen[label] = "from before the opening or the last base change"
+                  refuse("a required check on the head was computed before the pull request was opened or before its last base change")
+              if g == TESTS_CHECK:
+                  suite = last.get("check_suite")
+                  sid = suite.get("id") if isinstance(suite, dict) else None
+                  if not isinstance(sid, int) or isinstance(sid, bool):
+                      fail("the all-tests check run has no readable check suite")
+                  wr = gh(False, "api", "repos/%s/actions/runs?check_suite_id=%d&per_page=100" % (repo, sid))
+                  wruns = wr.get("workflow_runs") if isinstance(wr, dict) else None
+                  if not isinstance(wruns, list) or not all(isinstance(w, dict) for w in wruns):
+                      fail("the workflow run of the all-tests check could not be read")
+                  if len(wruns) != 1:
+                      seen[label] = "not from one workflow run"
+                      refuse("the all-tests check does not come from exactly one workflow run")
+                  w = wruns[0]
+                  prs = w.get("pull_requests")
+                  bound = (
+                      w.get("path") == TESTS_WORKFLOW and w.get("event") == "pull_request" and w.get("head_sha") == head and w.get("head_branch") == ref
+                      and after_base_change(w.get("created_at"))
+                      and isinstance(prs, list) and len(prs) == 1 and isinstance(prs[0], dict) and prs[0].get("number") == int(pr)
+                      and isinstance(prs[0].get("base"), dict) and prs[0]["base"].get("ref") == "main"
+                  )
+                  if not bound:
+                      seen[label] = "not from tests.yml for this pull request into main since its last base change"
+                      refuse("the all-tests check is not from a run of .github/workflows/tests.yml on this pull request into main, created after its last base change and its opening")
+              seen[label] = "passed"
+
+          # The reviews: each reviewer's latest review that decides something (an approval, a change request, a dismissal); comments decide nothing.
+          reviews = []
+          for page in range(1, 4):
+              batch = gh(False, "api", "repos/%s/pulls/%s/reviews?per_page=100&page=%d" % (repo, pr, page))
+              if not isinstance(batch, list) or not all(isinstance(v, dict) for v in batch):
+                  fail("the pull request's reviews could not be read")
+              reviews += batch
+              if len(batch) < 100:
+                  break
+          else:
+              fail("the pull request has more reviews than the three pages this job reads")
+          latest = {}
+          for v in reviews:
+              st, who, rid = v.get("state"), v.get("user"), v.get("id")
+              if st not in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+                  continue
+              login = who.get("login") if isinstance(who, dict) else None
+              if not isinstance(login, str) or not isinstance(rid, int) or isinstance(rid, bool):
+                  fail("a review has no readable author or id")
+              if login not in latest or rid > latest[login]["id"]:
+                  latest[login] = v
+          author = p["user"]["login"]
+          if any(v["state"] == "CHANGES_REQUESTED" for v in latest.values()):
+              seen["reviews"] = "changes requested"
+              refuse("a reviewer's latest review requests changes")
+          good = [login for login, v in latest.items()
+                  if v["state"] == "APPROVED" and v.get("commit_id") == head and after_base_change(v.get("submitted_at")) and login not in (author, ours)]
+          seen["approvals of this head"] = str(len(good))
+          if len(good) < approvals:
+              refuse("main asks for %d approving review(s) of this head and it has %d; a review of this head runs this job again" % (approvals, len(good)))
+
+          # 6. The pull request again: the reads above describe this head, it is still open, still unheld, and its auto-merge is as read
+          q = read_pr()
+          if q["head"]["sha"] != head:
+              finish("nothing done: the head moved while this job read it; the push that moved it runs this job again")
+          if is_held(q["title"]) or has_hold_label(q):
+              if q["auto_merge"] is not None:
+                  change("gh pr merge --disable-auto failed", "pr", "merge", pr, "--disable-auto")
+                  finish("auto-merge switched off: the pull request was held while this job read it")
+              finish("nothing done: the pull request was held while this job read it")
+          if q["state"] != "open" or q["draft"] or q["base"]["ref"] != "main":
+              finish("nothing done: the pull request changed while this job read it; its event runs this job again")
+          if q["auto_merge"] is not None:
+              finish("nothing done: auto-merge is already on")
+
+          # 6b. Who switched it off last. GitHub's own switch-offs carry a reason code, and this job switches auto-merge back on after them, at most
+          # RE_ARM_CAP times on one pull request. A switch-off with no reason code by anyone but this App is a person's press, and stays.
+          tq = ("query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){"
+                "timelineItems(last:100,itemTypes:[AUTO_MERGE_ENABLED_EVENT,AUTO_MERGE_DISABLED_EVENT]){totalCount nodes{__typename "
+                "...on AutoMergeEnabledEvent{createdAt actor{login}} ...on AutoMergeDisabledEvent{createdAt reasonCode actor{login}}}}}}}")
+          h = gh(False, "api", "graphql", "-f", "query=" + tq, "-F", "owner=" + repo.split("/")[0], "-F", "name=" + repo.split("/")[1], "-F", "number=" + pr)
+          try:
+              items = h["data"]["repository"]["pullRequest"]["timelineItems"]
+              nodes, total = items["nodes"], items["totalCount"]
+              assert isinstance(nodes, list) and isinstance(total, int) and all(isinstance(n, dict) for n in nodes)
+          except Exception:
+              fail("the pull request's auto-merge history could not be read")
+          if total > len(nodes):
+              fail("the pull request's auto-merge history is longer than this job reads")
+          disables = [n for n in nodes if n.get("__typename") == "AutoMergeDisabledEvent"]
+          by_github = [n for n in disables if isinstance(n.get("reasonCode"), str) and n["reasonCode"].strip() != ""]
+          seen["GitHub's own switch-offs"] = str(len(by_github))
+          if len(by_github) >= RE_ARM_CAP:
+              finish("nothing done: GitHub switched this pull request's auto-merge off %d times; a person switches it on" % len(by_github))
+          if nodes and nodes[-1].get("__typename") == "AutoMergeDisabledEvent":
+              last_off = nodes[-1]
+              who = last_off.get("actor") if isinstance(last_off.get("actor"), dict) else {}
+              if not (isinstance(last_off.get("reasonCode"), str) and last_off["reasonCode"].strip() != "") and who.get("login") not in (slug, ours):
+                  finish("nothing done: a person switched auto-merge off; it stays off until a person switches it on")
+
+          # 7. Switch it on, pinned to the head. GitHub merges when the ruleset is satisfied, or at once when the pull request is already clean.
+          cmd = ["pr", "merge", pr, "--auto"] + ([] if queue else ["--squash"]) + ["--match-head-commit", head]
+          change("gh pr merge failed", *cmd)
+          after = subprocess.run(["gh", "api", "repos/%s/pulls/%s" % (repo, pr)], capture_output=True, text=True, env=dict(os.environ, GH_TOKEN=os.environ["READ_TOKEN"]))
+          try:
+              state = json.loads(after.stdout).get("merged") if after.returncode == 0 else None
+          except (ValueError, AttributeError):
+              state = None
+          if state is True:
+              finish("already clean, merged now: every rule was already met, so GitHub merged it at this head")
+          finish("auto-merge is on: GitHub merges the pull request when the ruleset is satisfied")
+          PY
+
+      # Fail closed: when the script failed, crashed, was cancelled or timed out, auto-merge that this App switched on is switched off, and so is any
+      # auto-merge on a held pull request (a HOLD: title or the hold label, judged as the script judges them). It reads the pull request once and makes at
+      # most the one write that moves toward not merging; a person's auto-merge on an unheld pull request is left alone. The title is only compared in jq.
+      - name: Switch off auto-merge after a failure
+        if: (failure() || cancelled()) && steps.token.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          APP_SLUG: ${{ steps.token.outputs.app-slug }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[0-9]+$ ]] || { echo "::error::the pull request number is not a number"; exit 1; }
+          [[ "$APP_SLUG" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "::error::the merge App's slug could not be read"; exit 1; }
+          verdict=$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER" | jq -r --arg ours "${APP_SLUG}[bot]" '
+            if .auto_merge == null then "off"
+            elif ((.title | ascii_downcase | sub("^\\s+"; "") | startswith("hold:"))
+                  or any(.labels[]; (.name | ascii_downcase | gsub("^\\s+|\\s+$"; "")) == "hold")) then "held"
+            elif .auto_merge.enabled_by.login == $ours then "ours"
+            else "theirs" end')
+          case "$verdict" in
+            held|ours) gh pr merge "$PR_NUMBER" --disable-auto; echo "auto-merge switched off after the failure ($verdict)" ;;
+            off) echo "nothing to switch off: auto-merge is off" ;;
+            theirs) echo "nothing switched off: a person switched auto-merge on and the pull request is not held" ;;
+            *) echo "::error::the pull request could not be read"; exit 1 ;;
+          esac

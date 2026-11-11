@@ -27,6 +27,7 @@ rows=(
   "linear                    plugins/linear/"
   "megatech-support          plugins/megatech-support/"
   "megatech-support-browser  plugins/megatech-support/"
+  "merge-by-policy           .github/merge-by-policy/ .github/workflows/merge-by-policy.yml .github/workflows/merge-by-policy-wake.yml .github/workflows/merge-by-policy-tests.yml"
   "vim-tests                 plugins/vim/"
   "vim-latency               plugins/vim/"
 )
