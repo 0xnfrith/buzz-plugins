@@ -13,7 +13,7 @@
 # - The model is asked once per change; edits, reviews and re-runs reuse the verdict recorded for exactly that change (the README says
 #   how), and fail closed when there is none.
 # - Pull requests from forks get no secrets and fail closed unless the owner approves their latest commit.
-# - This file itself comes from the pull request under `pull_request`, so CODEOWNERS on .github/ guards it (see the README's limits).
+# - This file itself comes from the pull request under `pull_request`; since 2026-11-11 CODEOWNERS lists only itself, so nothing but review guards it (see the README's limits).
 name: AI sorter
 
 on:

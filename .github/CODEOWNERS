@@ -1,35 +1,10 @@
-# The paths whose changes wait for the owner's review, once the branch rules
-# ask for a code owner's review. Until then GitHub only requests it.
+# The paths whose changes wait for the owner's review: none, except this file.
+# The owner decided on 2026-11-11 that no other path waits for a person's
+# approval; a new gate is added as an automated check, not as a line here.
 #
-# Keep this list short: every pull request that touches a path here waits for
-# the owner.
-#
-# .github/ holds the workflows, their helper script and this file, so it also
-# protects itself.
-/.github/                                        @0xnfrith
-
-# Licence text: the repository's, and the bundled font's.
-/LICENSE                                         @0xnfrith
-/plugins/artifacts/licenses/ChakraPetch-OFL.txt  @0xnfrith
-
-# Where a plugin keeps a person's token or API key. Buzz runs the committed
-# plugin.js and never builds it. The Beeper and Linear CI jobs check that
-# plugin.js is the build of the source, but no branch rule requires that check
-# yet, so each plugin.js is listed with its source. The manifest declares the
-# key-store commands a plugin may run and the addresses it may reach.
-/plugins/beeper/src/beeper/config.ts             @0xnfrith
-/plugins/beeper/plugin.js                        @0xnfrith
-/plugins/beeper/manifest.json                    @0xnfrith
-/plugins/linear/src/linear/keys.ts               @0xnfrith
-/plugins/linear/plugin.js                        @0xnfrith
-/plugins/linear/manifest.json                    @0xnfrith
-
-# The support plugin's login proof: the value a person's key is asked to sign
-# (identity.ts), the one address the proof is sent to (origin.ts, and the
-# manifest's networkOrigins, which must match it), and the built plugin.js
-# Buzz runs. Its CI job does check that plugin.js is the build of the source,
-# but no branch rule requires that check yet, so the built file is listed too.
-/plugins/megatech-support/src/support/identity.ts  @0xnfrith
-/plugins/megatech-support/src/support/origin.ts    @0xnfrith
-/plugins/megatech-support/manifest.json            @0xnfrith
-/plugins/megatech-support/plugin.js                @0xnfrith
+# This file keeps one line, for itself. Once the branch rules ask for a code
+# owner's review, a pull request that changes this list still needs the
+# owner's approval, so no pull request nobody approves can add a gate or
+# remove this one. Delete the line and the file protects nothing, itself
+# included.
+/.github/CODEOWNERS   @0xnfrith
