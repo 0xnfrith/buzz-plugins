@@ -43,9 +43,10 @@ const say = async (page, text) => {
 const tokens = (page) => page.locator("[data-skill]");
 const token = (page, name) => page.locator(`[data-skill="${name}"]`);
 const card = (page) => page.locator(".megatech-skills__card");
-// Closing Settings is not done when the click returns: the dialog leaves with an animation, and the message list behind it moves a few frames
-// after the dialog is gone. A pointer sent to a skill in that time lands on a row that is about to move, and the hover is lost. Wait for the
-// dialog to be gone and for the timeline's geometry to stop moving, the way `open` does, before the next move of the pointer.
+// Closing Settings is not done when the click returns: the dialog leaves with an animation, and a pointer sent to a skill while it is still
+// there can lose the hover, or find the skill moved (the message list was seen to scroll just as the dialog went). Waiting for the dialog to
+// be gone is what fixes that. `settle` (the wait `open` uses: the timeline's geometry stops moving) is a guard that keeps the pointer off a
+// timeline that may still be moving.
 const leaveSettings = async (page) => {
   await closeSettings(page);
   await settle(page);
