@@ -228,7 +228,7 @@ def run_script(world, script=SCRIPT, **env):
         e = {"PATH": b + ":" + os.path.dirname(sys.executable) + ":/usr/bin:/bin", "HOME": d, "LC_ALL": "C", "FAKE_DIR": d,
              "GITHUB_STEP_SUMMARY": os.path.join(d, "summary"), "GH_TOKEN": "app-token", "READ_TOKEN": "read-token", "APP_SLUG": SLUG,
              "GH_REPO": "o/r", "MAIN_SHA": MAIN, "EVENT_NAME": "pull_request_target", "PR_NUMBER": "7", "HEAD_SHA": HEAD,
-             "PR_TITLE": "Add a thing", "BASE_CHANGED": "false"}
+             "PR_TITLE": "Add a thing", "BASE_CHANGED": "false", "REVIEWER_LOGINS": "reviewer-bot[bot], second"}
         e.update(env)
         p = subprocess.run(["bash", "-e", "-c", script], env=e, capture_output=True, text=True)
         calls = read(os.path.join(d, "calls")).rstrip("\n").split("\n") if os.path.exists(os.path.join(d, "calls")) else []
@@ -406,7 +406,32 @@ class Reviews(Base):
         self.assertTrue(run_script(w).enabled)
 
 
+class Reviewers(Base):
+    def test_an_approval_by_a_login_on_the_list_arms(self):
+        self.assertTrue(run_script(ok_world(), REVIEWER_LOGINS="reviewer-bot[bot]").enabled)
+
+    def test_an_approval_by_a_login_not_on_the_list_does_not(self):
+        w = ok_world(); w[REVIEWS_Q] = {"out": [review("drive-by-user")]}
+        self.refused(run_script(w), "approving review")
+
+    def test_github_actions_never_counts_even_when_listed(self):
+        w = ok_world(); w[REVIEWS_Q] = {"out": [review("github-actions[bot]")]}
+        self.refused(run_script(w, REVIEWER_LOGINS="github-actions[bot],reviewer-bot[bot]"), "approving review")
+        self.refused(run_script(w, REVIEWER_LOGINS="github-actions[bot]"), "unset or empty")
+
+    def test_an_empty_or_unset_list_refuses_everything(self):
+        for v in ("", " , ", ","):
+            self.refused(run_script(ok_world(), REVIEWER_LOGINS=v), "unset or empty")
+
+    def test_an_entry_that_is_not_a_login_fails_closed(self):
+        self.failed_closed(run_script(ok_world(), REVIEWER_LOGINS="reviewer-bot[bot], bad login"))
+
+
 class Refusals(Base):
+    def test_a_root_or_docs_codeowners_file(self):
+        for path in ("CODEOWNERS", "docs/CODEOWNERS", "Docs/codeowners"):
+            self.refused(run_script(changing("plugins/x/a.ts", path)), "CODEOWNERS file")
+
     def test_codeowners_itself(self):
         self.refused(run_script(changing("plugins/x/a.ts", ".github/CODEOWNERS")), "CODEOWNERS path")
 
@@ -480,6 +505,12 @@ class Refusals(Base):
         w = ok_world(); w[PR_Q] = [{"out": pr()}, {"out": pr(title="HOLD: wait")}]
         r = run_script(w)
         self.assertEqual(r.writes, [])
+
+    def test_a_hold_label_that_appears_just_before_the_switch_on(self):
+        w = ok_world(); w[PR_Q] = [{"out": pr()}, {"out": pr(labels=[{"name": "hold"}])}]
+        r = run_script(w)
+        self.assertEqual(r.writes, [])
+        self.assertIn("held while this job read it", r.summary)
 
     def test_an_api_error_fails_closed(self):
         w = ok_world(); w[RULES_Q] = {"exit": 1}

@@ -17,15 +17,20 @@ name: merge-by-policy
 #   - the list of changed files is whole (it matches the pull request's changed_files and is under GitHub's 3,000 cap); every path, rename sources
 #     included, is plain printable ASCII and a regular file at the head and at the base (no symlink, no submodule, no mode-only change);
 #   - NO changed path matches a line of main's .github/CODEOWNERS (compared case-folded). Those wait for a code owner; the job does not lean on the
-#     code-owner rule alone. CODEOWNERS lines this script cannot read exactly (anything but an anchored path or folder) fail the job;
+#     code-owner rule alone. CODEOWNERS lines this script cannot read exactly (anything but an anchored path or folder) fail the job. A change to any
+#     file GitHub would read as CODEOWNERS (`CODEOWNERS`, `docs/CODEOWNERS`, `.github/CODEOWNERS`, any case) is refused whatever the file lists;
 #   - every check main requires has its newest run on the head, from the app it is pinned to, completed with success, computed after the pull request
 #     was opened and after its last base change; `all-tests` must also come from a run of .github/workflows/tests.yml on a pull_request event for
 #     THIS pull request into main. A check still running is "not yet": its completion runs this job again. A required check not pinned to an app
 #     fails closed;
 #   - as many approving reviews as main requires are on THIS head (a review's commit_id), each the reviewer's latest, after the last base change, from
-#     someone other than the pull request's author and the merge App; and no reviewer's latest review requests changes. An approval of an older head
-#     does not count, so a push after the review waits for a new review;
-#   - the head is the head of no other pull request (open, or closed from the same branch): a check run belongs to a commit, not to a base;
+#     a login on the repository variable MERGE_REVIEWER_LOGINS (comma-separated; unset or empty, nothing qualifies), never the pull request's author,
+#     the merge App or github-actions[bot] even when listed; and no reviewer's latest review requests changes. An approval of an older head does not
+#     count, so a push after the review waits for a new review;
+#   - the head is the head of no other pull request (open, or closed from the same branch): a check run belongs to a commit, not to a base.
+#     A closed pull request on ANOTHER branch name at the same commit is not listed by either read; `all-tests` is still bound to this pull
+#     request through its workflow run, but a second required check, if one is ever added, has no such binding and could be borrowed from it.
+#     Bind any new required check to this pull request before adding it to main's ruleset;
 #   - the head read after all of the above is the head read before it (the reads describe one head, and --match-head-commit pins it).
 # A pull request that does not qualify gets no auto-merge, and auto-merge that THIS App switched on is switched off. Auto-merge a person switched on
 # is a person's press and is left alone, except on a hold.
@@ -48,11 +53,18 @@ name: merge-by-policy
 # SETTINGS THIS FILE READS, BY NAME (none of their values are in this repository):
 #   - the repository variable MERGE_APP_CLIENT_ID: the merge App's client ID. It is the on-switch: unset, every run is skipped and no token is minted,
 #     so merging this file changes nothing;
+#   - the repository variable MERGE_REVIEWER_LOGINS: the logins whose approvals count (for example a reviewer App's `<slug>[bot]`), comma-separated;
 #   - the secret MERGE_APP_PRIVATE_KEY of the environment `merge-by-policy`, whose deployment branches are main only, so no branch's copy of a
 #     workflow can mint this token.
 #
-# FAIL CLOSED. A read that fails, an answer it cannot read, a crash, a cancel or a timeout ends the job red, and the last step then switches off
-# auto-merge this App had switched on for the pull request, and any auto-merge on a held one.
+# FAIL CLOSED. A read that fails, an answer it cannot read, a crash or a cancel ends the job red, and the last step then switches off auto-merge this
+# App had switched on for the pull request, and any auto-merge on a held one. Whether that step (`cancelled()`) also runs after the job's own
+# timeout is unproven: GitHub's documentation does not say, and only a real run can show it. The only switch-on is the script's last call, so a
+# timeout before it leaves nothing switched on by this run.
+#
+# A RETARGET AWAY FROM MAIN. pull_request_target runs the NEW base branch's copy of this file, with that branch as the ref, so the environment's
+# main-only rule refuses the job before any step: the switch-off on a base change works only for a retarget onto main. Away from main, auto-merge
+# that was on is left to GitHub's own handling of a base change; no merge into main can follow, and the key stays out of reach.
 #
 # Tests: .github/merge-by-policy/test_merge_by_policy.py holds this file's shape and runs the script against a stand-in gh. A pull request that
 # changes this file is judged by main's copy, not its own. Never write a ${{ }} expression inside `run:`: values reach the shell only through env.
@@ -116,6 +128,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_TITLE: ${{ github.event.pull_request.title }}
+          REVIEWER_LOGINS: ${{ vars.MERGE_REVIEWER_LOGINS }}
           BASE_CHANGED: ${{ github.event_name == 'pull_request_target' && github.event.action == 'edited' && github.event.changes.base != null }}
         run: |
           python3 -I - <<'PY'
@@ -171,6 +184,16 @@ jobs:
           if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug):
               fail("the merge App's slug could not be read")
           ours = slug + "[bot]"
+          # The logins whose approvals count. github-actions[bot] never counts: a workflow's own token could approve its pull request.
+          reviewers = set()
+          for x in os.environ.get("REVIEWER_LOGINS", "").split(","):
+              x = x.strip()
+              if not x:
+                  continue
+              if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?", x):
+                  fail("MERGE_REVIEWER_LOGINS has an entry that is not a GitHub login")
+              reviewers.add(x)
+          reviewers.discard("github-actions[bot]")
 
           def gh(app, *args):
               # app=False reads with the job's read-only token, app=True with the merge App's. gh's error text is shown with a prefix, so no line of it can
@@ -433,6 +456,9 @@ jobs:
           seen["CODEOWNERS paths touched"] = "none" if not hits else "yes: `%s`" % hits[0]
           if hits:
               refuse("the pull request touches a CODEOWNERS path, which waits for a code owner")
+          if any(x in ("codeowners", "docs/codeowners", ".github/codeowners") for x in folded):
+              seen["CODEOWNERS file changed"] = "yes"
+              refuse("the pull request adds or changes a CODEOWNERS file, which waits for a code owner")
 
           # 5. The checks and the reviews, bound to this pull request into main as it is now. A check run is bound to a COMMIT, not to a pull request or
           # a base: a head first opened against another branch, then retargeted to main, would carry checks never computed for main. So every check and
@@ -551,11 +577,14 @@ jobs:
               if login not in latest or rid > latest[login]["id"]:
                   latest[login] = v
           author = p["user"]["login"]
+          seen["reviewer logins set"] = str(len(reviewers))
+          if not reviewers:
+              refuse("MERGE_REVIEWER_LOGINS is unset or empty, so no approval counts")
           if any(v["state"] == "CHANGES_REQUESTED" for v in latest.values()):
               seen["reviews"] = "changes requested"
               refuse("a reviewer's latest review requests changes")
           good = [login for login, v in latest.items()
-                  if v["state"] == "APPROVED" and v.get("commit_id") == head and after_base_change(v.get("submitted_at")) and login not in (author, ours)]
+                  if v["state"] == "APPROVED" and v.get("commit_id") == head and after_base_change(v.get("submitted_at")) and login in reviewers and login not in (author, ours, "github-actions[bot]")]
           seen["approvals of this head"] = str(len(good))
           if len(good) < approvals:
               refuse("main asks for %d approving review(s) of this head and it has %d; a review of this head runs this job again" % (approvals, len(good)))
