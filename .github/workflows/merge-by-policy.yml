@@ -605,17 +605,19 @@ jobs:
 
           # 6b. Who switched it off last. GitHub's own switch-offs carry a reason code, and this job switches auto-merge back on after them, at most
           # RE_ARM_CAP times on one pull request. A switch-off with no reason code by anyone but this App is a person's press, and stays.
+          # Whether the newest 100 events are the whole history is read from pageInfo.hasPreviousPage, not from totalCount: measured, under an
+          # itemTypes filter totalCount counts all of the pull request's timeline items, while nodes holds only the filtered ones.
           tq = ("query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){"
-                "timelineItems(last:100,itemTypes:[AUTO_MERGE_ENABLED_EVENT,AUTO_MERGE_DISABLED_EVENT]){totalCount nodes{__typename "
+                "timelineItems(last:100,itemTypes:[AUTO_MERGE_ENABLED_EVENT,AUTO_MERGE_DISABLED_EVENT]){pageInfo{hasPreviousPage} nodes{__typename "
                 "...on AutoMergeEnabledEvent{createdAt actor{login}} ...on AutoMergeDisabledEvent{createdAt reasonCode actor{login}}}}}}}")
           h = gh(False, "api", "graphql", "-f", "query=" + tq, "-F", "owner=" + repo.split("/")[0], "-F", "name=" + repo.split("/")[1], "-F", "number=" + pr)
           try:
               items = h["data"]["repository"]["pullRequest"]["timelineItems"]
-              nodes, total = items["nodes"], items["totalCount"]
-              assert isinstance(nodes, list) and isinstance(total, int) and all(isinstance(n, dict) for n in nodes)
+              nodes, cut = items["nodes"], items["pageInfo"]["hasPreviousPage"]
+              assert isinstance(nodes, list) and isinstance(cut, bool) and all(isinstance(n, dict) for n in nodes)
           except Exception:
               fail("the pull request's auto-merge history could not be read")
-          if total > len(nodes):
+          if cut is not False:
               fail("the pull request's auto-merge history is longer than this job reads")
           disables = [n for n in nodes if n.get("__typename") == "AutoMergeDisabledEvent"]
           by_github = [n for n in disables if isinstance(n.get("reasonCode"), str) and n["reasonCode"].strip() != ""]
