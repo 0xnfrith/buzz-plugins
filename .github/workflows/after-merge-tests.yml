@@ -1,6 +1,8 @@
-# The tests of the check after a merge to main (after-merge.yml). The `test` job: the scripts that pick the plugins to check and that
-# decide whether a good/<plugin> tag moves, in made-up git repositories, and the shape of after-merge.yml itself (its trigger, who may
-# write, its concurrency) (.github/after-merge/after-merge.test.mjs). The `load-check` job: the load check on every installable plugin in
+# The tests of the check after a merge to main (after-merge.yml) and of the way back to a known-good tag. The `test` job: the scripts that
+# pick the plugins to check and that decide whether a good/<plugin> tag moves, in made-up git repositories, and the shape of after-merge.yml
+# itself (its trigger, who may write, its concurrency) (.github/after-merge/after-merge.test.mjs); and the script that restores a plugin
+# to its tag by a pull request (restore-plugin.mjs), in made-up repositories with a bare remote and a stand-in for gh, so that no pull
+# request is ever opened (.github/after-merge/restore-plugin.test.mjs). The `load-check` job: the load check on every installable plugin in
 # this checkout, in headless Chromium against block/buzz-app's own production web build, the way .github/after-merge/load-check/run.sh
 # runs it by hand, and then the canary (canary.mjs): the same check on a made-up plugin that is fine and on broken ones, which
 # must fail. A check that cannot fail would let any plugin be tagged.
@@ -39,6 +41,14 @@ jobs:
           grep -Eq '^# fail 0$' "$RUNNER_TEMP/tap.txt"
           grep -Eq '^# skipped 0$' "$RUNNER_TEMP/tap.txt"
           grep -Eq '^# cancelled 0$' "$RUNNER_TEMP/tap.txt"
+      - name: The way back (restore-plugin.mjs)
+        # The same four checks on the result. The stand-in for gh is a file the tests write; nothing here calls GitHub, and the job has no token.
+        run: |
+          node --test --test-reporter=tap .github/after-merge/restore-plugin.test.mjs | tee "$RUNNER_TEMP/tap-restore.txt"
+          grep -Eq '^# pass [1-9]' "$RUNNER_TEMP/tap-restore.txt"
+          grep -Eq '^# fail 0$' "$RUNNER_TEMP/tap-restore.txt"
+          grep -Eq '^# skipped 0$' "$RUNNER_TEMP/tap-restore.txt"
+          grep -Eq '^# cancelled 0$' "$RUNNER_TEMP/tap-restore.txt"
 
   load-check:
     name: Load check of every plugin, and its canary
