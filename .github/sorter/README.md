@@ -8,11 +8,13 @@ decided it, and the changed lines that did.
 - **No:** the check passes.
 - **Yes:** the check fails until the owner approves the pull request's latest commit. A new push needs a new approval. It says which
   list items it hit and where, with a warning on each of those lines in the pull request's Files tab (see "What a wait shows").
+  The check is not a required check, so a red `AI sorter` is a report and does not block a merge.
 - **Anything else** fails too (it **fails closed**): a missing key, an API error, a spent cap, a refusal, or an answer that is not
   exactly that JSON.
 
-Since 2026-11-11 CODEOWNERS names only itself, so the sorter is the only check that asks whether a change is sensitive: it catches
-a sensitive change in any file, such as a plugin that starts sending a token somewhere new. The workflow is
+Since the owner's ruling of 2026-11-11 CODEOWNERS names only itself, and the list names only that file, `.github/CODEOWNERS`: every
+other change, a plugin that starts sending a token somewhere new included, merges on the required checks without the owner. The ruleset
+requires `all-tests` and asks for the code owner's review where CODEOWNERS applies; it does not require this check. The workflow is
 [`.github/workflows/ai-sorter.yml`](../workflows/ai-sorter.yml), and the check is named **`AI sorter`**.
 
 ## How it runs
@@ -37,9 +39,8 @@ branch. The pull request that adds the sorter has none on its base, so its own c
 
 1. **The owner approved this exact commit** (the owner's latest review that is not a comment approves the pull request's head): pass.
    Nothing is left to wait for, so the model is not asked, and this clears every failure below.
-2. **The change touches a path in [`always.txt`](always.txt)**: `.github/`, `LICENSE`, any `.gitattributes` or `.gitmodules`, and
-   lockfiles (`*.lock`, `*.lockb`, `pnpm-lock.yaml`, `package-lock.json`, `npm-shrinkwrap.json`). Waits for the owner. The model is not
-   asked.
+2. **The change touches a path in [`always.txt`](always.txt)**: `.github/CODEOWNERS`, the one path on it. Waits for the owner. The
+   model is not asked.
 3. **The diff is over 100,000 bytes**: counts as touching the list, so it waits for the owner. The model is not asked.
 4. **The diff does not show the whole change**: git counts a changed file as binary (by its content or by `.gitattributes`), the diff
    holds binary bytes or a "Binary files ... differ" line, the change includes a submodule or a symbolic link, or a changed path has
@@ -68,9 +69,9 @@ The reason (or the error) is shown in the check's summary, on one line inside a 
 A wait leads with what decided it, so nobody reads a wall of text:
 
 - **The list items.** `list.md` numbers its items, and the model names the numbers that decided it. The reason starts with them, built
-  by the sorter from `list.md`'s own titles, never from the model's words: "Item 4 (legal and licensing text), item 5 (deleting user
-  data): " followed by the model's one sentence naming the file and what changed. A number that is not an item of the list is dropped,
-  and a label the model wrote itself is taken off its sentence.
+  by the sorter from `list.md`'s own titles, never from the model's words: "Item 1 (who owns what): " followed by the model's one
+  sentence naming the file and what changed (with two items it reads "Item 1 (who owns what), item 2 (...): "). A number that is not an
+  item of the list is dropped, and a label the model wrote itself is taken off its sentence.
 - **The changed lines.** The model names at most 5 lines, each a file and a line number on the new side of the diff. Each one is
   checked against the diff: the file must be one of the changed paths, and the line inside one of that file's hunks on the new side.
   Anything else is dropped, never trusted.
@@ -100,8 +101,9 @@ unreadable-diff rules are checked again on every run; only the model's answer is
 A record counts only from this workflow's own run. Through the Checks and Actions APIs the lookup requires a check run named
 `AI sorter`, by the GitHub Actions app, on this head, whose workflow run is `.github/workflows/ai-sorter.yml`, started by a
 `pull_request` event, for a pull request into this base branch. GitHub does not say which version of the workflow file ran:
-a pull request that edits it touches `.github/`, which waits for the owner before any record is read. A record forged from another
-branch's copy of the workflow needs someone who can push a branch here, and they can forge the check itself anyway (see the limits).
+a pull request that edits it can record a verdict of its own, and since 2026-11-11 nothing waits for that: the check is a report (see
+the limits). A record forged from another branch's copy of the workflow needs someone who can push a branch here, and they can forge
+the check itself anyway.
 
 **A wait on an earlier commit carries over.** An empty commit, or an amend that changes nothing, gives the same change a new head, and
 the records above are bound to the head. So before asking the model, a run reads this workflow's `pull_request` runs on the pull
@@ -127,16 +129,17 @@ The owner does these; the code does not need anything else.
 1. **An Anthropic API key** for this repository, in a workspace with a monthly spending cap. When the cap is spent, the API refuses
    the request, so the check fails closed and pull requests wait.
 2. **The repository secret `SORTER_ANTHROPIC_API_KEY`** holding that key (Settings, Secrets and variables, Actions).
-3. **Require it:** add `AI sorter` as a required status check in the branch ruleset for `main`, with its source pinned to
-   **GitHub Actions**. Without the pin, a commit status of the same name set by any other app or token would satisfy the rule.
+3. **Do not require it.** Since the owner's ruling of 2026-11-11 `AI sorter` is not a required status check: the ruleset requires
+   `all-tests`, and the sorter reports. If it is ever required again, pin its source to **GitHub Actions**; without the pin, a commit
+   status of the same name set by any other app or token would satisfy the rule.
 4. **Require code-owner review** (the ruleset's code-owner rule). Since 2026-11-11 the repository's CODEOWNERS file lists only
-   itself, so the rule no longer guards this workflow or this folder; see the limits.
+   itself, so the rule guards that one file and no longer this workflow or this folder; see the limits.
 5. **Before requiring it, test on a throwaway repository which run GitHub follows.** A push and then a review each give the same commit
    a check run named `AI sorter`. Check that the pull request follows the newer one (red after the push, green after the owner's
    approval), and that a re-run replaces a failed run. GitHub's documentation does not say this; it is an assumption until tested.
 
 The owner's login is written in the workflow (`SORTER_APPROVERS`), not read from a repository variable. Until step 2, the check fails
-closed on every pull request; until step 3, that blocks nothing.
+closed on every pull request; since step 3 is not done, that blocks nothing.
 
 ## Limits: read these before relying on it
 
@@ -157,8 +160,9 @@ closed on every pull request; until step 3, that blocks nothing.
 - **How git shows the change.** [`change.sh`](change.sh) diffs every file as text (`--text`), whatever `.gitattributes` says, with no
   external diff programs, no text conversion and no rename detection, and it refuses unless the checkout is a merge commit whose second
   parent is the pull request's head. A pull request therefore cannot hide a file's content from the model by marking it binary, and a
-  change to any `.gitattributes` or `.gitmodules`, a submodule, a symbolic link, binary content and paths without content lines wait
-  for the owner (step 4). Pull requests that add images wait for the owner too.
+  submodule, a symbolic link, binary content and paths without content lines report a wait, because the diff does not show the whole
+  change. Pull requests that add images report a wait too. These are rules in `sorter.ts`, not items of the list, and they stay
+  advisory like the rest of the check.
 - **Built files are read, not skipped.** A plugin's committed `plugin.js` is what Buzz runs, so it stays in the diff the model reads;
   leaving it out would let a change to it alone go unread. Large rebuilds go over the cap and wait for the owner.
 - **Pull requests from forks get no secrets**, so the model is never asked and the check fails closed. The owner's approval of the
@@ -206,7 +210,10 @@ bun install --frozen-lockfile --ignore-scripts
 bun test
 ```
 
-They run the script the way the workflow does and check its exit code and summary:
+They run the script the way the workflow does and check its exit code and summary. All but the last group run under a fixture list
+(the repository's old six areas) and a fixture `always.txt` (every form an entry takes), handed in through the test-only overrides
+below, so a change to the real policy text does not change them. The last group pins the real `list.md` and `always.txt`: only
+`.github/CODEOWNERS` waits without the model, and the prompt carries the list and its "not on the list" paragraph.
 
 - **Answers:** a yes and a no; malformed JSON and every other answer that is not exactly the schema (wrong types in the items or
   lines included); a refusal.
@@ -223,10 +230,10 @@ They run the script the way the workflow does and check its exit code and summar
   base branch, another app, check or commit, or in another format. Check runs of the same name from other workflows cannot push the
   real one out of the 20 that are read. An earlier commit's wait carries over and an earlier pass does not; neither counts from another
   diff, base branch, policy, workflow, event, branch or a fork's run; a re-run on the earlier commit does not hide its record; at most
-  20 earlier commits are read. A pull request that edits the workflow waits
-  before any record is read. With real git, a base that moves elsewhere leaves the diff byte-identical, and one that moves the
-  changed file does not.
-- **What never reaches the model:** an oversize diff and the `always.txt` paths. With real git repositories run through `change.sh`, so
+  20 earlier commits are read. Under the fixture `always.txt`, a pull request that edits the workflow waits before any record is read
+  (the real `always.txt` no longer names `.github/`). With real git, a base that moves elsewhere leaves the diff byte-identical, and
+  one that moves the changed file does not.
+- **What never reaches the model:** an oversize diff and the `always.txt` paths (under the fixture, the nine forms an entry takes). With real git repositories run through `change.sh`, so
   do a file marked binary by `.gitattributes` (which still shows its content), an added `.gitattributes`, `.gitmodules` or submodule, a
   symbolic link (added, or a file turned into one), a mode change, an empty file and binary bytes; a plain deletion still reaches the
   model. `change.sh` refuses a checkout whose second parent is not the head, and a `"\r"` inside a line does not split it.

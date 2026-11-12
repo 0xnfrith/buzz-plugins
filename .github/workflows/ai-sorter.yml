@@ -1,9 +1,10 @@
 # The AI sorter (.github/sorter/README.md). Claude Haiku reads each pull request's change and answers one question: does it touch the
-# owner's sensitive list (.github/sorter/list.md)? "No" passes. "Yes" fails until the owner approves the pull request's latest commit.
-# It fails closed: a missing key, an API error, a spent cap or an answer that is not the exact JSON fails the check too.
+# owner's sensitive list (.github/sorter/list.md, which names only .github/CODEOWNERS)? "No" passes. "Yes" fails until the owner approves
+# the pull request's latest commit. It fails closed: a missing key, an API error, a spent cap or an answer that is not the exact JSON
+# fails the check too. It is not a required check: the ruleset requires `all-tests`, so the sorter reports and blocks no merge.
 #
-# Built to be a required check, so: no `paths` filter and no job-level `if` (a required check must report on every pull request, and a
-# job skipped by a condition reports success). All branching is in the script.
+# Built so it could be a required check, and kept that way: no `paths` filter and no job-level `if` (a required check must report on every
+# pull request, and a job skipped by a condition reports success). All branching is in the script.
 #
 # Security:
 # - `pull_request`, never `pull_request_target`. The key is only in the last step.
