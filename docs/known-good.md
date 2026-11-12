@@ -53,12 +53,14 @@ Run it from a clone of the repository, with the working tree clean. With no flag
 .github/after-merge/restore-plugin.mjs vim
 ```
 
-It prints the plugin, the commit `good/vim` points at, the commit `origin/main` is at, the diff stat it would apply, and the branch and the pull request title it would use, and then says it is a dry run. Its only write is a fetch of `origin`'s `main` and of that one tag into the clone (the remote's tag replaces a local tag of the same name). It makes no branch and no commit, changes no file, and pushes nothing.
+It prints the plugin, the commit `good/vim` points at, the commit `origin`'s `main` is at, the diff stat it would apply, and the branch and the pull request title it would use, and then says it is a dry run.
+
+It writes no ref and no file. It asks `origin` which commits `main` and the tag point at, and if this clone does not have them yet, fetches those two commits by their ids. That stores no branch or tag: it does not update `origin/main`, it does not create or move any tag (a local `good/vim` that points somewhere else is left alone, and the output says so and uses `origin`'s tag), and it writes no `FETCH_HEAD`. In a clone that is up to date there is nothing to fetch and the dry run changes nothing in it. It makes no branch and no commit, changes no file, does not rewrite the index, and pushes nothing.
 
 It refuses, with a message and a non-zero exit, when
 
 - the name is not a plugin folder name (lowercase letters, digits and hyphens), or the command line is not understood;
-- the working tree is not clean, there is no `origin`, or this is not a git repository;
+- the working tree is not clean, there is no `origin`, this is a shallow clone (run `git fetch --unshallow` first, since a shallow clone cannot show whether the tag is in the history of `main`), or this is not a git repository;
 - `origin` has no `good/<plugin>` tag;
 - the tag's commit is not in the history of `origin/main` (history was rewritten: a person has to look at the tag);
 - `plugins/<plugin>/` on `origin/main` already matches the tag, so there is nothing to restore;
@@ -70,7 +72,7 @@ It refuses, with a message and a non-zero exit, when
 .github/after-merge/restore-plugin.mjs vim --open
 ```
 
-Only this flag acts, and it needs `gh` installed and logged in. It builds one commit on top of `origin/main` whose tree is `origin/main`'s with `plugins/<plugin>/` replaced by the tag's, in a temporary index: the working tree, the current branch and every other branch of the clone are left alone. Files added to the folder since the tag are removed, and files deleted since are back. It checks that the folder in that commit is the tag's folder (the same Git tree, so the same bytes and file modes), that nothing outside the folder changed and that the parent is `origin/main`. Only then does it push the commit as a new branch named `restore-<plugin>-to-<tag commit>-on-<main commit>` (never forced, never `main`, no tag), and open a pull request against `main` with `gh pr create`. If `gh` fails after the push, the branch stays pushed and the message says so, so the pull request can be opened by hand.
+Only this flag acts, and it needs `gh` installed and logged in. It builds one commit on top of `origin/main` whose tree is `origin/main`'s with `plugins/<plugin>/` replaced by the tag's, in a temporary index: the working tree, the current branch and every other branch of the clone are left alone. Files added to the folder since the tag are removed, and files deleted since are back. It checks that the folder in that commit is the tag's folder (the same Git tree, so the same bytes and file modes), that nothing outside the folder changed and that the parent is `origin/main`. Only then does it push the commit as a new branch named `restore-<plugin>-to-<tag commit>-on-<main commit>` (never forced, never `main`, and no tag, not even a local annotated tag that `push.followTags` would send along), and open a pull request against `main` with `gh pr create`. If `gh` fails after the push, the branch stays pushed and the message says so, so the pull request can be opened by hand.
 
 The pull request has a neutral title, `Restore plugins/<plugin> to its known-good version (good/<plugin> at <short commit>)`. Its body names the plugin, the tag, the tag's commit and `main`'s commit, shows the diff stat, and says that the restore came from the known-good tag and that `plugin.js` is restored as built at that commit, together with its source, so the check that the committed `plugin.js` is the build of that source sees the pair that passed it then. It also says that a run in the desktop app is not built yet.
 

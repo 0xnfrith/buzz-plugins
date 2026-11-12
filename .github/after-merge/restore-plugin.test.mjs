@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,7 +37,10 @@ const world = () => {
   writeFileSync(join(bin, "gh"), FAKE_GH);
   chmodSync(join(bin, "gh"), 0o755);
   // No global or system git configuration: the machine running the tests cannot change what they do.
-  const env = { PATH: `${bin}:${process.env.PATH}`, HOME: root, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GH_LOG: join(root, "gh.log") };
+  // TMPDIR is a folder of its own, so that a test can see whether the script leaves anything in it.
+  const tmp = join(root, "tmp");
+  mkdirSync(tmp);
+  const env = { PATH: `${bin}:${process.env.PATH}`, HOME: root, TMPDIR: tmp, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GH_LOG: join(root, "gh.log") };
   const exec = (cwd, ...args) => {
     const result = spawnSync("git", args, { cwd, encoding: "utf8", env });
     assert.equal(result.status, 0, `git ${args.join(" ")}: ${result.stderr}`);
@@ -75,7 +78,7 @@ const world = () => {
   };
   const putTag = (name, sha) => inRemote("tag", "-f", `good/${name}`, sha);
   const gh = () => (existsSync(env.GH_LOG) ? readFileSync(env.GH_LOG, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) : []);
-  return { root, remote, dir, env, bin, exec, git, inRemote, commit, commitIn, other, putTag, gh, done: () => rmSync(root, { recursive: true, force: true }) };
+  return { root, remote, dir, env, bin, tmp, exec, git, inRemote, commit, commitIn, other, putTag, gh, done: () => rmSync(root, { recursive: true, force: true }) };
 };
 const withWorld = (body) => async () => {
   const w = world();
@@ -136,11 +139,12 @@ const history = (w) => {
 const branchFor = (first, second, name = "alpha") => `restore-${name}-to-${first.slice(0, 7)}-on-${second.slice(0, 7)}`;
 const titleFor = (first, name = "alpha") => `Restore plugins/${name} to its known-good version (good/${name} at ${first.slice(0, 7)})`;
 
-/** Everything the script could change, as text, to compare before and after. */
+/** Everything the script could change, to compare before and after: every ref, the index, FETCH_HEAD, the objects. */
 const snapshot = (w) => ({
   local: w.git("for-each-ref"),
   remote: w.inRemote("for-each-ref"),
-  status: w.git("status", "--porcelain"),
+  status: w.git("--no-optional-locks", "status", "--porcelain"),
+  index: readFileSync(join(w.dir, ".git", "index")).toString("hex"),
   head: w.git("rev-parse", "HEAD"),
   objects: w.git("count-objects", "-v"),
   fetchHead: existsSync(join(w.dir, ".git", "FETCH_HEAD")) ? readFileSync(join(w.dir, ".git", "FETCH_HEAD"), "utf8") : null,
@@ -299,6 +303,60 @@ test("nothing in the title, the body or the commit names a path of the machine i
   }
 }));
 
+test("--open pushes no tag, even when git is set to send the tags in the history of what it pushes", withWorld((w) => {
+  const { first, second } = history(w);
+  w.git("config", "push.followTags", "true");
+  w.git("tag", "-a", "-m", "only here", "local-only-one", first);
+  w.git("tag", "-a", "-m", "only here too", "local-only-two", second);
+  const before = w.inRemote("tag", "--list");
+  const result = restore(w, ["alpha", "--open"]);
+  assert.equal(result.status, 0, result.log);
+  assert.equal(w.inRemote("tag", "--list"), before, "no tag arrived on the remote");
+  assert.equal(w.inRemote("rev-parse", "--verify", branchFor(first, second)).length, 40, "and the branch did");
+}));
+
+test("--open leaves nothing in the temporary folder", withWorld((w) => {
+  history(w);
+  assert.equal(restore(w, ["alpha", "--open"]).status, 0);
+  assert.deepEqual(readdirSync(w.tmp), []);
+}));
+
+test("a long diff stat is cut at 60 files, and the summary still says how many changed", withWorld((w) => {
+  const many = (text) => Object.fromEntries(Array.from({ length: 70 }, (_, i) => [`plugins/big/f${String(i).padStart(2, "0")}.txt`, `${text} ${i}\n`]));
+  const first = w.commit({ ...files({ big: plugin("big") }), ...many("v1") });
+  w.putTag("big", first);
+  w.commit(many("v2"));
+  w.git("fetch", "-q", "--tags", "origin");
+  const result = restore(w, ["big"]);
+  assert.equal(result.status, 0, result.log);
+  assert.equal(result.out.split("\n").filter((line) => line.includes(" | ")).length, 60);
+  assert.match(result.out, /70 files changed/);
+}));
+
+test("when the check before the push finds the commit wrong, the script stops: nothing is pushed, and gh is not asked for a pull request", withWorld((w) => {
+  const { first, second } = history(w);
+  // A git that builds the wrong commit: it hands commit-tree main's own tree, so the folder is not restored.
+  const real = process.env.PATH.split(":").map((dir) => join(dir, "git")).find((path) => existsSync(path));
+  const wrapper = join(w.root, "wrapper");
+  mkdirSync(wrapper);
+  writeFileSync(join(wrapper, "git"), `#!${process.execPath}
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+const at = args.indexOf("commit-tree");
+if (at !== -1) args[at + 1] = process.env.WRONG_TREE;
+process.exit(spawnSync(process.env.REAL_GIT, args, { stdio: "inherit" }).status ?? 1);
+`);
+  chmodSync(join(wrapper, "git"), 0o755);
+  const env = { PATH: `${wrapper}:${w.env.PATH}`, REAL_GIT: real, WRONG_TREE: w.git("rev-parse", `${second}^{tree}`) };
+  const remoteBefore = w.inRemote("for-each-ref");
+  const result = restore(w, ["alpha", "--open"], { env });
+  assert.equal(result.status, 1, result.log);
+  assert.match(result.err, /plugins\/alpha\/ in the commit built is not the same as at good\/alpha: nothing was pushed/);
+  assert.equal(w.inRemote("for-each-ref"), remoteBefore, "nothing was pushed");
+  assert.equal(w.git("branch", "--list", branchFor(first, second)), "", "and no branch was made");
+  assert.equal(w.gh().filter((call) => call.args[0] === "pr").length, 0);
+}));
+
 test("when the push fails, gh is not called and the clone keeps no branch", withWorld((w) => {
   const { first, second } = history(w);
   writeFileSync(join(w.remote, "hooks", "pre-receive"), "#!/bin/sh\necho 'rejected by the test' >&2\nexit 1\n");
@@ -357,26 +415,54 @@ test("without a flag it is a dry run: it says what it would do, and writes and p
   assert.equal(w.inRemote("branch", "--list", "restore-*"), "");
 }));
 
-test("a dry run reads main and the tag from the remote as they are now, and its only write is that fetch", withWorld((w) => {
+test("a dry run reads main and the tag from the remote as they are now, and changes no ref: not origin/main, no tag, not FETCH_HEAD", withWorld((w) => {
   const { first, second } = history(w);
-  // Another person moves main on, and moves the tag to the second commit; this clone has not fetched.
+  // Another person moves main on, and moves the tag to the second commit; this clone has not fetched, and still has its own good/alpha.
   const third = w.commitIn(w.other(), { "README.md": "readme v3\n", "plugins/alpha/plugin.js": "alpha v3\n" });
-  const remoteBefore = w.inRemote("for-each-ref");
-  const localBefore = w.git("for-each-ref");
   w.putTag("alpha", second);
-  const remoteBeforeMoved = w.inRemote("for-each-ref");
+  // Settings that make a fetch write more: pruning, and tags that follow what is fetched. And a tag of another plugin that is missing here.
+  for (const [key, value] of [["fetch.prune", "true"], ["fetch.pruneTags", "true"], ["gc.auto", "1"]]) w.git("config", key, value);
+  w.git("tag", "-d", "good/bravo");
+  const remoteBefore = w.inRemote("for-each-ref");
+  const before = snapshot(w);
+  assert.notEqual(spawnSync("git", ["cat-file", "-e", third], { cwd: w.dir, env: w.env }).status, 0, "this clone does not have the new main yet");
   const result = restore(w, ["alpha"]);
   assert.equal(result.status, 0, result.log);
   assert.match(result.out, new RegExp(`good/alpha at ${second}`));
   assert.match(result.out, new RegExp(`origin/main at ${third}`));
-  assert.equal(w.inRemote("for-each-ref"), remoteBeforeMoved, "the remote is unchanged");
-  assert.notEqual(remoteBefore, remoteBeforeMoved);
-  // Locally, what changed is origin/main (and origin/HEAD, which follows it) and the one tag, and no branch.
-  const changed = w.git("for-each-ref").split("\n").filter((line) => !localBefore.includes(line)).map((line) => line.split("\t")[1]);
-  assert.deepEqual(changed.sort(), ["refs/remotes/origin/HEAD", "refs/remotes/origin/main", "refs/tags/good/alpha"]);
-  assert.equal(w.git("rev-parse", "HEAD"), second);
-  assert.equal(w.git("status", "--porcelain"), "");
-  assert.notEqual(first, second);
+  assert.match(result.out, new RegExp(`the local tag good/alpha is at ${first}; origin's tag is used, and the local one is left as it is`));
+  // It had to fetch the new commits, and that is all that changed: every ref, FETCH_HEAD, the index and the working tree are as they were.
+  assert.equal(spawnSync("git", ["cat-file", "-e", third], { cwd: w.dir, env: w.env }).status, 0, "the new main was fetched, as objects");
+  const after = snapshot(w);
+  const { objects: objectsBefore, ...restBefore } = before;
+  const { objects: objectsAfter, ...restAfter } = after;
+  assert.deepEqual(restAfter, restBefore);
+  assert.notEqual(objectsAfter, objectsBefore);
+  assert.equal(w.inRemote("for-each-ref"), remoteBefore, "the remote is unchanged");
+  assert.equal(w.git("tag", "--list", "good/bravo"), "", "the tag of another plugin, missing here, was not fetched");
+  assert.equal(w.git("rev-parse", "refs/tags/good/alpha"), first, "the local tag is where it was");
+  assert.equal(w.git("rev-parse", "refs/remotes/origin/main"), second, "origin/main is where it was");
+  assert.equal(existsSync(join(w.dir, ".git", "FETCH_HEAD")), before.fetchHead !== null);
+  assert.deepEqual(w.gh(), []);
+}));
+
+test("a dry run in a clone that is up to date writes nothing at all, not even an object", withWorld((w) => {
+  history(w);
+  const before = snapshot(w);
+  assert.equal(restore(w, ["alpha"]).status, 0);
+  assert.deepEqual(snapshot(w), before);
+  assert.deepEqual(readdirSync(w.tmp), [], "and leaves nothing in the temporary folder");
+}));
+
+test("a dry run does not rewrite the index, even when a file's timestamp no longer matches it", withWorld((w) => {
+  history(w);
+  const later = new Date(Date.now() + 60_000);
+  utimesSync(join(w.dir, "README.md"), later, later); // `git status` would refresh the index entry of this file
+  const index = join(w.dir, ".git", "index");
+  const before = { bytes: readFileSync(index).toString("hex"), mtime: statSync(index).mtimeMs };
+  const result = restore(w, ["alpha"]);
+  assert.equal(result.status, 0, result.log);
+  assert.deepEqual({ bytes: readFileSync(index).toString("hex"), mtime: statSync(index).mtimeMs }, before);
 }));
 
 test("it never fetches or changes a tag of another plugin", withWorld((w) => {
@@ -460,7 +546,6 @@ test("a tag on a commit that is not in the history of main is refused", withWorl
   w.git("push", "-q", "origin", "--delete", "side");
   w.git("branch", "-q", "-D", "side");
   w.putTag("alpha", side);
-  w.git("fetch", "-q", "--tags", "--force", "origin"); // so the script's own fetch has nothing to write, and refusing changes nothing
   refused(w, ["alpha"], `good/alpha is at ${side}, which is not in the history of origin/main`);
   refused(w, ["alpha", "--open"], "is not in the history of origin/main");
 }));
@@ -526,6 +611,17 @@ test("outside a git repository, and in a clone with no origin, it is refused", w
   assert.deepEqual(w.gh(), []);
 }));
 
+test("a shallow clone is refused, with the way out", withWorld((w) => {
+  history(w);
+  const shallow = join(w.root, "shallow");
+  w.exec(w.root, "clone", "-q", "--depth", "1", `file://${w.remote}`, shallow);
+  const result = restore(w, ["alpha"], { cwd: shallow });
+  assert.equal(result.status, 1, result.log);
+  assert.match(result.err, /refused: this is a shallow clone/);
+  assert.match(result.err, /git fetch --unshallow/);
+  assert.deepEqual(w.gh(), []);
+}));
+
 // ---- The check before the push ----
 
 test("the check before the push accepts the commit that was built, and refuses any other: a file outside the folder, another folder, another parent", withWorld((w) => {
@@ -545,6 +641,13 @@ test("the check before the push accepts the commit that was built, and refuses a
     w.git("checkout", first, "--", "plugins/alpha");
     writeFileSync(join(w.dir, "README.md"), "changed by the restore\n");
   });
+  // The restore, but with a file added in a folder whose name starts with the plugin's.
+  const sibling = make("sibling", second, () => {
+    w.git("rm", "-q", "-r", "plugins/alpha");
+    w.git("checkout", first, "--", "plugins/alpha");
+    mkdirSync(join(w.dir, "plugins/alpha-two"));
+    writeFileSync(join(w.dir, "plugins/alpha-two/new.txt"), "next to the plugin\n");
+  });
   // The right parent, and a folder that was changed but not restored.
   const notRestored = make("not-restored", second, () => writeFileSync(join(w.dir, "plugins/alpha/plugin.js"), "alpha v3\n"));
   // The right folder on top of the tag, not on top of main.
@@ -554,7 +657,7 @@ test("the check before the push accepts the commit that was built, and refuses a
   try {
     const built = build({ name: "alpha", tagSha: first, mainSha: second, title: "title" });
     assert.doesNotThrow(() => verify({ name: "alpha", commit: built, tagSha: first, mainSha: second }));
-    for (const [commit, message] of [[outside, /changes files outside plugins\/alpha\/ \(README\.md\)/], [notRestored, /plugins\/alpha\/ in the commit built is not the same as at good\/alpha/], [wrongParent, /is not on top of origin\/main/]]) {
+    for (const [commit, message] of [[outside, /changes files outside plugins\/alpha\/ \(README\.md\)/], [sibling, /changes files outside plugins\/alpha\/ \(plugins\/alpha-two\/new\.txt\)/], [notRestored, /plugins\/alpha\/ in the commit built is not the same as at good\/alpha/], [wrongParent, /is not on top of origin\/main/]]) {
       assert.throws(() => verify({ name: "alpha", commit, tagSha: first, mainSha: second }), (error) => error instanceof Refusal && message.test(error.message), commit);
     }
   } finally {
@@ -572,7 +675,12 @@ test("the script is executable, so that it can be run by its path", () => {
 test("the script's only push is of one new branch: never forced, never main, never a tag", () => {
   const code = ["restore-plugin.mjs", "restore-lib.mjs"].map((file) => readFileSync(join(here, file), "utf8")).join("\n").split("\n").filter((line) => !/^\s*\/\//.test(line)).join("\n");
   assert.equal((code.match(/"push"/g) ?? []).length, 1, "one push");
-  assert.match(code, /git\("push", REMOTE, `refs\/heads\/\$\{branch\}:refs\/heads\/\$\{branch\}`\)/);
+  assert.match(code, /git\("push", "--no-follow-tags", "--no-recurse-submodules", REMOTE, `refs\/heads\/\$\{branch\}:refs\/heads\/\$\{branch\}`\)/);
+  // The one fetch names objects, not refs: no refspec, so no ref is stored. And the only refs it writes are its own branch.
+  assert.equal((code.match(/"fetch"/g) ?? []).length, 1, "one fetch");
+  assert.match(code, /"fetch", "--no-write-fetch-head", "--no-tags", REMOTE, \.\.\.missing\)/);
+  assert.doesNotMatch(code, /refs\/remotes|\+refs\//);
+  for (const call of code.match(/"update-ref"[^;]*/g) ?? []) assert.match(call, /refs\/heads\/\$\{branch\}/, call);
   assert.doesNotMatch(code, /"--(force|force-with-lease|tags|mirror|all|delete|prune)\b/);
   assert.doesNotMatch(code, /\+refs\/heads\/\$\{branch\}|push.*:refs\/(heads\/main|tags)/);
   assert.doesNotMatch(code, /"(checkout|switch|reset|restore|merge|rebase|stash|clean)"/, "no command that writes the working tree");
