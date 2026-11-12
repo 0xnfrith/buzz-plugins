@@ -106,6 +106,7 @@ plugins/              plugins you can install, one folder each
 docs/
   building.md         how we build plugins
   install.md          how to install one
+  known-good.md       the good/<plugin> tags: the last commit where each plugin loaded
 assets/               the banner, the gallery cards and the plugin headers of these READMEs
 .github/workflows/    the checks every pull request runs
 CONTRIBUTING.md       how to send a change (and the key-latency rule for vim mode)

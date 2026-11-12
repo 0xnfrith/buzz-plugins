@@ -1,0 +1,191 @@
+# The check after a change reaches main: each plugin that differs from its known-good tag (and each one never checked) is loaded in
+# Buzz's own web build, and the commit that passed becomes that plugin's known-good commit: the tag good/<folder>, for example good/vim.
+# People who want the last checked version of a plugin put that tag in the importer's "Branch or tag" field (docs/known-good.md).
+#
+# This runs on a push to main and on nothing else: not on a pull request, not by hand, not on a schedule. Four jobs:
+#   select  picks the plugins (.github/after-merge/select.mjs): every installable plugin that has no good/ tag yet, and every one
+#           whose folder differs from its own tag. It compares each plugin with its tag, not with what the push changed, so a change
+#           the push before this one made is not lost if that push's run was dropped, and a plugin that failed is picked again by
+#           every later push until it passes. A push that changes no plugin picks none once every plugin is tagged. A plugin folder
+#           whose name cannot be a tag name is left out, and named for the verdict below; the others go on.
+#   check   loads each picked plugin's committed plugin.js and manifest.json in block/buzz-app's production web build at BUZZ_APP_REF,
+#           in headless Chromium, one build and one browser per plugin (.github/after-merge/load-check/). A plugin passes when its
+#           apply finishes, the host calls it active, it leaves no page error and no console error, and every page it registers that
+#           the host lists opens and draws, and every settings card it registers draws. Every plugin waits the same time before its
+#           test ends, so a late error is seen. A plugin that fails does not stop the others from being checked.
+#   tag     moves good/<folder> to the pushed commit for each plugin that passed (.github/after-merge/tag.mjs), and only forward: a tag
+#           moves only to a commit that contains the commit it is at, and only when the plugin's folder differs between the two. It
+#           is the only job that can write to the repository, and the only thing it writes is refs/tags/good/<folder>. It runs only
+#           this repository's script and the two pinned official actions (checkout, Node). A plugin that failed keeps its tag where
+#           it was.
+#   verdict reads how the other jobs ended (.github/after-merge/verdict.mjs) and makes the run red if a plugin failed the load check,
+#           a folder was refused, or any job broke. It runs after the plugins that loaded have been tagged, and it can only read.
+#
+# This proves that the built plugin loads in Buzz's web build, that its pages and settings cards draw, and that it leaves no error a
+# moment after load. It does not prove that the desktop app's Git importer imports it, or that the plugin works when it is used. The web
+# build has no native side (no command runner, no HTTP client), and the pinned build cannot reach agent tabs, conversation tools or
+# shortcuts, which run only when a person uses them: a plugin that breaks there still passes. A run of each plugin in the desktop app
+# itself is not built yet. The way back to a known-good commit is a script a person runs, not part of this workflow: it opens a pull
+# request that restores one plugin's folder from its tag (.github/after-merge/restore-plugin.mjs, "Way back" in docs/known-good.md).
+#
+# The tests of the scripts and of this file are in after-merge-tests.yml, which tests.yml calls on every pull request.
+name: After merge
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  # One run at a time, in the order of the merges. A run does not cancel the one in progress. GitHub keeps one waiting run per group
+  # and drops an older waiting run when a newer one arrives; that loses nothing, because select.mjs compares each plugin with its tag
+  # (docs/known-good.md).
+  group: after-merge
+  cancel-in-progress: false
+
+env:
+  # The block/buzz-app commit the plugins are loaded in. The other workflows that build the app name the same commit: the first step of
+  # each of them (.github/check-app-ref.sh) fails when any two differ, or when one uses it without defining it, so change them together.
+  BUZZ_APP_REF: d92bfb2c4dd89fc5ae6e7a1445f38ad1e8ab7060
+
+jobs:
+  select:
+    name: Which plugins to check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      plugins: ${{ steps.pick.outputs.plugins }}
+      refused: ${{ steps.pick.outputs.refused }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # the whole history and every tag: where each good/ tag is, and what differs from it
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Pick the plugins
+        id: pick
+        env:
+          AFTER: ${{ github.sha }}
+        run: node .github/after-merge/select.mjs
+
+  check:
+    name: Load each plugin in Buzz's web build
+    needs: select
+    if: ${{ needs.select.outputs.plugins != '[]' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45 # the set-up is about five minutes; each plugin takes about a minute
+    permissions:
+      contents: read
+    outputs:
+      passed: ${{ steps.load.outputs.passed }}
+      failed: ${{ steps.load.outputs.failed }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: BUZZ_APP_REF is defined, and the same, in every workflow that builds the app
+        run: .github/check-app-ref.sh
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: block/buzz-app
+          ref: ${{ env.BUZZ_APP_REF }}
+          path: buzz-app
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: pnpm, as the app pins it
+        run: |
+          corepack enable
+          corepack prepare "$(node -p "require('./buzz-app/package.json').packageManager")" --activate
+      - name: Install the app's dependencies (frozen lockfile)
+        working-directory: buzz-app
+        run: pnpm install --frozen-lockfile
+      - name: Install Chromium
+        working-directory: buzz-app
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Load each plugin
+        # This step ends well whatever the plugins did, so the job's outputs (which plugins passed, which failed) are those of a job that
+        # succeeded; the tagging job reads them and fails the run if a plugin failed. If the check itself breaks (nothing was loaded, no
+        # result was written), it writes no output and fails here, and nothing is tagged.
+        id: load
+        env:
+          PLUGINS: ${{ needs.select.outputs.plugins }}
+          LOAD_CHECK_RESULTS: ${{ runner.temp }}/load-check-results.json
+          LOAD_CHECK_ARTIFACTS: ${{ runner.temp }}/load-check-artifacts
+        run: |
+          set -euo pipefail
+          mapfile -t folders < <(jq -r '.[]' <<<"$PLUGINS")
+          [ ${#folders[@]} -gt 0 ] || { echo "::error::no plugin was picked, but the check ran"; exit 1; }
+          rm -f "$LOAD_CHECK_RESULTS"
+          .github/after-merge/load-check/run.sh buzz-app "${folders[@]}" || echo "At least one plugin failed (the table above says which)."
+          [ -s "$LOAD_CHECK_RESULTS" ] || { echo "::error::the load check wrote no result"; exit 1; }
+          # Every picked plugin is in exactly one of the two lists, or the result is not trusted.
+          jq -e --argjson picked "$PLUGINS" '((.passed + .failed) | sort) == ($picked | sort) and (.passed + .failed | length) == (.passed + .failed | unique | length)' "$LOAD_CHECK_RESULTS" >/dev/null \
+            || { echo "::error::the result does not account for exactly the plugins that were picked"; exit 1; }
+          echo "passed=$(jq -c .passed "$LOAD_CHECK_RESULTS")" >>"$GITHUB_OUTPUT"
+          echo "failed=$(jq -c .failed "$LOAD_CHECK_RESULTS")" >>"$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        continue-on-error: true # the traces are for a person to read; failing to keep them must not undo a check that passed
+        with:
+          name: load-check-results
+          path: ${{ runner.temp }}/load-check-artifacts
+          if-no-files-found: ignore
+          retention-days: 14
+
+  tag:
+    name: Tag the plugins that loaded
+    needs: [select, check]
+    # Only after a check that ran to its end. Without `always`-style conditions, a check that broke (red) or was skipped (nothing to
+    # check) tags nothing.
+    if: ${{ !cancelled() && needs.check.result == 'success' && needs.check.outputs.passed != '' && needs.check.outputs.failed != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # the one job that may write, and it writes only good/ tags (.github/after-merge/tag.mjs)
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: true # this job pushes the tags with the workflow's own token; no other credential exists
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Move the tags
+        env:
+          AFTER: ${{ github.sha }}
+          SELECTED: ${{ needs.select.outputs.plugins }}
+          PASSED: ${{ needs.check.outputs.passed }}
+        run: node .github/after-merge/tag.mjs
+
+  verdict:
+    name: The verdict
+    needs: [select, check, tag]
+    # Whatever happened above, unless the run was cancelled: this is what makes the run red, so it cannot be skipped by a job that was.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Red if a plugin did not load, a folder was refused or a job broke
+        env:
+          SELECT: ${{ needs.select.result }}
+          CHECK: ${{ needs.check.result }}
+          TAG: ${{ needs.tag.result }}
+          REFUSED: ${{ needs.select.outputs.refused }}
+          FAILED: ${{ needs.check.outputs.failed }}
+        run: node .github/after-merge/verdict.mjs
