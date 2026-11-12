@@ -18,6 +18,7 @@ set -euo pipefail
 # The test workflows: the output (and job) name in tests.yml, then the folders (or files) whose changes call it. A change under .github/
 # calls every row anyway; the AI sorter's paths there name what its tests cover.
 rows=(
+  "after-merge               .github/after-merge/ .github/workflows/after-merge.yml .github/workflows/after-merge-tests.yml"
   "agent-skills-highlighter  plugins/agent-skills-highlighter/"
   "agent-stats               plugins/agent-stats/"
   "ai-sorter                 .github/sorter/ .github/workflows/ai-sorter.yml .github/workflows/ai-sorter-tests.yml"

@@ -1,0 +1,91 @@
+# The tests of the check after a merge to main (after-merge.yml). The `test` job: the scripts that pick the plugins to check and that
+# decide whether a good/<plugin> tag moves, in made-up git repositories, and the shape of after-merge.yml itself (its trigger, who may
+# write, its concurrency) (.github/after-merge/after-merge.test.mjs). The `load-check` job: the load check on every installable plugin in
+# this checkout, in headless Chromium against block/buzz-app's own production web build, the way .github/after-merge/load-check/run.sh
+# runs it by hand, and then the canary (canary.mjs): the same check on a made-up plugin that is fine and on broken ones, which
+# must fail. A check that cannot fail would let any plugin be tagged.
+name: After-merge check tests
+
+on:
+  # Called by tests.yml, which runs on every pull request to main, every push to main and every merge group, and calls this workflow
+  # when anything under .github/ changes (the `after-merge` row of .github/tests-to-run.sh). Its `all-tests` check is the one to require.
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  # The block/buzz-app commit the plugins are loaded in. The other workflows that build the app name the same commit: the first step of
+  # each of them (.github/check-app-ref.sh) fails when any two differ, or when one uses it without defining it, so change them together.
+  BUZZ_APP_REF: d92bfb2c4dd89fc5ae6e7a1445f38ad1e8ab7060
+
+jobs:
+  test:
+    name: After-merge scripts and workflow
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Tests
+        # A run that finds no tests passes too, so the TAP result says it: some tests ran and none failed, was skipped or was cancelled.
+        run: |
+          node --test --test-reporter=tap .github/after-merge/after-merge.test.mjs | tee "$RUNNER_TEMP/tap.txt"
+          grep -Eq '^# pass [1-9]' "$RUNNER_TEMP/tap.txt"
+          grep -Eq '^# fail 0$' "$RUNNER_TEMP/tap.txt"
+          grep -Eq '^# skipped 0$' "$RUNNER_TEMP/tap.txt"
+          grep -Eq '^# cancelled 0$' "$RUNNER_TEMP/tap.txt"
+
+  load-check:
+    name: Load check of every plugin, and its canary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40 # the set-up is about five minutes; each plugin takes about a minute, and the canary about four
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: BUZZ_APP_REF is defined, and the same, in every workflow that builds the app
+        run: .github/check-app-ref.sh
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: block/buzz-app
+          ref: ${{ env.BUZZ_APP_REF }}
+          path: buzz-app
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: pnpm, as the app pins it
+        run: |
+          corepack enable
+          corepack prepare "$(node -p "require('./buzz-app/package.json').packageManager")" --activate
+      - name: Install the app's dependencies (frozen lockfile)
+        working-directory: buzz-app
+        run: pnpm install --frozen-lockfile
+      - name: Install Chromium
+        working-directory: buzz-app
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Load every installable plugin
+        env:
+          LOAD_CHECK_ARTIFACTS: ${{ runner.temp }}/load-check-artifacts
+        run: |
+          set -euo pipefail
+          mapfile -t folders < <(node --input-type=module -e 'import { installable } from "./.github/after-merge/lib.mjs"; console.log(installable("HEAD").names.join("\n"))')
+          [ ${#folders[@]} -gt 0 ] || { echo "::error::no installable plugin was found"; exit 1; }
+          echo "Plugins: ${folders[*]}"
+          .github/after-merge/load-check/run.sh buzz-app "${folders[@]}"
+      - name: The canary
+        run: node .github/after-merge/load-check/canary.mjs buzz-app
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: load-check-test-results
+          path: |
+            ${{ runner.temp }}/load-check-artifacts
+            buzz-app/test-results
+          if-no-files-found: ignore
+          retention-days: 14
