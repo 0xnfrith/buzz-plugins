@@ -1,20 +1,21 @@
 // Which plugins the check after a merge to main loads (after-merge.yml runs this, and after-merge.test.mjs tests it in made-up
 // repositories). Run from the root of a clone that has the whole history and its tags.
 //
-// Reads BEFORE and AFTER from the environment: the commit main was at before the push, and the commit pushed. Of the installable
-// plugins at AFTER (a folder under plugins/ with a manifest.json and a plugin.js beside it, as the desktop app's Git importer lists
-// them), it picks each one that
-//   - the push changed (`git diff BEFORE AFTER` over its folder), or
+// Reads AFTER from the environment: the commit pushed. Of the installable plugins at AFTER (a folder under plugins/ with a
+// manifest.json and a plugin.js beside it, as the desktop app's Git importer lists them), it picks each one that
 //   - has no good/<folder> tag yet (so the first run on main checks and tags them all), or
-//   - is any plugin, when BEFORE is not in the history of AFTER (a force push, a new branch): what the push changed cannot be told.
-// A push that changes no plugin and finds every plugin tagged picks none, so it moves no tag. (tag.mjs moves an existing tag only when
-// the plugin's folder differs from where the tag is, so a check that is run for another reason moves none either.)
+//   - differs from its own tag: `git diff good/<folder> AFTER -- plugins/<folder>` shows a change.
+// It does not look at what the push changed, only at where each plugin's tag is. So a push that GitHub dropped (it keeps one waiting
+// run per concurrency group) cannot leave a change unchecked: the next run sees that the folder differs from its tag. A plugin that
+// failed has not moved its tag, so every later push picks it again until it passes. A plugin that matches its tag is not picked, and
+// a push that changes no plugin picks none once every plugin is tagged. (tag.mjs moves an existing tag only when the plugin's folder
+// differs from where the tag is, so no tag moves on a push that did not change its plugin.)
 //
 // Appends `plugins=<JSON array of folder names>` to $GITHUB_OUTPUT and a table to $GITHUB_STEP_SUMMARY. Fails, after writing the
 // output, when a folder the importer would list has a name that cannot be used in a tag: it could never be tagged.
-import { COMMIT, ZERO, git, installable, isAncestor, isCommit, localTag, output, shown, summary } from "./lib.mjs";
+import { COMMIT, ZERO, git, installable, isCommit, localTag, output, shown, summary } from "./lib.mjs";
 
-const { BEFORE = "", AFTER = "" } = process.env;
+const { AFTER = "" } = process.env;
 
 // A push that deleted the branch has nothing to check.
 if (AFTER === ZERO) {
@@ -36,18 +37,16 @@ const differs = (from, to, folder) => {
 };
 
 const { names, refused } = installable(AFTER);
-const beforeKnown = isCommit(BEFORE) && isAncestor(BEFORE, AFTER);
-const everything = beforeKnown ? "" : `the commit before the push (${shown(BEFORE.slice(0, 12)) || "none"}) is not in the history`;
 
 const picked = [];
 const rows = [];
 for (const folder of names) {
-  const reasons = [];
-  if (everything) reasons.push(everything);
-  else if (differs(BEFORE, AFTER, folder)) reasons.push("the push changed it");
-  if (!localTag(folder)) reasons.push(`no good/${folder} tag yet`);
-  if (reasons.length) picked.push(folder);
-  rows.push({ folder, checked: reasons.length > 0, because: reasons.join("; ") || "the push did not change it" });
+  const tag = localTag(folder);
+  let because = null;
+  if (!tag) because = `no good/${folder} tag yet`;
+  else if (differs(tag, AFTER, folder)) because = `it differs from good/${folder} (${tag.slice(0, 7)})`;
+  if (because) picked.push(folder);
+  rows.push({ folder, checked: because !== null, because: because ?? `the same as good/${folder} (${tag.slice(0, 7)})` });
 }
 
 console.log(`${names.length} installable plugin(s) at ${AFTER.slice(0, 7)}: ${names.join(", ") || "none"}`);

@@ -8,13 +8,12 @@ In the desktop app's **Settings → Plugins → Manage plugins → Add**, enter 
 
 ## What the check does
 
-The workflow [`after-merge.yml`](../.github/workflows/after-merge.yml) runs on every push to `main`, and on nothing else. It checks, at the pushed commit:
+The workflow [`after-merge.yml`](../.github/workflows/after-merge.yml) runs on every push to `main`, and on nothing else. At the pushed commit it checks each installable plugin (a folder under `plugins/` with a `manifest.json` and a built `plugin.js` beside it, the importer's own rule, so that includes `key-probe`) that
 
-- every installable plugin the push changed (a folder under `plugins/` with a `manifest.json` and a built `plugin.js` beside it, the importer's own rule, so that includes `key-probe`);
-- every installable plugin that has no `good/` tag yet, so the first run checks and tags them all;
-- every installable plugin, when the commit before the push is not in the history (a force push).
+- has no `good/` tag yet, so the first run checks and tags them all, or
+- differs from its own tag: `git diff good/<plugin> <pushed commit> -- plugins/<plugin>` shows a change.
 
-A plugin that the push did not change is not checked and its tag does not move.
+It compares each plugin with its tag, not with what the push changed. A plugin that matches its tag is not checked and its tag does not move, so a push that changes no plugin moves no tag. A change is never lost when GitHub drops a waiting run, because the next run sees that the folder differs from its tag. A plugin that failed keeps its tag, so every later push checks it again until it passes.
 
 For each plugin it registers the committed `plugin.js` and `manifest.json` in the production web build of [block/buzz-app](https://github.com/block/buzz-app) at the commit named by `BUZZ_APP_REF` in the workflow, through the harness's installed-fixture list (the registration path the plugins' own browser tests use), in headless Chromium. One build and one browser for each plugin, so a plugin that does not even load cannot hide another. The plugin passes when:
 
@@ -32,8 +31,7 @@ It proves that the built plugin loads in Buzz's **web** build. It does not prove
 
 ## Known gaps
 
-- GitHub keeps one waiting run for a workflow's concurrency group and drops an older waiting one when a newer one arrives. If three pushes to `main` come in quick succession, the middle push may never be checked. The plugins only that push changed keep their old tags (so they stay on a commit that did pass) until a later push changes them again.
-- If a plugin fails, its tag stays and the run is red. The next push that changes the plugin checks it again; a push that does not change it does not.
+- A plugin that fails keeps its tag, and the run is red. Every later push checks it again, and goes red again, until it passes or is fixed.
 - A plugin folder whose name is not lowercase letters, digits and hyphens cannot be named in a tag. The run fails, and says which folder.
 - A tag that sits on a commit that is not in the history of `main` (after a force push that rewrote history) is not moved, and the run fails until a person fixes the tag.
 

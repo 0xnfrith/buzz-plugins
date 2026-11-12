@@ -3,9 +3,10 @@
 # checked version of a plugin put that tag in the importer's "Branch or tag" field (docs/known-good.md).
 #
 # This runs on a push to main and on nothing else: not on a pull request, not by hand, not on a schedule. Three jobs:
-#   select  picks the plugins (.github/after-merge/select.mjs): every installable plugin folder the push changed, every one that has no
-#           good/ tag yet, and every one when the commit before the push is not in the history. A push that changes no plugin picks
-#           none once every plugin has a tag, so it moves no tag.
+#   select  picks the plugins (.github/after-merge/select.mjs): every installable plugin that has no good/ tag yet, and every one
+#           whose folder differs from its own tag. It compares each plugin with its tag, not with what the push changed, so a change
+#           the push before this one made is not lost if that push's run was dropped, and a plugin that failed is picked again by
+#           every later push until it passes. A push that changes no plugin picks none once every plugin is tagged.
 #   check   loads each picked plugin's committed plugin.js and manifest.json in block/buzz-app's production web build at BUZZ_APP_REF,
 #           in headless Chromium, one build and one browser per plugin (.github/after-merge/load-check/). A plugin passes when its
 #           apply finishes, the host calls it active, it leaves no page error and no console error, and every page it registers that
@@ -32,8 +33,8 @@ permissions:
 
 concurrency:
   # One run at a time, in the order of the merges. A run does not cancel the one in progress. GitHub keeps one waiting run per group
-  # and drops an older waiting run when a newer one arrives, so with three quick merges the middle push can go unchecked: the plugins
-  # only it changed keep their old tags, which are still commits that passed, until a later push changes them (docs/known-good.md).
+  # and drops an older waiting run when a newer one arrives; that loses nothing, because select.mjs compares each plugin with its tag
+  # (docs/known-good.md).
   group: after-merge
   cancel-in-progress: false
 
@@ -55,14 +56,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-          fetch-depth: 0 # the whole history and every tag: what changed since the push, and where each good/ tag is
+          fetch-depth: 0 # the whole history and every tag: where each good/ tag is, and what differs from it
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
       - name: Pick the plugins
         id: pick
         env:
-          BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
         run: node .github/after-merge/select.mjs
 

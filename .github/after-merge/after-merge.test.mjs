@@ -50,10 +50,10 @@ const world = () => {
 };
 
 /** Runs select.mjs in the clone; returns its status, its log and the folders it picked (null if it wrote none). */
-const select = (w, BEFORE, AFTER) => {
+const select = (w, AFTER) => {
   const out = join(w.root, "output");
   writeFileSync(out, "");
-  const result = spawnSync("node", [join(here, "select.mjs")], { cwd: w.dir, encoding: "utf8", env: { PATH: process.env.PATH, HOME: process.env.HOME, BEFORE, AFTER, GITHUB_OUTPUT: out } });
+  const result = spawnSync("node", [join(here, "select.mjs")], { cwd: w.dir, encoding: "utf8", env: { PATH: process.env.PATH, HOME: process.env.HOME, AFTER, GITHUB_OUTPUT: out } });
   const line = readFileSync(out, "utf8").split("\n").find((entry) => entry.startsWith("plugins="));
   return { status: result.status, log: result.stdout + result.stderr, picked: line ? JSON.parse(line.slice("plugins=".length)) : null };
 };
@@ -84,73 +84,94 @@ const tagged = (w) => {
 
 // ---- Which plugins are picked ----
 
-test("the first run on main, with no tags yet, picks every installable plugin", withWorld((w) => {
-  const first = w.commit({ "README.md": "readme\n", ...files({ alpha: plugin(), bravo: plugin() }) });
+test("with no tags yet, every installable plugin is picked: the first run on main", withWorld((w) => {
+  w.commit({ "README.md": "readme\n", ...files({ alpha: plugin(), bravo: plugin() }) });
   const second = w.commit({ "README.md": "changed\n" });
-  const result = select(w, first, second);
+  const result = select(w, second);
   assert.equal(result.status, 0, result.log);
   assert.deepEqual(result.picked, ["alpha", "bravo"]);
   assert.match(result.log, /alpha: check \(no good\/alpha tag yet\)/);
 }));
 
-test("a push picks the plugins it changed, and no others, once every plugin is tagged", withWorld((w) => {
-  const first = tagged(w);
-  const second = w.commit({ "plugins/bravo/plugin.js": "b2\n" });
-  assert.deepEqual(select(w, first, second).picked, ["bravo"]);
-  // A file anywhere in the folder counts, including a new one in a subfolder or one with a name git would quote.
-  const third = w.commit({ "plugins/alpha/src/new.ts": "x\n", "plugins/charlie/café \"q\".md": "x\n" });
-  assert.deepEqual(select(w, second, third).picked, ["alpha", "charlie"]);
+test("a plugin with no tag is picked while the others, tagged and unchanged, are not", withWorld((w) => {
+  tagged(w);
+  const second = w.commit({ ...files({ delta: plugin("d") }) });
+  assert.deepEqual(select(w, second).picked, ["delta"]);
 }));
 
-test("a push that changes no plugin picks none when every plugin is tagged where it is", withWorld((w) => {
-  const first = tagged(w);
+test("a plugin that is unchanged since its tag is not picked, and a push that changes no plugin picks none", withWorld((w) => {
+  tagged(w);
   const second = w.commit({ "README.md": "changed\n", "docs/new.md": "new\n", ".github/workflows/x.yml": "x\n" });
-  const result = select(w, first, second);
+  const result = select(w, second);
   assert.equal(result.status, 0, result.log);
   assert.deepEqual(result.picked, []);
-  // The same for an empty commit.
-  assert.deepEqual(select(w, second, w.commit()).picked, []);
+  assert.match(result.log, /alpha: skip \(the same as good\/alpha/);
+  assert.deepEqual(select(w, w.commit()).picked, [], "an empty commit");
 }));
 
-test("a plugin the push changed and then changed back is still picked: the push changed it", withWorld((w) => {
-  const first = tagged(w);
+test("a plugin that changed since its tag is picked, and only that one", withWorld((w) => {
+  tagged(w);
+  const second = w.commit({ "plugins/bravo/plugin.js": "b2\n" });
+  const result = select(w, second);
+  assert.deepEqual(result.picked, ["bravo"]);
+  assert.match(result.log, /bravo: check \(it differs from good\/bravo/);
+  // A file anywhere in the folder counts, including a new one in a subfolder or one with a name git would quote.
+  const third = w.commit({ "plugins/alpha/src/new.ts": "x\n", "plugins/charlie/café \"q\".md": "x\n" });
+  assert.deepEqual(select(w, third).picked, ["alpha", "bravo", "charlie"], "bravo is still not tagged at its new content");
+}));
+
+test("a plugin that was changed and changed back is the same as its tag, and is not picked", withWorld((w) => {
+  tagged(w);
   const second = w.commit({ "plugins/alpha/plugin.js": "a2\n" });
+  assert.deepEqual(select(w, second).picked, ["alpha"]);
   const third = w.commit({ "plugins/alpha/plugin.js": "a\n" });
-  assert.deepEqual(select(w, first, third).picked, [], "before and after are the same for alpha, and the tag is where it is");
-  assert.deepEqual(select(w, second, third).picked, ["alpha"]);
+  assert.deepEqual(select(w, third).picked, []);
 }));
 
-test("a plugin that an earlier push changed and this push did not is not picked, however far its tag is behind", withWorld((w) => {
+test("a run dropped between two pushes loses nothing: the next push picks what both pushes changed", withWorld((w) => {
   const first = tagged(w);
-  const second = w.commit({ "plugins/charlie/plugin.js": "c2\n" }); // say its run was dropped: charlie was never checked or tagged
+  const second = w.commit({ "plugins/charlie/plugin.js": "c2\n" }); // its run was dropped: charlie was never checked or tagged
   const third = w.commit({ "plugins/alpha/plugin.js": "a2\n" });
-  const result = select(w, second, third);
-  assert.deepEqual(result.picked, ["alpha"]);
-  assert.match(result.log, /charlie: skip \(the push did not change it\)/);
-  assert.equal(w.remoteTag("charlie"), first);
+  const result = select(w, third);
+  assert.deepEqual(result.picked, ["alpha", "charlie"]);
+  assert.equal(w.remoteTag("charlie"), first, "and charlie's tag has not moved");
+  void second;
 }));
 
-test("when the commit before the push is not in the history, every installable plugin is picked", withWorld((w) => {
+test("a plugin that failed is picked again by the next push, and by each after it, while its tag stays where it was", withWorld((w) => {
   const first = tagged(w);
-  const second = w.commit({ "README.md": "changed\n" });
-  assert.deepEqual(select(w, first, second).picked, []);
-  // A commit that is not in the clone at all, a branch that is new (zeros), no value, and a commit that is in the clone but is not an
-  // ancestor (a force push over it).
-  const side = (() => {
-    w.git("checkout", "-q", "-b", "side", first);
-    const sha = w.commit({ "side.md": "s\n" }, [], { push: false });
-    w.git("checkout", "-q", "main");
-    return sha;
-  })();
-  for (const before of ["1".repeat(40), ZERO, "", "not-a-commit", side]) {
-    const result = select(w, before, second);
-    assert.equal(result.status, 0, result.log);
-    assert.deepEqual(result.picked, ["alpha", "bravo", "charlie"], `before = '${before}'`);
-  }
+  const second = w.commit({ "plugins/bravo/plugin.js": "broken\n" });
+  assert.deepEqual(select(w, second).picked, ["bravo"]);
+  assert.equal(tag(w, second, ["bravo"], []).status, 0, "it failed the check: nothing passed");
+  assert.equal(w.remoteTag("bravo"), first);
+  const third = w.commit({ "README.md": "x\n" }); // a push that touches no plugin
+  assert.deepEqual(select(w, third).picked, ["bravo"]);
+  const fourth = w.commit({ "plugins/alpha/plugin.js": "a2\n" });
+  assert.deepEqual(select(w, fourth).picked, ["alpha", "bravo"]);
+  // Fixed: it passes, its tag moves, and it is picked no more.
+  const fifth = w.commit({ "plugins/bravo/plugin.js": "b2\n" });
+  assert.equal(tag(w, fifth, ["alpha", "bravo"], ["alpha", "bravo"]).status, 0);
+  w.git("fetch", "-q", "--tags", "--force", "origin");
+  assert.deepEqual(select(w, fifth).picked, []);
+}));
+
+test("history that was rewritten needs no special case: a plugin is compared with its tag, wherever the tag is", withWorld((w) => {
+  const first = tagged(w);
+  w.git("checkout", "-q", "-b", "other", first);
+  const sideways = w.commit({ "plugins/alpha/plugin.js": "a-other\n" }, [], { push: false });
+  w.git("push", "-q", "origin", "other");
+  w.git("checkout", "-q", "main");
+  const second = w.commit({ "plugins/alpha/plugin.js": "a2\n" });
+  w.putTag("alpha", sideways); // a tag on a commit that main does not contain
+  w.git("fetch", "-q", "--tags", "--force", "origin");
+  assert.deepEqual(select(w, second).picked, ["alpha"]);
+  // select.mjs does not read the push's before: no such input is needed, and a wrong one changes nothing.
+  const result = spawnSync("node", [join(here, "select.mjs")], { cwd: w.dir, encoding: "utf8", env: { PATH: process.env.PATH, HOME: process.env.HOME, AFTER: second, BEFORE: "garbage", GITHUB_OUTPUT: join(w.root, "o2") } });
+  assert.equal(result.status, 0, result.stderr);
 }));
 
 test("only what the importer lists is installable: a manifest and a plugin.js side by side, directly under plugins/", withWorld((w) => {
-  const first = w.commit({
+  w.commit({
     ...files({ built: plugin(), probe: plugin("a measuring tool, no tests") }),
     "plugins/unbuilt/manifest.json": "{}\n", // no built plugin.js
     "plugins/no-manifest/plugin.js": "x\n",
@@ -161,19 +182,19 @@ test("only what the importer lists is installable: a manifest and a plugin.js si
     "other/plugin.js": "x\n",
   });
   const second = w.commit({ "README.md": "x\n" });
-  assert.deepEqual(select(w, first, second).picked, ["built", "probe"]);
+  assert.deepEqual(select(w, second).picked, ["built", "probe"]);
 }));
 
 test("a plugin that was deleted is not picked, and a plugin that was added is", withWorld((w) => {
-  const first = tagged(w);
+  tagged(w);
   const second = w.commit({ ...files({ delta: plugin("d") }) }, ["plugins/bravo"]);
-  assert.deepEqual(select(w, first, second).picked, ["delta"]);
+  assert.deepEqual(select(w, second).picked, ["delta"]);
 }));
 
 test("a folder whose name cannot be a tag name fails the run, after the others are written", withWorld((w) => {
-  const first = w.commit({ ...files({ alpha: plugin(), "Bad Name": plugin(), "-dash": plugin() }) });
+  w.commit({ ...files({ alpha: plugin(), "Bad Name": plugin(), "-dash": plugin() }) });
   const second = w.commit({ "README.md": "x\n" });
-  const result = select(w, first, second);
+  const result = select(w, second);
   assert.notEqual(result.status, 0, result.log);
   assert.deepEqual(result.picked, ["alpha"]);
   assert.match(result.log, /::error::plugins\/Bad Name\/ is installable, but its name cannot be used in a good\/ tag/);
@@ -181,12 +202,12 @@ test("a folder whose name cannot be a tag name fails the run, after the others a
 }));
 
 test("a push that deleted the branch, and an unreadable after, pick nothing and say so", withWorld((w) => {
-  const first = tagged(w);
-  const deleted = select(w, first, ZERO);
+  tagged(w);
+  const deleted = select(w, ZERO);
   assert.equal(deleted.status, 0, deleted.log);
   assert.deepEqual(deleted.picked, []);
   for (const after of ["", "main", "2".repeat(40)]) {
-    const result = select(w, first, after);
+    const result = select(w, after);
     assert.notEqual(result.status, 0, `after = '${after}'`);
     assert.equal(result.picked, null);
   }
@@ -406,6 +427,11 @@ test("the tagging job runs no code from outside this repository, and the others 
     for (const checkout of jobs[name].split("- uses: actions/checkout").slice(1)) assert.match(checkout.split("\n- ")[0], /persist-credentials: false/, `${name}: every checkout drops its credentials`);
   }
   assert.doesNotMatch(code, /secrets\.(?!GITHUB_TOKEN)|PERSONAL|\bPAT\b/, "no secret but the workflow's own token");
+});
+
+test("the plugins are picked by comparing each with its tag: the push's own before is not an input", () => {
+  assert.doesNotMatch(code, /event\.before|BEFORE/);
+  assert.match(jobs.select, /AFTER: \$\{\{ github\.sha \}\}/);
 });
 
 test("two runs never run at once, and a newer run does not cancel one in progress", () => {
