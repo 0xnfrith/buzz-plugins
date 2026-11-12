@@ -25,7 +25,8 @@
 # moment after load. It does not prove that the desktop app's Git importer imports it, or that the plugin works when it is used. The web
 # build has no native side (no command runner, no HTTP client), and the pinned build cannot reach agent tabs, conversation tools or
 # shortcuts, which run only when a person uses them: a plugin that breaks there still passes. A run of each plugin in the desktop app
-# itself, and a way back to the last known-good commit, are not built yet.
+# itself is not built yet. The way back to a known-good commit is a script a person runs, not part of this workflow: it opens a pull
+# request that restores one plugin's folder from its tag (.github/after-merge/restore-plugin.mjs, "Way back" in docs/known-good.md).
 #
 # The tests of the scripts and of this file are in after-merge-tests.yml, which tests.yml calls on every pull request.
 name: After merge

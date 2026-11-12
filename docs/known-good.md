@@ -32,7 +32,54 @@ It proves that the built plugin loads in Buzz's **web** build, that its pages an
 
 It does not look at agent tabs, conversation tools or shortcuts either. The pinned web build has no `ctx.agents.registerTab`, and a tool or a shortcut runs only when a person uses it, so a plugin that breaks there still passes.
 
-A run of each plugin in the desktop app, and a way back to the last known-good commit, are not built yet.
+A run of each plugin in the desktop app is not built yet. The way back to a known-good commit is [below](#way-back).
+
+## Way back
+
+When a plugin on `main` is broken and the last version that loaded is the quickest fix, restore the plugin's folder from its tag. The script [`restore-plugin.mjs`](../.github/after-merge/restore-plugin.mjs) opens a pull request that makes `plugins/<plugin>/` exactly what it was at `good/<plugin>`. It never changes `main` itself: the restore goes through the same pipeline as any change (`all-tests`, review, merge).
+
+### When to use it
+
+- A change that is on `main` broke a plugin for the people who install from `main`, and the tag still marks a version that worked.
+- Not when a small fix forward is quicker: the restore throws away every change to that plugin since the tag, the fixes included, until someone applies them again.
+- Not for anything outside `plugins/<plugin>/`. The script changes nothing else, so a bad change to the docs or the workflows is reverted the usual way.
+- A tag only says the plugin loaded in Buzz's web build (see above). It does not say the plugin worked in the desktop app, and the restore has not been tried there.
+
+### The dry run
+
+Run it from a clone of the repository, with the working tree clean. With no flag it only reads:
+
+```
+.github/after-merge/restore-plugin.mjs vim
+```
+
+It prints the plugin, the commit `good/vim` points at, the commit `origin/main` is at, the diff stat it would apply, and the branch and the pull request title it would use, and then says it is a dry run. Its only write is a fetch of `origin`'s `main` and of that one tag into the clone (the remote's tag replaces a local tag of the same name). It makes no branch and no commit, changes no file, and pushes nothing.
+
+It refuses, with a message and a non-zero exit, when
+
+- the name is not a plugin folder name (lowercase letters, digits and hyphens), or the command line is not understood;
+- the working tree is not clean, there is no `origin`, or this is not a git repository;
+- `origin` has no `good/<plugin>` tag;
+- the tag's commit is not in the history of `origin/main` (history was rewritten: a person has to look at the tag);
+- `plugins/<plugin>/` on `origin/main` already matches the tag, so there is nothing to restore;
+- the branch it would use already exists, in the clone or on `origin`: a restore from these two commits was already made.
+
+### `--open`
+
+```
+.github/after-merge/restore-plugin.mjs vim --open
+```
+
+Only this flag acts, and it needs `gh` installed and logged in. It builds one commit on top of `origin/main` whose tree is `origin/main`'s with `plugins/<plugin>/` replaced by the tag's, in a temporary index: the working tree, the current branch and every other branch of the clone are left alone. Files added to the folder since the tag are removed, and files deleted since are back. It checks that the folder in that commit is the tag's folder (the same Git tree, so the same bytes and file modes), that nothing outside the folder changed and that the parent is `origin/main`. Only then does it push the commit as a new branch named `restore-<plugin>-to-<tag commit>-on-<main commit>` (never forced, never `main`, no tag), and open a pull request against `main` with `gh pr create`. If `gh` fails after the push, the branch stays pushed and the message says so, so the pull request can be opened by hand.
+
+The pull request has a neutral title, `Restore plugins/<plugin> to its known-good version (good/<plugin> at <short commit>)`. Its body names the plugin, the tag, the tag's commit and `main`'s commit, shows the diff stat, and says that the restore came from the known-good tag and that `plugin.js` is restored as built at that commit, together with its source, so the check that the committed `plugin.js` is the build of that source sees the pair that passed it then. It also says that a run in the desktop app is not built yet.
+
+### After that
+
+- The pull request runs the plugin's tests like any other change to the plugin, and `all-tests` has to pass. If the restored version fails them, the pull request is red and nothing is lost: nothing has been merged.
+- A person reviews it and merges it. The script merges nothing.
+- After the merge, `plugins/<plugin>/` is the same as at the tag, so the check after a merge finds nothing to do for it: it compares each plugin with its tag, and the tag stays where it is, at the older commit. A later change to the plugin is checked as usual, and moves the tag when it passes.
+- If the tag itself is wrong (it points at a version that is broken), the restore does not help: fix the plugin forward, and the check after the next merge moves the tag when it passes.
 
 ## Known gaps
 
@@ -49,6 +96,7 @@ pnpm install --frozen-lockfile && pnpm exec playwright install chromium
 .github/after-merge/load-check/run.sh /path/to/block/buzz-app vim linear     # the plugins to load, by folder name
 node .github/after-merge/load-check/canary.mjs /path/to/block/buzz-app          # the check must fail on broken plugins
 node --test .github/after-merge/after-merge.test.mjs                             # picking the plugins, moving the tags
+node --test .github/after-merge/restore-plugin.test.mjs                          # the way back, in made-up repositories with a stand-in for gh
 ```
 
 `run.sh` copies the plugin, a small wrapper and the spec into the checkout, so use a scratch clone; it puts everything back when it ends.
