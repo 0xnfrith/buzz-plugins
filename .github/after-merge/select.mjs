@@ -11,8 +11,9 @@
 // a push that changes no plugin picks none once every plugin is tagged. (tag.mjs moves an existing tag only when the plugin's folder
 // differs from where the tag is, so no tag moves on a push that did not change its plugin.)
 //
-// Appends `plugins=<JSON array of folder names>` to $GITHUB_OUTPUT and a table to $GITHUB_STEP_SUMMARY. Fails, after writing the
-// output, when a folder the importer would list has a name that cannot be used in a tag: it could never be tagged.
+// Appends `plugins=<JSON array of folder names>` to $GITHUB_OUTPUT and a table to $GITHUB_STEP_SUMMARY. A folder the importer would
+// list but whose name cannot be used in a tag could never be tagged: it is left out of `plugins`, named in `refused=<JSON array>`, and
+// annotated as an error, and this script still succeeds, so the other plugins are checked and tagged. verdict.mjs turns the run red.
 import { COMMIT, ZERO, git, installable, isCommit, localTag, output, shown, summary } from "./lib.mjs";
 
 const { AFTER = "" } = process.env;
@@ -21,6 +22,7 @@ const { AFTER = "" } = process.env;
 if (AFTER === ZERO) {
   console.log("The push deleted the branch: nothing to check.");
   output("plugins", "[]");
+  output("refused", "[]");
   process.exit(0);
 }
 if (!COMMIT.test(AFTER) || !isCommit(AFTER)) {
@@ -53,12 +55,10 @@ console.log(`${names.length} installable plugin(s) at ${AFTER.slice(0, 7)}: ${na
 console.log(`To check: ${picked.join(", ") || "none"}`);
 for (const row of rows) console.log(`  ${row.folder}: ${row.checked ? "check" : "skip"} (${row.because})`);
 output("plugins", JSON.stringify(picked));
+output("refused", JSON.stringify(refused));
 summary("### Plugins to load-check\n\n| Plugin | Checked | Because |\n| --- | --- | --- |");
 for (const row of rows) summary(`| ${row.folder} | ${row.checked ? "yes" : "no"} | ${row.because} |`);
 
-if (refused.length) {
-  for (const folder of refused) {
-    console.error(`::error::plugins/${shown(folder)}/ is installable, but its name cannot be used in a good/ tag: use lowercase letters, digits and hyphens, and start with a letter or digit.`);
-  }
-  process.exit(1);
+for (const folder of refused) {
+  console.error(`::error::plugins/${shown(folder)}/ is installable, but its name cannot be used in a good/ tag: use lowercase letters, digits and hyphens, and start with a letter or digit.`);
 }

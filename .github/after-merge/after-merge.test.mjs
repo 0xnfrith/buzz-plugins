@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,13 +49,16 @@ const world = () => {
   return { root, remote, dir, git, commit, remoteTag, putTag, done: () => rmSync(root, { recursive: true, force: true }) };
 };
 
-/** Runs select.mjs in the clone; returns its status, its log and the folders it picked (null if it wrote none). */
+/** Runs select.mjs in the clone; returns its status, its log, the folders it picked and the ones it refused (null if it wrote none). */
 const select = (w, AFTER) => {
   const out = join(w.root, "output");
   writeFileSync(out, "");
   const result = spawnSync("node", [join(here, "select.mjs")], { cwd: w.dir, encoding: "utf8", env: { PATH: process.env.PATH, HOME: process.env.HOME, AFTER, GITHUB_OUTPUT: out } });
-  const line = readFileSync(out, "utf8").split("\n").find((entry) => entry.startsWith("plugins="));
-  return { status: result.status, log: result.stdout + result.stderr, picked: line ? JSON.parse(line.slice("plugins=".length)) : null };
+  const written = (name) => {
+    const line = readFileSync(out, "utf8").split("\n").find((entry) => entry.startsWith(`${name}=`));
+    return line ? JSON.parse(line.slice(name.length + 1)) : null;
+  };
+  return { status: result.status, log: result.stdout + result.stderr, picked: written("plugins"), refused: written("refused") };
 };
 /** Runs tag.mjs in the clone. */
 const tag = (w, AFTER, selected, passed, extra = {}) => {
@@ -191,14 +194,44 @@ test("a plugin that was deleted is not picked, and a plugin that was added is", 
   assert.deepEqual(select(w, second).picked, ["delta"]);
 }));
 
-test("a folder whose name cannot be a tag name fails the run, after the others are written", withWorld((w) => {
-  w.commit({ ...files({ alpha: plugin(), "Bad Name": plugin(), "-dash": plugin() }) });
+test("a folder whose name cannot be a tag name is refused and named, and the others are still picked and tagged", withWorld((w) => {
+  w.commit({ ...files({ alpha: plugin(), "Bad Name": plugin(), "-dash": plugin(), "with\nnewline": plugin() }) });
   const second = w.commit({ "README.md": "x\n" });
   const result = select(w, second);
-  assert.notEqual(result.status, 0, result.log);
+  assert.equal(result.status, 0, result.log);
   assert.deepEqual(result.picked, ["alpha"]);
+  assert.deepEqual(result.refused, ["-dash", "Bad Name", "with\nnewline"]);
   assert.match(result.log, /::error::plugins\/Bad Name\/ is installable, but its name cannot be used in a good\/ tag/);
   assert.match(result.log, /::error::plugins\/-dash\/ is installable/);
+  assert.doesNotMatch(result.log, /^newline/m, "a newline in a name does not start a line of the log");
+  // The plugin that can be named goes on to be tagged, and no tag is made for the others.
+  const tagged = tag(w, second, result.picked, result.picked);
+  assert.equal(tagged.status, 0, tagged.log);
+  assert.equal(w.remoteTag("alpha"), second);
+  const tags = spawnSync("git", ["tag", "--list"], { cwd: w.remote, encoding: "utf8" }).stdout.trim().split("\n");
+  assert.deepEqual(tags, ["good/alpha"]);
+}));
+
+test("a plugin.js or a manifest.json that is a symlink is not a file the importer lists: the folder is not installable", withWorld((w) => {
+  for (const [folder, link] of [["linked-plugin", "plugin.js"], ["linked-manifest", "manifest.json"]]) {
+    mkdirSync(join(w.dir, "plugins", folder), { recursive: true });
+    const other = link === "plugin.js" ? "manifest.json" : "plugin.js";
+    writeFileSync(join(w.dir, "plugins", folder, other), "x\n");
+    writeFileSync(join(w.dir, "plugins", folder, "target"), "x\n");
+    symlinkSync("target", join(w.dir, "plugins", folder, link));
+  }
+  const first = w.commit(files({ alpha: plugin() }));
+  assert.match(w.git("ls-tree", "HEAD", "plugins/linked-plugin/plugin.js"), /^120000 blob/, "git stored a symlink");
+  const result = select(w, first);
+  assert.equal(result.status, 0, result.log);
+  assert.deepEqual(result.picked, ["alpha"]);
+  assert.deepEqual(result.refused, []);
+  const tagged = tag(w, first, ["alpha", "linked-plugin", "linked-manifest"], ["alpha", "linked-plugin", "linked-manifest"]);
+  assert.notEqual(tagged.status, 0, "a symlinked folder is not tagged even when it is named");
+  assert.match(tagged.log, /linked-plugin: not installable/);
+  assert.match(tagged.log, /linked-manifest: not installable/);
+  assert.equal(w.remoteTag("alpha"), first);
+  assert.equal(w.remoteTag("linked-plugin"), null);
 }));
 
 test("a push that deleted the branch, and an unreadable after, pick nothing and say so", withWorld((w) => {
@@ -382,6 +415,63 @@ test("an annotated good/ tag counts for the commit it points at", withWorld((w) 
   assert.equal(w.remoteTag("alpha"), second);
 }));
 
+// ---- The verdict ----
+
+/** Runs verdict.mjs with these job results and lists. */
+const verdict = (env) => {
+  const result = spawnSync("node", [join(here, "verdict.mjs")], { encoding: "utf8", env: { PATH: process.env.PATH, HOME: process.env.HOME, ...env } });
+  return { status: result.status, log: result.stdout + result.stderr };
+};
+const fine = { SELECT: "success", CHECK: "success", TAG: "success", REFUSED: "[]", FAILED: "[]" };
+
+test("the run is green when every plugin loaded and was tagged, and when there was nothing to check", () => {
+  assert.equal(verdict(fine).status, 0);
+  assert.equal(verdict({ ...fine, CHECK: "skipped", TAG: "skipped", FAILED: "" }).status, 0, "nothing was picked");
+});
+
+test("the run is red when a plugin failed the load check, and names it", () => {
+  const result = verdict({ ...fine, FAILED: '["vim","linear"]' });
+  assert.equal(result.status, 1);
+  assert.match(result.log, /::error::These plugins did not load in Buzz's web build: "vim", "linear"/);
+});
+
+test("the run is red when a folder was refused, even when nothing else ran", () => {
+  const result = verdict({ ...fine, CHECK: "skipped", TAG: "skipped", FAILED: "", REFUSED: '["Bad Name"]' });
+  assert.equal(result.status, 1);
+  assert.match(result.log, /"Bad Name"/);
+  assert.equal(verdict({ ...fine, REFUSED: '["Bad Name"]' }).status, 1, "and when the others loaded");
+});
+
+test("the run is red when a job broke, was cancelled, or did not run when it should have", () => {
+  for (const [what, env] of [
+    ["select failed", { SELECT: "failure", CHECK: "skipped", TAG: "skipped", FAILED: "", REFUSED: "" }],
+    ["select was skipped", { SELECT: "skipped" }],
+    ["check failed", { CHECK: "failure", TAG: "skipped", FAILED: "" }],
+    ["check was cancelled", { CHECK: "cancelled", TAG: "skipped", FAILED: "" }],
+    ["tag failed", { TAG: "failure" }],
+    ["tag was skipped after a check that ran", { TAG: "skipped" }],
+    ["tag was cancelled", { TAG: "cancelled" }],
+    ["tag ran without a check", { CHECK: "skipped", TAG: "failure", FAILED: "" }],
+    ["no list of failed plugins", { FAILED: "" }],
+    ["a list of failed plugins that is not a list of names", { FAILED: '[1]' }],
+    ["a list of failed plugins that is not JSON", { FAILED: "vim" }],
+    ["no list of refused folders", { REFUSED: "" }],
+    ["a list of refused folders that is not JSON", { REFUSED: "x" }],
+    ["nothing at all", { SELECT: "", CHECK: "", TAG: "", REFUSED: "", FAILED: "" }],
+  ]) {
+    const result = verdict({ ...fine, ...env });
+    assert.equal(result.status, 1, `${what}: ${result.log}`);
+  }
+});
+
+test("a folder name cannot start a line of the log or an annotation of its own", () => {
+  const result = verdict({ ...fine, REFUSED: JSON.stringify(["x\n::error::pwned", "y\r::set-output name=a::b"]) });
+  assert.equal(result.status, 1);
+  assert.doesNotMatch(result.log, /^::error::pwned/m);
+  assert.doesNotMatch(result.log, /^::set-output/m);
+  assert.equal(result.log.split("\n").filter((line) => line.startsWith("::")).length, 1, "one annotation, ours");
+});
+
 // ---- What the workflow may do ----
 
 const workflow = readFileSync(join(here, "..", "workflows", "after-merge.yml"), "utf8");
@@ -409,11 +499,11 @@ test("the workflow runs on a push to main and on nothing else", () => {
 });
 
 test("only the tagging job may write, and it writes only contents", () => {
-  assert.deepEqual(Object.keys(jobs).sort(), ["check", "select", "tag"]);
+  assert.deepEqual(Object.keys(jobs).sort(), ["check", "select", "tag", "verdict"]);
   assert.match(code, /^permissions:\n  contents: read\n/m, "read-only by default");
   assert.equal((code.match(/: write/g) ?? []).length, 1, "one write permission in the whole file");
   assert.match(jobs.tag, /^    permissions:\n      contents: write(?: #.*)?\n/m);
-  for (const name of ["select", "check"]) {
+  for (const name of ["select", "check", "verdict"]) {
     assert.match(jobs[name], /^    permissions:\n      contents: read\n/m, `${name} is read-only`);
     assert.doesNotMatch(jobs[name], /: write\b|permissions: write-all/, name);
   }
@@ -423,7 +513,7 @@ test("the tagging job runs no code from outside this repository, and the others 
   assert.doesNotMatch(jobs.tag, /block\/buzz-app|pnpm|playwright/);
   const uses = [...jobs.tag.matchAll(/uses: (\S+)/g)].map((match) => match[1].split("@")[0]);
   assert.deepEqual(uses.sort(), ["actions/checkout", "actions/setup-node"]);
-  for (const name of ["select", "check"]) {
+  for (const name of ["select", "check", "verdict"]) {
     for (const checkout of jobs[name].split("- uses: actions/checkout").slice(1)) assert.match(checkout.split("\n- ")[0], /persist-credentials: false/, `${name}: every checkout drops its credentials`);
   }
   assert.doesNotMatch(code, /secrets\.(?!GITHUB_TOKEN)|PERSONAL|\bPAT\b/, "no secret but the workflow's own token");
@@ -443,7 +533,34 @@ test("a plugin is tagged only after its check ran: the tagging job needs the che
   assert.match(jobs.tag, /PASSED: \$\{\{ needs\.check\.outputs\.passed \}\}/);
   assert.match(jobs.tag, /SELECTED: \$\{\{ needs\.select\.outputs\.plugins \}\}/);
   assert.match(jobs.tag, /AFTER: \$\{\{ github\.sha \}\}/);
-  assert.match(jobs.tag, /if: .*!cancelled\(\)/);
-  assert.match(jobs.tag, /needs\.check\.outputs\.passed != ''/);
+  // It runs after a check that ran to its end, and not after one that broke or was skipped: each condition is needed.
+  const condition = /^    if: (.*)$/m.exec(jobs.tag)?.[1] ?? "";
+  for (const part of ["!cancelled()", "needs.check.result == 'success'", "needs.check.outputs.passed != ''", "needs.check.outputs.failed != ''"]) {
+    assert.ok(condition.includes(part), `the tagging job's condition has '${part}': ${condition}`);
+  }
+  assert.doesNotMatch(condition, /\|\||always\(\)/, "and nothing that widens it");
   assert.match(jobs.check, /if: .*needs\.select\.outputs\.plugins != '\[\]'/);
+});
+
+test("a plugin that failed, or a refused folder, or a broken job, turns the run red: the verdict job runs after the others, whatever they did", () => {
+  assert.match(jobs.verdict, /^    needs: \[select, check, tag\]$/m);
+  assert.match(jobs.verdict, /^    if: \$\{\{ !cancelled\(\) \}\}$/m, "not skipped when a job it needs was skipped or failed");
+  assert.match(jobs.verdict, /run: node \.github\/after-merge\/verdict\.mjs$/m);
+  for (const [variable, source] of [
+    ["SELECT", "needs.select.result"],
+    ["CHECK", "needs.check.result"],
+    ["TAG", "needs.tag.result"],
+    ["REFUSED", "needs.select.outputs.refused"],
+    ["FAILED", "needs.check.outputs.failed"],
+  ]) {
+    assert.match(jobs.verdict, new RegExp(`^          ${variable}: \\$\\{\\{ ${source.replaceAll(".", "\\.")} \\}\\}$`, "m"), `${variable} comes from ${source}`);
+  }
+  assert.match(jobs.select, /refused: \$\{\{ steps\.pick\.outputs\.refused \}\}/);
+  assert.doesNotMatch(jobs.verdict, /continue-on-error/, "the verdict cannot be made to pass");
+});
+
+test("failing to keep the load check's traces does not undo a check that passed", () => {
+  const upload = jobs.check.split("- uses: actions/upload-artifact")[1] ?? "";
+  assert.match(upload.split("\n- ")[0], /continue-on-error: true/);
+  assert.doesNotMatch(jobs.check.replace(upload, ""), /continue-on-error/, "and nothing else in the check may fail quietly");
 });

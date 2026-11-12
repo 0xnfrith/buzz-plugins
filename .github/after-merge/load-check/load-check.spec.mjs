@@ -3,10 +3,15 @@
 //  - finish `apply` (so its `inject` was met and nothing threw), and be active by the host's own account;
 //  - leave no page error and no console error behind (the harness's `app` fixture fails the test on either, at the end of it);
 //  - open and draw every page it registers that the host lists (a primary page): the host's error screen for a page that cannot open
-//    is not shown, and something is on the page.
+//    is not shown, and something is on the page;
+//  - draw every settings card it registers: the card's section in Settings opens, the host's "unavailable" notice for a card that
+//    threw is not shown, and something is in the card.
+// Not reached: agent tabs, conversation tools and shortcuts. The pinned build has no `ctx.agents.registerTab`, and a tool or a shortcut
+// runs only when a person uses it, so a plugin that breaks there still passes (docs/known-good.md says so).
+// Every plugin then waits the same time before the test ends, so an error a little after load is seen whatever the plugin registers.
 // Run it with .github/after-merge/load-check/run.sh.
 import { test, expect } from "./fixture.mjs";
-import { openPage } from "./navigation.mjs";
+import { closeSettings, openPage, openSettings, settingsDialog, settingsSections } from "./navigation.mjs";
 
 const id = process.env.LOAD_CHECK_PLUGIN_ID;
 const folder = process.env.LOAD_CHECK_PLUGIN;
@@ -57,4 +62,32 @@ test(`${folder}: loads, is active and its pages open`, async ({ page, app }) => 
     await expect(page.getByRole("alert").filter({ hasText: /This (page|destination) couldn’t open/ }), `${entry.title} opens`).toHaveCount(0);
     await expect(main, `${entry.title} draws`).not.toBeEmpty();
   }
+
+  // The settings cards the plugin registered, as the host lists them. Each is a section of Settings, named by the card's title.
+  const cards = await page.evaluate(
+    (id) =>
+      window.__loadCheck.ctx.settingsCards
+        .snapshot()
+        .filter((entry) => entry.key.startsWith(`${id}/`))
+        .map((entry) => ({ key: entry.key, title: entry.title })),
+    id,
+  );
+  console.log(`${folder}: ${cards.length} settings card(s) registered: ${cards.map((entry) => entry.title).join(", ") || "none"}`);
+  for (const card of cards) {
+    await openSettings(page);
+    // The pane shows one section at a time (the others are hidden), so its visible text is what the selected section draws.
+    const pane = settingsDialog(page).locator("#settings-content");
+    const before = await pane.innerText();
+    // Fails if the section is not there, or not unique: a card that cannot be reached is not checked, and not passed.
+    await settingsSections(page).getByRole("button", { name: card.title, exact: true }).click();
+    await expect.poll(() => pane.innerText(), { message: `${card.title} settings card replaces the section before it` }).not.toBe(before);
+    await page.waitForTimeout(1000);
+    await expect(settingsDialog(page).getByRole("alert").filter({ hasText: "This optional control is unavailable" }), `${card.title} settings card shows`).toHaveCount(0);
+    expect(await pane.innerText(), `${card.title} settings card draws`).toMatch(/\S/);
+    await closeSettings(page);
+  }
+
+  // The same wait for every plugin, with or without a page or a card, so a late error is seen (and fails the test, as above) whatever
+  // the plugin registers.
+  await page.waitForTimeout(2000);
 });

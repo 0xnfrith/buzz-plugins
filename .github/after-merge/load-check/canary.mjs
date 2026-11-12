@@ -16,26 +16,36 @@ if (!app) {
 }
 const run = join(dirname(fileURLToPath(import.meta.url)), "run.sh");
 
-// The plugin that is fine: a page with a heading. `apply` takes the context as `ctx`; the broken ones change one thing.
-const fine = (page = `() => h("h1", null, "Canary page")`, before = "", inject = `["react", "pages"]`) => `export const inject = ${inject};
+// The plugin that is fine: a page with a heading and a settings card with a line of text. `apply` takes the context as `ctx`; each
+// broken one changes one thing.
+const fine = ({ page = `() => h("h1", null, "Canary page")`, card = `() => h("p", null, "Canary card")`, before = "", inject = `["react", "pages", "settingsCards"]` } = {}) => `export const inject = ${inject};
 export function apply(ctx) {
   const h = ctx.react.createElement;
   ${before}
   ctx.pages.register({ id: "page", title: "Canary page", primary: true, component: ${page} });
+  ctx.settingsCards.register({ id: "settings", title: "Canary card", group: "Plugins", component: ${card} });
 }
 `;
 const plugins = {
   "canary-fine": fine(),
   "canary-throws-at-load": `throw new Error("canary: thrown while the module loads");\n${fine()}`,
   "canary-syntax-error": `${fine()}\nthis is not javascript\n`,
-  "canary-apply-throws": fine(undefined, `throw new Error("canary: thrown in apply");`),
-  "canary-apply-rejects": fine().replace("export function apply", "export async function apply").replace("const h", "await Promise.resolve();\n  const h").replace("  ctx.pages.register", `  throw new Error("canary: rejected in apply");\n  ctx.pages.register`),
-  "canary-missing-service": fine(undefined, "", `["react", "pages", "no-such-service"]`),
-  "canary-page-throws": fine(`() => { throw new Error("canary: thrown while the page renders"); }`),
-  "canary-page-blank": fine(`() => null`),
-  "canary-console-error": fine(undefined, `console.error("canary: logged an error");`),
-  "canary-late-error": fine(undefined, `setTimeout(() => { throw new Error("canary: thrown later"); }, 200);`),
-  "canary-unhandled-rejection": fine(undefined, `Promise.reject(new Error("canary: nobody catches this"));`),
+  "canary-apply-throws": fine({ before: `throw new Error("canary: thrown in apply");` }),
+  "canary-apply-rejects": fine({ before: `await Promise.resolve(); throw new Error("canary: rejected in apply");` }).replace("export function apply", "export async function apply"),
+  "canary-missing-service": fine({ inject: `["react", "pages", "settingsCards", "no-such-service"]` }),
+  "canary-page-throws": fine({ page: `() => { throw new Error("canary: thrown while the page renders"); }` }),
+  "canary-page-blank": fine({ page: `() => null` }),
+  "canary-card-throws": fine({ card: `() => { throw new Error("canary: thrown while the settings card renders"); }` }),
+  "canary-card-blank": fine({ card: `() => null` }),
+  "canary-console-error": fine({ before: `console.error("canary: logged an error");` }),
+  "canary-late-error": fine({ before: `setTimeout(() => { throw new Error("canary: thrown later"); }, 200);` }),
+  "canary-unhandled-rejection": fine({ before: `Promise.reject(new Error("canary: nobody catches this"));` }),
+  // No page and no card: nothing for the check to open, so only the wait before the test ends can see an error that comes a moment after load.
+  "canary-no-page-late-error": `export const inject = ["react"];
+export function apply(ctx) {
+  setTimeout(() => { throw new Error("canary: thrown a moment after load, by a plugin with no page"); }, 1200);
+}
+`,
   "canary-no-manifest-id": fine(),
 };
 // Each plugin's manifest.json: the same for all but the last, which has no id.

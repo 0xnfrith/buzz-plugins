@@ -43,7 +43,7 @@ jobs:
   load-check:
     name: Load check of every plugin, and its canary
     runs-on: ubuntu-24.04
-    timeout-minutes: 40 # the set-up is about five minutes; each plugin takes about a minute, and the canary about three
+    timeout-minutes: 40 # the set-up is about five minutes; each plugin takes about a minute, and the canary about four
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

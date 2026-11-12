@@ -18,21 +18,26 @@ It compares each plugin with its tag, not with what the push changed. A plugin t
 For each plugin it registers the committed `plugin.js` and `manifest.json` in the production web build of [block/buzz-app](https://github.com/block/buzz-app) at the commit named by `BUZZ_APP_REF` in the workflow, through the harness's installed-fixture list (the registration path the plugins' own browser tests use), in headless Chromium. One build and one browser for each plugin, so a plugin that does not even load cannot hide another. The plugin passes when:
 
 - `inject` is met and `apply` finishes without throwing, and the host calls the plugin active;
-- no page error and no console error comes up while it runs;
-- every page it registers that the host lists opens, shows no error screen and draws something.
+- no page error and no console error comes up while it runs, and none comes in the two seconds after the last of its pages and settings cards has been looked at (every plugin waits the same time, whether it has a page or not);
+- every page it registers that the host lists opens, shows no error screen and draws something;
+- every settings card it registers is a section of Settings that opens, does not show the host's "unavailable" notice for a card that threw, and has something in it.
 
 The same check runs for every plugin; it is not a copy of the plugins' own suites. No plugin needed a stand-in for a host service: the web build's `runCommand` answers `null`, as the desktop app does when a command fails, and no plugin calls `request` before a person uses it. A plugin that did would fail the check and get a stand-in then.
 
-A plugin that passes gets `good/<folder>` moved to the pushed commit, and only forward: the tag moves only to a commit that contains the commit it is at, and only when the plugin's folder differs between the two. A plugin that fails keeps its tag where it was, the other plugins are still checked and tagged, and the run goes red. The tags are pushed by one job, the only one with write access, using the workflow's own `GITHUB_TOKEN`, and the only thing it writes is `refs/tags/good/<folder>`.
+A plugin that passes gets `good/<folder>` moved to the pushed commit, and only forward: the tag moves only to a commit that contains the commit it is at, and only when the plugin's folder differs between the two. A plugin that fails keeps its tag where it was, and the other plugins are still checked and tagged. The run then goes red, in its last job (`verdict`), which can only read and which also goes red when a folder was refused or any job broke. The tags are pushed by one job, the only one with write access, using the workflow's own `GITHUB_TOKEN`, and the only thing it writes is `refs/tags/good/<folder>`.
 
-## What it does not prove
+## What it proves, and what it does not
 
-It proves that the built plugin loads in Buzz's **web** build. It does not prove that the desktop app's Git importer imports it, that the plugin works when a person uses it (the web build has no command runner and no HTTP client), or that it works in the desktop app at all. A run of each plugin in the desktop app, and a way back to the last known-good commit, are not built yet.
+It proves that the built plugin loads in Buzz's **web** build, that its pages and settings cards draw there, and that it leaves no error behind in the seconds after. It does not prove that the desktop app's Git importer imports it, that the plugin works when a person uses it (the web build has no command runner and no HTTP client), or that it works in the desktop app at all.
+
+It does not look at agent tabs, conversation tools or shortcuts either. The pinned web build has no `ctx.agents.registerTab`, and a tool or a shortcut runs only when a person uses it, so a plugin that breaks there still passes.
+
+A run of each plugin in the desktop app, and a way back to the last known-good commit, are not built yet.
 
 ## Known gaps
 
 - A plugin that fails keeps its tag, and the run is red. Every later push checks it again, and goes red again, until it passes or is fixed.
-- A plugin folder whose name is not lowercase letters, digits and hyphens cannot be named in a tag. The run fails, and says which folder.
+- A plugin folder whose name is not lowercase letters, digits and hyphens cannot be named in a tag. It is left out and named, the other plugins are checked and tagged, and then the run goes red until the folder is renamed.
 - A tag that sits on a commit that is not in the history of `main` (after a force push that rewrote history) is not moved, and the run fails until a person fixes the tag.
 
 ## Running the check by hand
