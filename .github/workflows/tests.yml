@@ -42,6 +42,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       rows: ${{ steps.match.outputs.rows }}
+      after-merge: ${{ steps.match.outputs.after-merge }}
       agent-skills-highlighter: ${{ steps.match.outputs.agent-skills-highlighter }}
       agent-stats: ${{ steps.match.outputs.agent-stats }}
       ai-sorter: ${{ steps.match.outputs.ai-sorter }}
@@ -72,6 +73,12 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
           HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
         run: .github/tests-to-run.sh
+
+  after-merge:
+    name: After-merge check tests
+    needs: changes
+    if: ${{ needs.changes.outputs.after-merge == 'true' }}
+    uses: ./.github/workflows/after-merge-tests.yml
 
   agent-skills-highlighter:
     name: Agent Skills Highlighter tests
@@ -153,7 +160,7 @@ jobs:
     #     left without a job and no job without a row;
     #   - each test workflow did what its row said: passed when it was called ("true"), was skipped when it was not ("false").
     name: all-tests
-    needs: [changes, agent-skills-highlighter, agent-stats, ai-sorter, artifacts, artifacts-browser, beeper, linear, megatech-support, megatech-support-browser, merge-by-policy, vim-tests, vim-latency]
+    needs: [changes, after-merge, agent-skills-highlighter, agent-stats, ai-sorter, artifacts, artifacts-browser, beeper, linear, megatech-support, megatech-support-browser, merge-by-policy, vim-tests, vim-latency]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
