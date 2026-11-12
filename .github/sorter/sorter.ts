@@ -441,9 +441,9 @@ export async function approverOfHead(opts: {
 //
 // Where a record may come from: a check run of this check, by the GitHub Actions app, on this head, whose workflow run is this workflow
 // file (WORKFLOW_PATH), started by a pull_request event, for a pull request into this base branch. GitHub does not say which version of
-// the workflow file ran. A pull request whose change edits it touches .github/, which waits for the owner before any record is read;
-// another branch would have to be pushed to this repository, and anyone who can push a branch can forge a check outright (the README's
-// limits).
+// the workflow file ran. A pull request whose change edits it can record a verdict of its own, and nothing waits for that, since
+// always.txt no longer names .github/ and the check is a report; another branch would have to be pushed to this repository, and anyone
+// who can push a branch can forge a check outright (the README's limits).
 
 export const WORKFLOW_PATH = ".github/workflows/ai-sorter.yml";
 
