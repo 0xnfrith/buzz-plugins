@@ -1,6 +1,9 @@
-# Type check, unit tests and build check of the Beeper plugin (plugins/beeper/test/unit): the curl request, the client against the
-# real curl and a fake Beeper, the store, the formatting, and that the committed plugin.js is the build of src/. No Beeper Desktop is
-# needed. The browser suite (plugins/beeper/test/run.sh) needs a block/buzz-app checkout and is run by hand.
+# The tests of the Beeper plugin. The `test` job: the type check and the unit tests (plugins/beeper/test/unit): the curl request, the
+# client against the real curl and a fake Beeper, the store, the formatting, and that the committed plugin.js is the build of src/. The
+# `browser` job: the browser suite (plugins/beeper/test/web/beeper.spec.mjs: the list, a chat, sending, every problem state, the Settings
+# card, the Keychain flows, light and dark, clean-up, the key budget) in headless Chromium against block/buzz-app's own production web
+# build, the way plugins/beeper/test/run.sh runs it by hand. Neither needs a Beeper Desktop, a token or a Keychain: the browser suite
+# runs the real curl against a fake Beeper Desktop on loopback, and a stand-in `security` keeps its "keychain" in a file.
 name: Beeper tests
 
 on:
@@ -12,6 +15,11 @@ on:
 
 permissions:
   contents: read
+
+env:
+  # The block/buzz-app commit the plugin is tested against. The other workflows that build the app name the same commit: the first step
+  # of each of them (.github/check-app-ref.sh) fails when any two differ, or when one uses it without defining it, so change them together.
+  BUZZ_APP_REF: d92bfb2c4dd89fc5ae6e7a1445f38ad1e8ab7060
 
 jobs:
   test:
@@ -57,3 +65,46 @@ jobs:
             echo "::error::plugin.js is not the build of src/: run 'pnpm run build' in plugins/beeper and commit it"
             exit 1
           fi
+
+  browser:
+    name: Beeper browser tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25 # the suite takes about 3 minutes; the set-up is most of the rest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: BUZZ_APP_REF is defined, and the same, in every workflow that builds the app
+        run: .github/check-app-ref.sh
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: block/buzz-app
+          ref: ${{ env.BUZZ_APP_REF }}
+          path: buzz-app
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: pnpm, as the app pins it
+        run: |
+          corepack enable
+          corepack prepare "$(node -p "require('./buzz-app/package.json').packageManager")" --activate
+      - name: Install the app's dependencies (frozen lockfile)
+        working-directory: buzz-app
+        run: pnpm install --frozen-lockfile
+      - name: Install Chromium
+        working-directory: buzz-app
+        run: pnpm exec playwright install --with-deps chromium
+      - name: curl is on the runner (the suite runs the real one against the fake Beeper)
+        run: curl --version
+      # The plugin's own dependencies are not installed here: the spec, the fake Beeper and the host simulation use only Node's own
+      # modules, and the plugin.js under test is the committed one (the `test` job checks it is the build of src/).
+      - name: Browser tests
+        run: plugins/beeper/test/run.sh buzz-app
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: beeper-browser-test-results
+          path: buzz-app/test-results
+          if-no-files-found: ignore
+          retention-days: 14
