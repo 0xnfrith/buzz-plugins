@@ -114,14 +114,59 @@ def files(*names):
     return [{"status": "modified", "filename": n} if isinstance(n, str) else {"status": "renamed", "filename": n[1], "previous_filename": n[0]} for n in names]
 
 
-def history(*nodes):
-    return {"data": {"repository": {"pullRequest": {"timelineItems": {"totalCount": len(nodes), "nodes": list(nodes)}}}}}
+def history(*nodes, cut=False, **extra):
+    """The auto-merge history as GitHub answers it: the newest events, and whether older ones were left out (`cut`). `extra` adds or replaces
+    fields of the connection, e.g. a totalCount, which under the query's itemTypes filter counts all timeline items, not just the nodes."""
+    conn = {"pageInfo": {"hasPreviousPage": cut}, "nodes": list(nodes)}
+    conn.update(extra)
+    return {"data": {"repository": {"pullRequest": {"timelineItems": conn}}}}
 
 
 OFF_BY_GITHUB = {"__typename": "AutoMergeDisabledEvent", "createdAt": T0, "reasonCode": "repository_rule_violation", "actor": {"login": SLUG}}
 OFF_BY_PERSON = {"__typename": "AutoMergeDisabledEvent", "createdAt": T0, "reasonCode": None, "actor": {"login": "owner"}}
 OFF_BY_US = {"__typename": "AutoMergeDisabledEvent", "createdAt": T0, "reasonCode": None, "actor": {"login": SLUG}}
 ON_BY_US = {"__typename": "AutoMergeEnabledEvent", "createdAt": T0, "actor": {"login": SLUG}}
+
+PASSES = "passes"
+TOO_LONG = "the pull request's auto-merge history is longer than this job reads"
+UNREADABLE = "the pull request's auto-merge history could not be read"
+
+
+def without_page_info(*nodes):
+    h = history(*nodes)
+    del h["data"]["repository"]["pullRequest"]["timelineItems"]["pageInfo"]
+    return h
+
+
+# Each answer GitHub can give for the auto-merge history, and how the step must end on it: past the guard, or red with this message.
+HISTORY_ANSWERS = [
+    ("a totalCount above the filtered nodes, none of them, as measured", history(totalCount=12), PASSES),
+    ("a totalCount above the filtered nodes", history(ON_BY_US, OFF_BY_US, totalCount=12), PASSES),
+    ("older events left out, no nodes", history(cut=True), TOO_LONG),
+    ("older events left out", history(ON_BY_US, cut=True), TOO_LONG),
+    ("older events left out, with a totalCount that fits", history(ON_BY_US, cut=True, totalCount=1), TOO_LONG),
+    ("no pageInfo", without_page_info(ON_BY_US), UNREADABLE),
+    ("a pageInfo without the flag", history(ON_BY_US, pageInfo={}), UNREADABLE),
+    ("a null pageInfo", history(ON_BY_US, pageInfo=None), UNREADABLE),
+] + [("the flag %r" % (v,), history(ON_BY_US, cut=v), UNREADABLE) for v in ("false", "true", 0, 1, None)]
+
+
+def ended_as(r, how):
+    """Whether a run of the step ended as `how` says (one of the answers' ends above)."""
+    if how == PASSES:
+        return r.exit == 0 and r.enabled
+    return r.exit != 0 and not r.enabled and ("FAILED: " + how) in r.summary
+
+
+def history_world(answer):
+    w = ok_world()
+    w[GRAPHQL] = {"out": answer}
+    return w
+
+
+def history_query(r):
+    """The text of the history query the step sent, or None."""
+    return next((c for c in r.calls if c.startswith("read api graphql ")), None)
 
 
 def ok_world():
@@ -564,10 +609,49 @@ class ReArm(Base):
         w = ok_world(); w[GRAPHQL] = {"out": history(ON_BY_US, OFF_BY_GITHUB, ON_BY_US, OFF_BY_GITHUB, ON_BY_US, OFF_BY_GITHUB)}
         self.assertEqual(run_script(w).writes, [])
 
+    def test_a_total_count_above_the_filtered_nodes_gets_past_the_history_check(self):
+        for name, answer, how in HISTORY_ANSWERS:
+            if how == PASSES:
+                with self.subTest(name):
+                    r = run_script(history_world(answer))
+                    self.assertTrue(ended_as(r, how), r.out)
+                    self.assertEqual(r.writes, ["app " + ENABLE])
+
     def test_a_history_longer_than_it_reads_fails_closed(self):
-        h = history(ON_BY_US); h["data"]["repository"]["pullRequest"]["timelineItems"]["totalCount"] = 101
-        w = ok_world(); w[GRAPHQL] = {"out": h}
+        for name, answer, how in HISTORY_ANSWERS:
+            if how == TOO_LONG:
+                with self.subTest(name):
+                    r = run_script(history_world(answer))
+                    self.failed_closed(r)
+                    self.assertTrue(ended_as(r, how), r.out)
+
+    def test_a_missing_or_non_boolean_flag_fails_closed_as_unreadable(self):
+        for name, answer, how in HISTORY_ANSWERS:
+            if how == UNREADABLE:
+                with self.subTest(name):
+                    r = run_script(history_world(answer))
+                    self.failed_closed(r)
+                    self.assertTrue(ended_as(r, how), r.out)
+
+    def test_the_history_query_asks_whether_older_events_were_left_out_and_not_for_a_total(self):
+        q = history_query(run_script(ok_world()))
+        self.assertIn("timelineItems(last:100,itemTypes:[AUTO_MERGE_ENABLED_EVENT,AUTO_MERGE_DISABLED_EVENT])", q)
+        self.assertIn("pageInfo{hasPreviousPage}", q)
+        self.assertNotIn("totalCount", q)
+        self.assertNotIn("totalCount", code(SCRIPT))
+
+    def test_a_history_cut_short_stops_before_the_re_arm_rules_are_read(self):
+        w = history_world(history(ON_BY_US, OFF_BY_PERSON, cut=True))
         self.failed_closed(run_script(w))
+
+    def test_the_re_arm_rules_still_apply_when_the_total_count_is_above_the_nodes(self):
+        person = run_script(history_world(history(ON_BY_US, OFF_BY_PERSON, totalCount=12)))
+        self.assertEqual(person.writes, [])
+        self.assertIn("a person switched auto-merge off", person.summary)
+        capped = run_script(history_world(history(ON_BY_US, OFF_BY_GITHUB, ON_BY_US, OFF_BY_GITHUB, ON_BY_US, OFF_BY_GITHUB, totalCount=12)))
+        self.assertEqual(capped.writes, [])
+        self.assertIn("GitHub switched this pull request's auto-merge off 3 times", capped.summary)
+        self.assertTrue(run_script(history_world(history(ON_BY_US, OFF_BY_GITHUB, totalCount=12))).enabled)
 
     def test_this_apps_auto_merge_on_a_pull_request_that_no_longer_qualifies_is_switched_off(self):
         w = with_pr(ok_world(), auto_merge=OUR_AUTO); w[TESTS_Q] = {"out": runs(run("all-tests", "completed", "failure", 40))}
@@ -576,6 +660,43 @@ class ReArm(Base):
     def test_a_persons_auto_merge_on_a_pull_request_that_does_not_qualify_is_left(self):
         w = with_pr(ok_world(), auto_merge=THEIR_AUTO); w[TESTS_Q] = {"out": runs(run("all-tests", "completed", "failure", 40))}
         self.assertEqual(run_script(w).writes, [])
+
+
+class HistoryGuardMutants(unittest.TestCase):
+    """Each mutant is the step's script with one change to the history guard; the tests above must tell it from the real script. A mutant that
+    does not apply, or that no longer runs at all, would be caught by nothing, so those are checked first."""
+
+    MUTANTS = [
+        ("the guard is gone", "if cut is not False:", "if False:"),
+        ("the guard is inverted", "if cut is not False:", "if cut is not True:"),
+        ("the guard only looks when there are nodes", "if cut is not False:", "if cut is not False and nodes:"),
+        ("the guard reads the total again", "if cut is not False:", 'if items.get("totalCount", 0) > len(nodes):'),
+        ("the guard ends the job green", 'fail("the pull request\'s auto-merge history is longer', 'finish("the pull request\'s auto-merge history is longer'),
+        ("the flag need not be a boolean", "isinstance(cut, bool) and ", ""),
+        ("a missing flag reads as not cut", 'items["pageInfo"]["hasPreviousPage"]', 'items.get("pageInfo", {}).get("hasPreviousPage", False)'),
+        ("the query does not ask for the flag", "pageInfo{hasPreviousPage} ", ""),
+        ("the query asks for the total as well", "pageInfo{hasPreviousPage} ", "totalCount pageInfo{hasPreviousPage} "),
+    ]
+
+    @staticmethod
+    def caught(script):
+        """The first thing the tests above check that this script does differently from the real one, or None."""
+        r = run_script(ok_world(), script=script)
+        if "Traceback" in r.out or "SyntaxError" in r.out:
+            raise AssertionError("the mutant no longer runs: " + r.out)
+        q = history_query(r)
+        if q is None or "pageInfo{hasPreviousPage}" not in q or "totalCount" in q:
+            return "the history query"
+        for name, answer, how in HISTORY_ANSWERS:
+            if not ended_as(run_script(history_world(answer), script=script), how):
+                return name
+        return None
+
+    def test_every_mutant_is_caught(self):
+        for name, old, new in self.MUTANTS:
+            with self.subTest(name):
+                self.assertEqual(SCRIPT.count(old), 1, "the mutant does not apply")
+                self.assertIsNotNone(self.caught(SCRIPT.replace(old, new)), "no test tells this mutant from the real script")
 
 
 class FailSafe(Base):
