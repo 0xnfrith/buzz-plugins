@@ -1,6 +1,7 @@
 # Type check, unit tests and build check of the Linear plugin (plugins/linear/test/unit; the build check: the committed plugin.js is
-# the build of src/), and its key store against a real Secret Service. The browser suite (plugins/linear/test/run.sh) needs a
-# block/buzz-app checkout and is run by hand; plugins/linear/NOTES.md says what it covers.
+# the build of src/), its key store against a real Secret Service, and its browser suite (plugins/linear/test/web/linear.spec.mjs) in
+# headless Chromium against block/buzz-app's own production web build, the way plugins/linear/test/run.sh runs it by hand, with the
+# stand-ins for `security` and `secret-tool` and a fake Linear (no keyring, key or token). plugins/linear/NOTES.md says what it covers.
 name: Linear tests
 
 on:
@@ -12,6 +13,11 @@ on:
 
 permissions:
   contents: read
+
+env:
+  # The block/buzz-app commit the plugin is tested against. The other workflows that build the app name the same commit: the first step
+  # of each of them (.github/check-app-ref.sh) fails when any two differ, or when one uses it without defining it, so change them together.
+  BUZZ_APP_REF: d92bfb2c4dd89fc5ae6e7a1445f38ad1e8ab7060
 
 jobs:
   test:
@@ -97,3 +103,48 @@ jobs:
           # A skipped suite passes too, so the machine-readable result says it: some tests ran, every one passed, none was skipped.
           jq -e '.numTotalTests > 0 and .numPassedTests == .numTotalTests and .numFailedTests == 0 and .numPendingTests == 0' "$RUNNER_TEMP/real.json"
           jq '{tests: .numTotalTests, passed: .numPassedTests, failed: .numFailedTests, skipped: .numPendingTests}' "$RUNNER_TEMP/real.json"
+
+  browser:
+    # plugins/linear/test/web/linear.spec.mjs in headless Chromium against block/buzz-app's own production web build, at BUZZ_APP_REF.
+    # test/run.sh fetches Linear's public schema (a pinned commit, hash checked), copies the built plugin and the spec into the app
+    # checkout and runs the fake Linear behind the host's `request`. The key stores are the stand-ins for `security` and `secret-tool`
+    # (test/fake-security, test/fake-secret-tool): no keyring runs, and no secret or token is used.
+    name: Linear browser tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30 # the tests take a few minutes; the set-up is most of it
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: BUZZ_APP_REF is defined, and the same, in every workflow that builds the app
+        run: .github/check-app-ref.sh
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: block/buzz-app
+          ref: ${{ env.BUZZ_APP_REF }}
+          path: buzz-app
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: pnpm, as the app pins it
+        run: |
+          corepack enable
+          corepack prepare "$(node -p "require('./buzz-app/package.json').packageManager")" --activate
+      - name: Install the app's dependencies (frozen lockfile)
+        working-directory: buzz-app
+        run: pnpm install --frozen-lockfile
+      - name: Install Chromium
+        working-directory: buzz-app
+        run: pnpm exec playwright install --with-deps chromium
+      - name: "Install the plugin's own dependencies (frozen lockfile; the fake Linear runs graphql-js)"
+        run: corepack pnpm@12.16.1 --dir plugins/linear install --frozen-lockfile
+      - name: Browser tests
+        run: plugins/linear/test/run.sh buzz-app
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: linear-browser-test-results
+          path: buzz-app/test-results
+          if-no-files-found: ignore
+          retention-days: 14
