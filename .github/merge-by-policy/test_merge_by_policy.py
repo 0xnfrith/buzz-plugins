@@ -148,6 +148,8 @@ HISTORY_ANSWERS = [
     ("no pageInfo", without_page_info(ON_BY_US), UNREADABLE),
     ("a pageInfo without the flag", history(ON_BY_US, pageInfo={}), UNREADABLE),
     ("a null pageInfo", history(ON_BY_US, pageInfo=None), UNREADABLE),
+    ("nodes that are an object", history(nodes={}), UNREADABLE),
+    ("nodes that are a string", history(nodes=""), UNREADABLE),
 ] + [("the flag %r" % (v,), history(ON_BY_US, cut=v), UNREADABLE) for v in ("false", "true", 0, 1, None)]
 
 
@@ -673,6 +675,7 @@ class HistoryGuardMutants(unittest.TestCase):
         ("the guard reads the total again", "if cut is not False:", 'if items.get("totalCount", 0) > len(nodes):'),
         ("the guard ends the job green", 'fail("the pull request\'s auto-merge history is longer', 'finish("the pull request\'s auto-merge history is longer'),
         ("the flag need not be a boolean", "isinstance(cut, bool) and ", ""),
+        ("the nodes need not be a list", "isinstance(nodes, list) and ", ""),
         ("a missing flag reads as not cut", 'items["pageInfo"]["hasPreviousPage"]', 'items.get("pageInfo", {}).get("hasPreviousPage", False)'),
         ("the query does not ask for the flag", "pageInfo{hasPreviousPage} ", ""),
         ("the query asks for the total as well", "pageInfo{hasPreviousPage} ", "totalCount pageInfo{hasPreviousPage} "),
