@@ -154,10 +154,56 @@ const V = (touches: boolean, over: Partial<Verdict> = {}): Verdict => ({
 const review = (login: string, state: string, commit_id: string) => ({ user: { login }, state, commit_id });
 
 const SMALL_DIFF_SHA256 = () => createHash("sha256").update(SMALL_DIFF).digest("hex");
+// The policy the mechanism tests run under: a fixture list and a fixture always.txt, handed to the sorter through the test-only overrides,
+// so that these tests do not pin the text of the real files (the last describe does that). The list is the repository's old six areas,
+// and the always.txt holds every form an entry takes.
+const FIXTURE_LIST = [
+  "# The sensitive list",
+  "",
+  "A pull request that touches any area below waits for the owner's approval of its latest commit. The AI sorter reads this file and puts it",
+  "in the model's instructions, word for word. `always.txt` names the paths that count as touching it without asking the model.",
+  "",
+  "1. **CI and repository rules**: workflows, CI configuration, CODEOWNERS, branch, merge and review rules, and this sorter itself.",
+  "2. **Credentials and secret handling**: API keys, tokens, passwords and signing keys, and code that asks for, stores, reads, sends or",
+  "   logs any of them.",
+  "3. **Payments and billing**: prices, charges, checkout, subscriptions, invoices and refunds.",
+  "4. **Legal and licensing text**: license files and license headers, terms, privacy wording and other legal statements.",
+  "5. **Deleting user data**: code that deletes, wipes or overwrites a user's data, accounts or settings.",
+  "6. **Release and publishing settings**: how and where the project is versioned, released, published or distributed, and what tells an",
+  "   installed copy that an update exists.",
+].join("\n") + "\n";
+const FIXTURE_ALWAYS = [
+  "# Paths that always count as touching the sensitive list, without asking the model. One per line: a path that ends in \"/\" is a",
+  "# folder and covers everything under it; \"**/name\" is a file of that name in any folder, the top one included, and \"*\" in that name",
+  "# stands for any characters but \"/\"; any other line is one file. Lines that start with \"#\" and blank lines are ignored.",
+  ".github/",
+  "LICENSE",
+  "# .gitattributes can change how git shows a file in a diff (for example as binary, with no content), so a change to it is never",
+  "# left to the model. .gitmodules points submodules at other repositories, whose content the diff never shows.",
+  "**/.gitattributes",
+  "**/.gitmodules",
+  "# Lockfiles: dependency changes, as long machine-written churn the model cannot check line by line.",
+  "**/*.lock",
+  "**/*.lockb",
+  "**/pnpm-lock.yaml",
+  "**/package-lock.json",
+  "**/npm-shrinkwrap.json",
+].join("\n") + "\n";
+const FIXTURE_DIR = mkdtempSync(join(tmpdir(), "ai-sorter-fixture-"));
+writeFileSync(join(FIXTURE_DIR, "list.md"), FIXTURE_LIST);
+writeFileSync(join(FIXTURE_DIR, "always.txt"), FIXTURE_ALWAYS);
+const FIXTURE_SOURCES = {
+  SORTER_TEST: "1",
+  SORTER_LIST_FILE: join(FIXTURE_DIR, "list.md"),
+  SORTER_ALWAYS_FILE: join(FIXTURE_DIR, "always.txt"),
+};
+
 // What a record for the default change (SMALL_DIFF on HEAD, into main, judged under this folder's policy) is bound to.
-const LIST = () => readFileSync(join(here, "list.md"), "utf8");
+const LIST = () => FIXTURE_LIST;
 const ITEMS = () => listItems(LIST());
-const POLICY = () => policySha256(policyInputs(trustedFiles({})));
+const POLICY = () => policySha256(policyInputs(trustedFiles(FIXTURE_SOURCES)));
+// The policy of the sorter's own list.md and always.txt, which a run reads when the test-only overrides are off.
+const REAL_POLICY = () => policySha256(policyInputs(trustedFiles({})));
 const KEY = (): RecordKey => ({
   head: HEAD,
   base_ref: "main",
@@ -229,8 +275,9 @@ function sorterEnv(dir: string, change: string, opts: { key?: string | null; env
     SORTER_DIFF_FILE: join(change, "change.diff"),
     SORTER_NUMSTAT_FILE: join(change, "change.numstat"),
     SORTER_ANTHROPIC_BASE_URL: base,
-    // The test files and the fake API above count only with this set.
-    SORTER_TEST: "1",
+    // The test files and the fake API above count only with this set. A test that runs under the sorter's own list.md and always.txt
+    // passes empty values for the two files (see the last describe).
+    ...FIXTURE_SOURCES,
     ...opts.env,
   };
   if (opts.key !== null) env.SORTER_ANTHROPIC_API_KEY = opts.key ?? FAKE_KEY;
@@ -726,7 +773,7 @@ describe("one verdict per change", () => {
   test("a change of always.txt on the base branch, with an identical diff: a review fails closed, a push asks the model", async () => {
     recordRun(5, false);
     const dir = mkdtempSync(join(tmpdir(), "ai-sorter-always-"));
-    writeFileSync(join(dir, "always.txt"), `${readFileSync(join(here, "always.txt"), "utf8")}docs/legal/\n`);
+    writeFileSync(join(dir, "always.txt"), `${FIXTURE_ALWAYS}docs/legal/\n`);
     fake.messages = [no()];
     let r = await run({ env: { ...review, SORTER_ALWAYS_FILE: join(dir, "always.txt") } });
     expect(r.code).toBe(1);
@@ -788,7 +835,7 @@ describe("one verdict per change", () => {
       expect(policySha256(changed)).not.toBe(policySha256(inputs));
     }
     expect(policySha256(inputs)).toBe(createHash("sha256").update(JSON.stringify(inputs)).digest("hex"));
-    expect(policySha256(inputs)).toBe(KEY().policy_sha256);
+    expect(policySha256(inputs)).toBe(REAL_POLICY());
     // The record the run prints carries the policy it judged by.
     expect(recordLine(KEY(), V(false))).toContain(`"policy_sha256":"${KEY().policy_sha256}"`);
   });
@@ -800,7 +847,7 @@ describe("one verdict per change", () => {
     expect(swapped["list.md"].toString("utf8")).toContain("Analytics");
     expect(policySha256(policyInputs(swapped))).not.toBe(KEY().policy_sha256);
     // Without the test flag the swap is ignored.
-    expect(policySha256(policyInputs(trustedFiles({ SORTER_LIST_FILE: join(dir, "list.md") })))).toBe(KEY().policy_sha256);
+    expect(policySha256(policyInputs(trustedFiles({ SORTER_LIST_FILE: join(dir, "list.md") })))).toBe(REAL_POLICY());
   });
 
   test("recordLine and parseRecord agree, and parseRecord takes nothing else", () => {
@@ -856,7 +903,7 @@ describe("what counts without asking the model", () => {
   });
 
   test("always.txt: folders, **/name in any folder with * in the name, and single files", () => {
-    const always = readAlways(readFileSync(join(here, "always.txt"), "utf8"));
+    const always = readAlways(FIXTURE_ALWAYS);
     expect(always).toEqual([
       ".github/",
       "LICENSE",
@@ -1854,5 +1901,67 @@ describe("check runs of the same name from elsewhere", () => {
     const r = await run({ env: { SORTER_EVENT: "pull_request_review", SORTER_ACTION: "submitted" } });
     expect(r.code).toBe(1);
     expect(r.summary).toContain("the verdict recorded for this change (check run 100)");
+  });
+});
+
+// The sorter's own list.md and always.txt, which the tests above replace with a fixture. These pin what they say now: only
+// .github/CODEOWNERS is on the list, and everything else merges without the owner. A run reads them when the two overrides are empty.
+describe("the sorter's own list.md and always.txt", () => {
+  const OWN = { SORTER_LIST_FILE: "", SORTER_ALWAYS_FILE: "" };
+  const oneLineDiff = (path: string) =>
+    [`diff --git a/${path} b/${path}`, `--- a/${path}`, `+++ b/${path}`, "@@ -1 +1 @@", "-a", "+b", ""].join("\n");
+
+  test("always.txt names .github/CODEOWNERS and nothing else", () => {
+    const always = readAlways(readFileSync(join(here, "always.txt"), "utf8"));
+    expect(always).toEqual([".github/CODEOWNERS"]);
+    const hit = [".github/CODEOWNERS"];
+    const miss = [
+      ".github/workflows/ai-sorter.yml",
+      ".github/workflows/merge-by-policy.yml",
+      ".github/sorter/list.md",
+      ".github/sorter/always.txt",
+      ".github/sorter/bun.lock",
+      "LICENSE",
+      ".gitattributes",
+      ".gitmodules",
+      "plugins/x/bun.lockb",
+      "plugins/vim/plugin.js",
+      "AGENTS.md",
+    ];
+    expect(alwaysHits([...hit, ...miss], always)).toEqual(hit);
+  });
+
+  test("list.md has one item, who owns what, and says that everything else is not on the list", () => {
+    const text = readFileSync(join(here, "list.md"), "utf8");
+    expect(listItems(text)).toEqual([{ number: 1, title: "Who owns what" }]);
+    expect(text).toContain("`.github/CODEOWNERS`");
+    expect(text).toContain("Not on the list by itself: everything else.");
+    expect(text).toContain("it is not a required check");
+  });
+
+  test("a change to .github/CODEOWNERS waits without the model", async () => {
+    fake.messages = [no()];
+    const r = await run({ diff: oneLineDiff(".github/CODEOWNERS"), files: [".github/CODEOWNERS"], env: OWN });
+    expect(r.code).toBe(1);
+    expect(r.summary).toContain("## AI sorter: waits for the owner");
+    expect(r.summary).toContain("always.txt");
+    expect(r.summary).toContain(".github/CODEOWNERS");
+    expect(modelCalls()).toHaveLength(0);
+  });
+
+  test("a change to a workflow, the sorter, LICENSE or a plugin does not wait on its own: the model is asked, and the prompt carries the list", async () => {
+    for (const path of [".github/workflows/ai-sorter.yml", ".github/sorter/list.md", ".github/sorter/always.txt", "LICENSE", ".gitattributes", "plugins/vim/plugin.js"]) {
+      fake.calls = [];
+      fake.messages = [no()];
+      const r = await run({ diff: oneLineDiff(path), files: [path], env: OWN });
+      expect(r.code).toBe(0);
+      expect(r.summary).toContain("## AI sorter: passes");
+      expect(modelCalls()).toHaveLength(1);
+      const system: string = modelCalls()[0].body.system;
+      expect(system).toContain("1. **Who owns what**");
+      expect(system).toContain("Not on the list by itself: everything else.");
+      expect(system).toContain("The list says what is not on it; that never counts");
+      expect(system).not.toContain("Legal and licensing text");
+    }
   });
 });
