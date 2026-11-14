@@ -31,7 +31,7 @@ That is why there is a bridge: `python3 -I -c "import sys;exec(sys.argv[1]+sys.a
 - **The bundle** (`scripts/check-bundle.mjs`): the pinned WASM exactly once, the MIT notices, no name of Buzz's terminal commands and no Tauri IPC, no dynamic code, under 8 MiB.
 - **What the terminal answers on its own.** The WASM in ghostty-web 0.4.0 replies to exactly two queries, DSR 5 and DSR 6, each a fixed shape made of digits. Title and icon reports, DECRQSS, XTGETTCAP, colour and clipboard queries, device attributes and the rest get no reply, so a program's output cannot make the terminal type text into the shell. Held to the pinned WASM's hash.
 
-`test/run.sh` (browser, 11 tests, headless Chromium against Buzz's own production web build at `d92bfb2c`): the launcher, the drawer and the shortcut; a shell on a tty whose output is drawn on the canvas; the environment against Buzz's context and the app's other variables; hide and reopen; resize; restart, end and an exited shell; disabling the plugin hangs up the shell; replies; links (with the click guard removed the test fails, and `window.open` is called); a 600 KB paste whole.
+`test/run.sh` (browser, 11 tests, headless Chromium against Buzz's own production web build at v1.0.2, `51d63954`): the launcher, the drawer and the shortcut; a shell on a tty whose output is drawn on the canvas; the environment against Buzz's context and the app's other variables; hide and reopen; resize; restart, end and an exited shell; disabling the plugin hangs up the shell; replies; links (with the click guard removed the test fails, and `window.open` is called); a 600 KB paste whole.
 
 ### What none of that proves
 

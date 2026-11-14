@@ -21,8 +21,10 @@ export const PANES = [
   ["side", SIDE],
 ] as const;
 // The active pane's header gets a 2px accent line along its bottom edge, the full width of the
-// pane. It is the header's own ::after (the host draws its 1px separator there, inset from the
-// sides), restyled, so nothing is added to the page. A frame drawn on the pane's outer box was
+// pane. It is the header's own ::after, so nothing is added to the page: the host drew its 1px
+// separator there before Buzz 1.0 and the plugin restyled it; since 1.0 the separator is the
+// header's border-bottom and the host draws no ::after, so the plugin draws the line itself, over
+// the border (the header is positioned). A frame drawn on the pane's outer box was
 // tried first: the message list inside scrolls in a layer of its own that paints over it, so
 // below the header only the corners survived. The line shows only with a thread pane beside the
 // channel (data-vim-panes): a lone pane is trivially the active one.
@@ -30,7 +32,7 @@ const PANE_HEADER = { main: "[data-main-workspace] > header", side: "[data-panel
 const LINE_CSS = PANES.map(
   ([pane]) =>
     `html[data-vim-on][data-vim-panes][data-vim-region="${pane}"] ${PANE_HEADER[pane]}::after` +
-    `{inset-inline:0;height:2px;background:${ACCENT}}`,
+    `{content:"";position:absolute;inset-inline:0;bottom:-1px;height:2px;background:${ACCENT};pointer-events:none}`,
 ).join("");
 // The cursor row is marked on its message bubble, not on the row: the bubble goes up a step in brightness
 // (the host's own hover treatment, `--affordance-backdrop-pressed`, laid over whatever fill the bubble has,

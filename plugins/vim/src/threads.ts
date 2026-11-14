@@ -6,7 +6,7 @@
 import { BRANCH, BRANCH_PILL, FOLD_ATTR, MAIN, PANE_HANDLE, PANE_TOGGLE, SCROLLER } from "./constants";
 import { ctx } from "./ctx";
 import { clearCursor, cursorRow, cursors, paintCursor, selectRow, stopFollow } from "./cursor";
-import { activeTimeline, afterLayout, focusEl, nextFrame, rowsOf, settle, timelineOf, visible } from "./dom";
+import { activeTimeline, afterLayout, focusEl, inView, nextFrame, rowsOf, settle, timelineOf, visible } from "./dom";
 import { currentChannelId } from "./box";
 import { available, goRegion } from "./panes";
 import { clearPending, disposed, keyEpoch, state, takeCount } from "./state";
@@ -49,6 +49,24 @@ const threadRootOf = (messageId: string) => {
 // aria-hidden while a tab covers it, so the page is watched for those and for tabs coming and going, one check a frame later.
 let beneath: { id: string; tab: HTMLElement } | undefined;
 let leaving: MutationObserver | undefined;
+// Since Buzz 1.0 the host puts the channel's list back at its bottom a few frames after the list is shown again, which undoes the scroll
+// that shows the row the cursor came back to. So the row is shown again for as long as the list keeps moving it away: until a key is
+// pressed, the cursor is somewhere else, or the list has stayed put for SETTLED_MS.
+const SETTLED_MS = 500;
+const holdInView = (scroller: HTMLElement, id: string) => {
+  const epoch = keyEpoch;
+  let moved = performance.now();
+  void settle(() => {
+    if (keyEpoch !== epoch || cursors.main !== id || !scroller.isConnected) return true;
+    const row = rowsOf(scroller).find((row) => row.dataset.messageId === id);
+    const now = performance.now();
+    if (row && !inView(scroller, row)) {
+      row.scrollIntoView({ block: "nearest" });
+      moved = now;
+    }
+    return now - moved > SETTLED_MS;
+  }, 3000);
+};
 const cursorBack = () => {
   if (!beneath || visible(beneath.tab)) return;
   const scroller = timelineOf("main");
@@ -59,10 +77,17 @@ const cursorBack = () => {
   const rows = rowsOf(scroller);
   const kept = rows.find((row) => row.dataset.messageId === cursors.main);
   // The channel's list comes back at its bottom, which can leave the row far above the view: it is shown too, not only marked.
-  if (kept) return selectRow(kept); // the cursor is in the list already (put there since, or the thread's own copy of the same message): it needs its mark back
+  if (kept) {
+    // the cursor is in the list already (put there since, or the thread's own copy of the same message): it needs its mark back
+    selectRow(kept);
+    return holdInView(scroller, kept.dataset.messageId as string);
+  }
   clearCursor("main");
   const row = rows.find((row) => row.dataset.messageId === id);
-  if (row) selectRow(row);
+  if (row) {
+    selectRow(row);
+    holdInView(scroller, id);
+  }
   paintCursor();
 };
 const watchBeneath = (tab: HTMLElement) => {

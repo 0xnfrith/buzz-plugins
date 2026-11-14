@@ -117,7 +117,7 @@ export const registerShortcuts = () => {
       `count-${digit}`,
       `Count prefix ${digit}`,
       { key: digit },
-      // After a g a digit names an entry of the top bar (g1 ... g9), it is not part of a count.
+      // After a g a digit names an entry of the dock (g1 ... g9), it is not part of a count.
       afterG(digit, () => {
         set({ count: Math.min(state.count * 10 + Number(digit), 999) });
         armPending();

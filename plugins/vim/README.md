@@ -135,13 +135,13 @@ Taken in Buzz's own browser test harness with its fixture data (`test/screenshot
 | Switch channel from the message list | `]` and `[` | Next and previous channel |
 | Switch community | `}` and `{` (hold Shift), then `2{` | Next and previous community, in the switcher's order (Personal space first). Focus lands in the new community's channel list. A count jumps several |
 | Pick a community | Shift+c, or `h` twice from a message | The community switcher opens on the current one. `j` and `k` move, Enter picks, Esc closes |
-| Reply | Move the cursor with `k`, then `r` | The thread opens on that message and focus is in its reply box (`INSERT`) |
+| Reply | Move the cursor with `k`, then `r` | The thread opens on that message and focus is in its reply box (`INSERT`). Not on Buzz v1.0.2: see "Known on Buzz v1.0.2" below |
 | Message menu | Move the cursor, then `m` | The message menu opens (copy, mark unread, ...). `j` and `k` move, Enter picks, Esc closes |
 | Copy a message | Move the cursor, then `yy` (its link) or `yY` (its text), in the message list or a thread | Buzz's own Copy link and Copy message run and its toast says "Link copied" or "Message copied"; the link is the one Buzz makes (`buzz://message?...`, with `thread=` for a reply). The cursor and the focus stay where they were. A `y` that nothing follows within 1.5 s, or followed by another key, copies nothing. In the message box `y` is the box's own (`y` copies the highlight in VISUAL) |
-| Pages | `g` then `t`, `g` then Shift+t | Next and previous page: Messages, Reminders, Agents, Workflows, Inbox, then the rest |
-| Cancel a `g` | `g`, then Esc | The `g` is dropped, as in vim, and so is a count (`3`, Esc, `k` moves one message): `g` Esc `p` opens nothing, wherever the focus is (the lists, the panes, the top bar, the Reminders, Agents, Inbox and Workflows pages, a message box in NORMAL). Esc keeps its other jobs: it closes Settings and leaves INSERT |
-| Jump to a page | `gi` `gm` `ga` `gr` `gw` `gs` `gp`, from the message list, the channel list or a message box in NORMAL | Inbox, Messages, Agents, Reminders, Workflows, Settings, and Settings on Manage plugins (`gp`: plugins). Messages opens with the cursor in the message list, not in the message box. The app has Cmd+, (Ctrl+, elsewhere) for Settings too |
-| Top-bar entry by number | `g1` to `g9`, from the message list, the channel list or a message box in NORMAL | The nth entry of the top bar, counted from the left as the bar shows them: Messages, Reminders, then the others by name, so Agents and Workflows with the pages plugins pin to the bar among them (a page called "Status board", pinned with Artifacts, is between Agents and Workflows: `g4`). Nothing happens for a number with no entry. The digit is the entry's number, not a count (`5j` is still five `j`). The pages of the sidebar (Inbox, the Vim mode page) keep their letters and `gt`. A window too narrow for the bar moves its entries into the "More pages" menu; the numbers stay the same |
+| Pages | `g` then `t`, `g` then Shift+t | Next and previous page, in the order the app lists them: the dock from the top (Messages, Reminders, Agents, Workflows, and the pages plugins put there), then the sidebar (Activity, then the rest). In a message box in NORMAL; from the lists not on Buzz v1.0.2: see "Known on Buzz v1.0.2" below |
+| Cancel a `g` | `g`, then Esc | The `g` is dropped, as in vim, and so is a count (`3`, Esc, `k` moves one message): `g` Esc `p` opens nothing, wherever the focus is (the lists, the panes, the dock, the Reminders, Agents, Activity and Workflows pages, a message box in NORMAL). Esc keeps its other jobs: it closes Settings and leaves INSERT |
+| Jump to a page | `gi` `gm` `ga` `gr` `gw` `gs` `gp`, from the message list, the channel list or a message box in NORMAL | Inbox (titled Activity since Buzz 1.0, a row of the Messages sidebar), Messages, Agents, Reminders, Workflows, Settings, and Settings on Manage plugins (`gp`: plugins). Messages opens with the cursor in the message list, not in the message box. The app has Cmd+, (Ctrl+, elsewhere) for Settings too. `gr` is not on Buzz v1.0.2 from the lists: see "Known on Buzz v1.0.2" below |
+| Dock entry by number | `g1` to `g9`, from the message list, the channel list or a message box in NORMAL | The nth entry of the app dock, counted from the top as the dock shows them: Messages, Reminders, then the others by name, so Agents and Workflows with the pages plugins put in the dock among them (a page called "Status board", placed in the dock with Artifacts, is between Agents and Workflows: `g4`), Bestie first when it is on. Nothing happens for a number with no entry. The digit is the entry's number, not a count (`5j` is still five `j`). The pages of the sidebar (Activity, the Vim mode page) keep their letters and `gt`. Before Buzz 1.0 the entries were the top bar's, counted from the left |
 | Write | `i` | Focus goes to the message box. Label says `INSERT` |
 | Search | `/` | Buzz's search opens (it presses Cmd+F for you) |
 | Help | Shift+/ (`?`) | The key list opens over the page, centred on a dimmed backdrop, grouped NORMAL (messages and panes), NORMAL (the message box), INSERT, VISUAL. `j` `k` scroll it, Control+d and Control+u scroll half a page, `gg` and `G` go to the top and bottom, `q`, Esc or `?` close it and you are where you were |
@@ -164,6 +164,30 @@ Taken in Buzz's own browser test harness with its fixture data (`test/screenshot
 **Mentions** (the chip `@name` that the `@` list inserts) count as one character in the draft: `h`, `l`, `w`, `b`, `x` step over it or take it as a whole, and the caret is put beside it, never inside, whichever way you come back into the box. A run of mentions at the **start** of a draft (`@a @b @c text`) is skipped as a whole on the way out: `h` from just right of the run, or from anywhere inside it, leaves the box like `h` at the start does, with no stop on the chips (`0` goes before the run). A run at the **end** is skipped the same way by `l` when a pane lies to the right (the thread's box, from the channel's); with none, `l` walks over it. A mention with text before it (at the start) or after it (at the end) keeps the one-character steps.
 
 **Visual mode** in the message box: type a few lines (Shift+Enter makes a new line), press Esc, then `v` and the label says `VISUAL` with the character under the cursor highlighted. every motion above (`e`, `W`, `fx`, `3l`, `G` ...) stretches the highlight, `y` copies it to the clipboard, `d` or `x` deletes it, `c` deletes it and goes to insert mode, and Esc (or `v` again) leaves. `V` does the same by whole lines (`Vd` removes the lines and their newline). Switch between the two with `v` and `V`. There is no `p`: paste with Cmd+V.
+
+</details>
+
+<details>
+<summary><b>Known on Buzz v1.0.2</b></summary>
+
+### Known on Buzz v1.0.2
+
+Buzz 1.0 moved the pages (the top bar became an app dock on the left, and the Inbox is titled Activity) and took some plain keys for itself. The browser tests of this plugin run on block/buzz-app v1.0.2 (`51d63954`). What changed for the page keys:
+
+| Key | Before Buzz 1.0 | Buzz v1.0.2 | From a list | In a message box in NORMAL |
+|---|---|---|---|---|
+| `gm` | Messages, in the top bar | Messages, in the dock | works | works |
+| `ga` | Agents, in the top bar | Agents, in the dock | works | works |
+| `gw` | Workflows, in the top bar | Workflows, in the dock (the plugin is off on a new install until you turn it on) | works | works |
+| `gr` | Reminders, in the top bar | Reminders, in the dock (off on a new install until you turn it on) | **does nothing** | works |
+| `gi` | Inbox, in the sidebar | Activity, a row of the Messages sidebar (the same page; the key still goes there) | works | works |
+| `gv` | the Vim mode page, in the sidebar | unchanged | works | works |
+| `gs`, `gp` | Settings; Settings on Manage plugins | unchanged | works | works |
+| `gt`, `gT` | next and previous page: the top bar left to right, then the sidebar | the dock from the top, then the sidebar | **does nothing** | works |
+| `g1` to `g9` | the nth entry of the top bar, from the left | the nth entry of the dock, from the top | works | works |
+| `r` | reply to the message under the cursor | the same key | **does nothing** | not bound there |
+
+From a list means the message list, a thread's list or the channel list. Why the four keys do nothing: Buzz v1.0.2 registers the plain keys `e`, `r`, `t` (and the right arrow), `u` and Delete as its own keys for the message it has selected (edit, react, reply in a thread, mark unread, delete: `src/app/shortcuts.ts:228-301`), and its shortcut dispatcher runs no plugin shortcut on a key the host has reserved, even when the host has nothing to act on (`src/features/shortcuts/service.ts:104-118`). So the plugin never sees `r` or `t` in a list. A message box in NORMAL has its own key handler, so `gr`, `gt` and `gT` work there. Meanwhile, `g2` opens Reminders from the lists (the second entry of the dock). The tests of these keys are kept and marked as expected to fail (`test/vim.spec.mjs`, `HOST_RESERVES_KEYS`); when a Buzz release stops reserving the keys they start to pass, and the run then fails to say the mark should come off.
 
 </details>
 
@@ -212,7 +236,7 @@ Every key the plugin handles has to answer within a frame or two, in a channel w
 | A channel with a long thread (12 messages, one with 80 replies) | `o` on the message that has the thread, with the thread open already, and `h` back from it |
 | Message box (600 words, and 30 mentions) | `w b 5w 5b 0 $ h l` |
 | Reminders, Agents, Workflows pages | `Ctrl-e Ctrl-y`; `j k 5j 5k G gg` are control rows (a page has no message list: they find nothing to move) |
-| Settings dialog | `j k 5j 5k l h`, `l` opening another section, `Ctrl-e Ctrl-y` |
+| Settings dialog | `j k 5j 5k l h`, `l` opening another section, `Ctrl-e Ctrl-y` (inside the open section: since Buzz v1.0.2 the list of sections fits the dialog and has nothing to scroll) |
 
 **Not pressed yet.** The suite does not cover every key of the plugin. In the lists and panes: `Ctrl-d` `Ctrl-u`, `]` `[`, `}` `{`, `zc` `zo`, `>` `<` `|` `=`, `/`, `?` and the keys of its overlay, `i` `a` `A` `I`, `r`, `m`, `gt` `gT`, the page keys (`gi` `gm` `ga` `gr` `gw` `gs` `gv`, and `g3` to `g9`), the leader. In the message box: `e E W B ge gE ^`, `j` `k`, `gg` `G`, `f t F T ; ,`, `x`, `d`, `dd`, `u`, `v` `V` and what they do in VISUAL. A key with no row has no budget; CONTRIBUTING.md asks that a change to a key adds it.
 

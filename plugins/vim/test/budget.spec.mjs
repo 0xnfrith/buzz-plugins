@@ -80,6 +80,7 @@ const BASELINE =
 
 test.use({
   pluginFixtures: true,
+  enabledPlugins: ["buzz.reminders", "buzz.workflows"], // off until a person turns them on since Buzz 1.0 (tests/browser/fixture.mjs)
   exactMessages: "nested", // the 80-reply thread, whose 79th reply has a reply of its own (the 80th): the branch that `o` in a thread opens and folds
   markdownMessages: true,
   largeSidebar: true,
@@ -214,6 +215,23 @@ const counters = async (cdp) => {
   const { metrics } = await cdp.send("Performance.getMetrics");
   return COUNTERS.map((name) => metrics.find((metric) => metric.name === name)?.value ?? 0);
 };
+// A page with no message list scrolls its own area. The fixture has no reminders and no workflows, and on Buzz v1.0.2 the Agents page has less
+// than its area can show, so the area is given something tall to scroll (vim.spec.mjs does the same for the pages it scrolls): the biggest area
+// of the page that is set to scroll, outside the channel list and any dialog.
+const makeScrollable = (page) =>
+  page.evaluate(() => {
+    let best;
+    let area = 0;
+    for (const el of document.body.querySelectorAll("*")) {
+      if (el.clientHeight < 40 || !/auto|scroll/.test(getComputedStyle(el).overflowY) || el.closest("[data-sidebar-section], [role='dialog']")) continue;
+      if (el.clientHeight * el.clientWidth > area) [best, area] = [el, el.clientHeight * el.clientWidth];
+    }
+    if (!best) return false;
+    const spacer = document.createElement("div");
+    spacer.style.cssText = "height: 3000px; flex: none";
+    best.append(spacer);
+    return true;
+  });
 // A page with no message list scrolls its own area: find the biggest one that scrolls and mark it for the fingerprint.
 const markPageScroller = (page) =>
   page.evaluate(() => {
@@ -460,10 +478,10 @@ const markSidebarScroller = (page) =>
 const settingsShown = (page) => page.waitForFunction(() => !!document.querySelector('nav[aria-label="Settings sections"] [aria-current]'), null, { timeout: 10_000 });
 const settingsGone = (page) => page.waitForFunction(() => !document.querySelector('nav[aria-label="Settings sections"]'), null, { timeout: 10_000 });
 const CLOSE_SETTINGS = `document.querySelector('button[aria-label="Close Settings"]').click()`;
-// The pages of the top bar, for g1 and g2: the entry that is selected (the page is drawn by then), and the control's way of opening one.
+// The pages of the dock, for g1 and g2: the entry that is selected (the page is drawn by then), and the control's way of opening one.
 const topBarIs = (name) => (page) =>
   page.waitForFunction(
-    (name) => document.querySelector('[role="tablist"][aria-label="Topbar pages"] [role="tab"][aria-selected="true"]')?.textContent?.trim() === name && (name !== "Messages" || !!document.querySelector("[data-sidebar-section] button[data-channel-id]")),
+    (name) => document.querySelector('nav[aria-label="Apps dock"] [role="tab"][aria-selected="true"]')?.textContent?.trim() === name && (name !== "Messages" || !!document.querySelector("[data-sidebar-section] button[data-channel-id]")),
     name,
     { timeout: 10_000 },
   );
@@ -506,12 +524,12 @@ surface("sidebar", "channel list (130 channels)", async ({ page, app, rows }) =>
       `const rows = ${CHANNEL_ROWS}; const row = rows[Math.max(0, rows.indexOf(document.activeElement) - 1)]; row.focus({ preventScroll: true }); row.scrollIntoView({ block: "nearest" });`,
       `const rows = ${CHANNEL_ROWS}; const row = rows[Math.min(rows.length - 1, rows.indexOf(document.activeElement) + 1)]; row.focus({ preventScroll: true }); row.scrollIntoView({ block: "nearest" });`,
     ),
-    // g2 opens the second entry of the top bar (Reminders) and g1 the first (Messages: the channel list is back), and the row alternates them. The
+    // g2 opens the second entry of the dock (Reminders) and g1 the first (Messages: the channel list is back), and the row alternates them. The
     // page is the app's to draw: the controls are the page asking the host for the same two pages itself.
     {
       pair: [
-        { key: "g2: the second entry of the top bar", seq: ["g", "2"], after: topBarIs("Reminders") },
-        { key: "g1: the first entry of the top bar", seq: ["g", "1"], after: topBarIs("Messages") },
+        { key: "g2: the second entry of the dock", seq: ["g", "2"], after: topBarIs("Reminders") },
+        { key: "g1: the first entry of the dock", seq: ["g", "1"], after: topBarIs("Messages") },
       ],
       crosses: true,
       reps: SLOW_REPS,
@@ -847,13 +865,15 @@ surface("box-mentions", "message box, NORMAL motions (30 mentions)", async ({ pa
   await rows(boxRows(60));
 }, "a.isContentEditable");
 
+// Reminders is reached by its number in the dock (g2): `gr` is one of the keys Buzz v1.0.2 reserves for itself (see HOST_RESERVES_KEYS in vim.spec.mjs).
 for (const [id, letter, name] of [
-  ["reminders", "r", "Reminders"],
+  ["reminders", "2", "Reminders"],
   ["agents", "a", "Agents"],
   ["workflows", "w", "Workflows"],
 ])
   surface(id, `${name} page`, async ({ page, rows }) => {
     await goPage(page, letter, name);
+    expect(await makeScrollable(page), `${name} has an area that scrolls`).toBe(true);
     await markPageScroller(page);
     // A page has no message list: j k 5j 5k G gg find nothing to move. They are control rows, what an event, a frame and a handler
     // that finds nothing cost (the page scrolls, and Ctrl-e and Ctrl-y move it), and never fail.
@@ -890,7 +910,29 @@ surface("settings", "Settings dialog", async ({ page, rows }) => {
       `const b = [...document.querySelectorAll('nav[aria-label="Settings sections"] button')]; b[Math.max(0, b.findIndex((x) => x.hasAttribute("aria-current")) - 1)].click()`,
     ),
     control("click the open section (the page itself)", "focus the open section (the page itself)", `document.querySelector('nav[aria-label="Settings sections"] button[aria-current]').click()`, `document.querySelector('nav[aria-label="Settings sections"] button[aria-current]').focus()`, 30),
-    { pair: [{ key: "Ctrl-e", seq: ["Control+e"] }, { key: "Ctrl-y", seq: ["Control+y"] }] },
+    // Ctrl-e and Ctrl-y scroll the list of sections when that has the focus and scrolls, and else the open section. The list overflowed its
+    // pane by 9 px on the commit before Buzz v1.0.2 and fits it exactly on v1.0.2 at this window's height (701 px both), so with the focus
+    // on it nothing moves and the row measures nothing. They are pressed inside the open section (Profile, 103 px taller than its pane).
+    {
+      pair: [{ key: "Ctrl-e", seq: ["Control+e"] }, { key: "Ctrl-y", seq: ["Control+y"] }],
+      before: async (page) => {
+        await page.evaluate(() => document.querySelector('nav[aria-label="Settings sections"] button[aria-current]')?.focus());
+        await press(page, "l"); // opens the section and goes into it
+        await expect(page.locator("#settings-content")).toBeFocused();
+        // The area that scrolls is not #settings-content itself on Buzz v1.0.2: it is the nearest one at or around it (as vim.spec.mjs finds
+        // it), and the fingerprint watches it once marked.
+        const marked = await page.evaluate(() => {
+          document.querySelectorAll("[data-budget-scroller]").forEach((x) => x.removeAttribute("data-budget-scroller"));
+          const content = document.getElementById("settings-content");
+          const above = [];
+          for (let node = content; node && node.getAttribute("role") !== "dialog"; node = node.parentElement) above.push(node);
+          const area = [...above, ...content.querySelectorAll("*")].find((x) => /auto|scroll/.test(getComputedStyle(x).overflowY) && x.scrollHeight > x.clientHeight + 1);
+          area?.setAttribute("data-budget-scroller", "");
+          return !!area;
+        });
+        expect(marked, "the open section has an area that scrolls").toBe(true);
+      },
+    },
     // Inside a section: j and k move from one control to the next. Manage plugins has the most (the cards, the tabs and two buttons
     // for each of some forty plugins; the search box is stepped over). The row starts on the fourth control, and the two keys alternate between the fourth and the third.
     {

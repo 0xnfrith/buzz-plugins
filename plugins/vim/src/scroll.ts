@@ -54,7 +54,8 @@ export const lineScroller = (direction: number): HTMLElement | undefined => {
   return pageScroller(direction) ?? sidebarScroller(direction);
 };
 // Moves the focus onto the nearest item that is still in the view when the scroll took the focused one out of it
-// (the cursor of a list of buttons is its focus). `items` are the list's buttons and links.
+// (the cursor of a list of buttons is its focus). `items` are the list's buttons and links; a disabled one cannot take the focus
+// (the channel list of Buzz 1.0 has one, Create channel, at its top) and is passed over.
 export const keepFocusInView = (scroller: HTMLElement, items: HTMLElement[], direction: number) => {
   const box = scroller.getBoundingClientRect();
   const within = (el: Element, whole: boolean) => {
@@ -63,7 +64,7 @@ export const keepFocusInView = (scroller: HTMLElement, items: HTMLElement[], dir
   };
   const current = items.find((el) => el === document.activeElement);
   if (!current || within(current, false)) return;
-  const shown = items.filter((el) => within(el, true));
+  const shown = items.filter((el) => within(el, true) && !(el as HTMLButtonElement).disabled && el.getAttribute("aria-disabled") !== "true");
   const next = direction > 0 ? shown[0] : shown.at(-1);
   if (!next) return;
   // No scrolling into view (the item shows already, and a scroll now would undo part of the one just made); the ring

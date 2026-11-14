@@ -6,7 +6,16 @@ import { hoverMessage } from "./message-actions.mjs";
 import { pluginAction } from "./plugin-settings.mjs";
 import { closeSettings, selectSettingsSection } from "./navigation.mjs";
 
-test.use({ pluginFixtures: true, historyCounts: { alpha: 12, beta: 3 } });
+// Since Buzz 1.0 the Reminders and Workflows plugins are off until a person turns them on, and the harness starts a test with them off
+// (tests/browser/fixture.mjs, `enabledPlugins`): the tests that visit those pages opt in, as Buzz's own do.
+test.use({ pluginFixtures: true, historyCounts: { alpha: 12, beta: 3 }, enabledPlugins: ["buzz.reminders", "buzz.workflows"] });
+
+// Known on Buzz v1.0.2: the host registers the plain keys `e`, `r`, `t` and `u` as its own message keys (src/app/shortcuts.ts:228-301) and its
+// shortcut dispatcher runs no plugin shortcut on a key the host has reserved, even when the host has nothing to act on (src/features/shortcuts/
+// service.ts:104-118). So Vim's `r` (reply) and `gr`, `gt` and `gT` from a list do nothing there; in a message box in NORMAL, which has its own
+// key handler, they work. The tests of those keys are kept and marked as expected to fail: when Buzz stops reserving the keys they pass, and
+// Playwright then fails the run, which is the reminder to take the mark off.
+const HOST_RESERVES_KEYS = "Buzz v1.0.2 reserves the plain keys r and t for its own message keys, so no plugin shortcut runs on them (shortcuts.ts:228-301, service.ts:104-118)";
 
 const SETTINGS = "megatech.vim-mode.settings.v2";
 const OLD_SETTINGS = "megatech.vim-mode.settings.v1";
@@ -275,7 +284,7 @@ test("C and h open the community switcher; j, k and Enter choose in it", async (
   await expect(picker(page)).toHaveCount(0);
 });
 
-test("r replies to the message under the cursor; m opens its menu; j and k choose", async ({ page, app }) => {
+test("m opens the menu of the message under the cursor; j and k choose", async ({ page, app }) => {
   await open(page, app);
   await press(page, "r"); // no cursor yet: nothing happens
   await expect(page.getByRole("textbox", { name: "Reply to thread", exact: true })).toHaveCount(0);
@@ -286,11 +295,12 @@ test("r replies to the message under the cursor; m opens its menu; j and k choos
   const menu = page.getByRole("menu");
   await expect(menu).toBeVisible();
   const items = menu.getByRole("menuitem");
-  expect(await items.count()).toBeGreaterThan(1);
+  const count = await items.count();
+  expect(count).toBeGreaterThan(1);
   await expect(items.first()).toBeFocused(); // the host opens the menu on its first item
   await press(page, "j");
   await expect(items.nth(1)).toBeFocused();
-  await press(page, "j", "j"); // wraps, like the host's arrow keys
+  await press(page, ...Array(count - 1).fill("j")); // from the second item the last step wraps to the first, like the host's arrow keys
   await expect(items.first()).toBeFocused();
   await press(page, "k");
   await expect(items.last()).toBeFocused();
@@ -298,6 +308,14 @@ test("r replies to the message under the cursor; m opens its menu; j and k choos
   await expect(items.first()).toBeFocused();
   await press(page, "Escape");
   await expect(menu).toHaveCount(0);
+});
+
+test("r replies to the message under the cursor (known not to work on Buzz v1.0.2)", async ({ page, app }) => {
+  test.fail(true, HOST_RESERVES_KEYS);
+  await open(page, app);
+  await press(page, "k", "k");
+  const ids = await rowIds(page);
+  expect(await cursor(page)).toBe(ids.at(-2));
   await press(page, "r");
   const reply = page.getByRole("textbox", { name: "Reply to thread", exact: true });
   await expect(reply).toBeFocused();
@@ -307,7 +325,8 @@ test("r replies to the message under the cursor; m opens its menu; j and k choos
   await expect(page.getByRole("region", { name: /thread/i }).locator(`[data-message-id="${ids.at(-2)}"]`).first()).toBeVisible();
 });
 
-test("gt and gT cycle the pages in the order the app shows them; gi and gm jump by name", async ({ page, app }) => {
+test("gt and gT cycle the pages in the order the app shows them (known not to work on Buzz v1.0.2)", async ({ page, app }) => {
+  test.fail(true, HOST_RESERVES_KEYS);
   await open(page, app);
   const where = () =>
     page.evaluate(() => {
@@ -315,13 +334,24 @@ test("gt and gT cycle the pages in the order the app shows them; gi and gm jump 
       return target.kind === "page" ? `${target.pluginId}/${target.pageId}` : target.kind;
     });
   expect(await where()).toBe("conversation");
-  await press(page, "g", "t"); // Messages, then Reminders, Agents, Workflows, Inbox
+  await press(page, "g", "t"); // the dock from the top (Messages, Reminders, Agents, Workflows), then the sidebar (Activity, the Inbox, ...)
   await expect.poll(where).toBe("buzz.reminders/reminders");
   await press(page, "g", "t");
   await expect.poll(where).toBe("buzz.agents/agents");
   await press(page, "g");
   await shifted(page, "T");
   await expect.poll(where).toBe("buzz.reminders/reminders");
+});
+
+// The Inbox is titled Activity since Buzz 1.0, and a row of the Messages sidebar; the keys name it by its key and keep their letters.
+test("gi and gm jump by name, gw too", async ({ page, app }) => {
+  await open(page, app);
+  const where = () =>
+    page.evaluate(() => {
+      const target = JSON.parse(decodeURIComponent(location.hash.slice("#buzz=".length)));
+      return target.kind === "page" ? `${target.pluginId}/${target.pageId}` : target.kind;
+    });
+  expect(await where()).toBe("conversation");
   await press(page, "g", "i");
   await expect.poll(where).toBe("buzz.inbox/inbox");
   await press(page, "g", "m"); // opening Messages reopens the last conversation
@@ -526,11 +556,13 @@ const rowPaint = (pane, id) =>
     const style = getComputedStyle(row);
     return { background: style.backgroundColor, shadow: style.boxShadow };
   });
-// The line under a pane's header: the header's own ::after, which the host draws as a 1px separator.
+// The accent line under a pane's header: the header's own ::after, which only the plugin draws (the host's separator is the header's border-bottom
+// since Buzz 1.0, and it draws no ::after, so a pane without the line has `content: none` there).
 const headerLine = (pane) =>
   pane.locator(":scope > header").evaluate((header) => {
     const line = getComputedStyle(header, "::after");
     return {
+      drawn: line.content !== "none",
       height: line.height,
       colour: line.backgroundColor,
       width: Math.round(parseFloat(line.width)),
@@ -545,9 +577,9 @@ test("with a thread beside the channel, the pane that has the keys has an accent
 }) => {
   await open(page, app);
   await expect(html(page)).toHaveAttribute("data-vim-on", "");
-  // One pane: nothing to tell apart, so no line (the host's own 1px separator stays).
+  // One pane: nothing to tell apart, so no line (the host's own 1px separator, the header's border, stays).
   await expect(html(page)).not.toHaveAttribute("data-vim-panes", "");
-  expect((await headerLine(mainPane(page))).height).toBe("1px");
+  expect((await headerLine(mainPane(page))).drawn).toBe(false);
   await press(page, "k", "k");
   const target = await cursor(page);
   await press(page, "o");
@@ -557,11 +589,12 @@ test("with a thread beside the channel, the pane that has the keys has an accent
   // The thread has the keys: its header has the 2px line, across the whole pane, and its first
   // message is marked. The channel keeps its own cursor row, drawn faintly, and no line.
   const side = await headerLine(sidePane(page));
+  expect(side.drawn).toBe(true);
   expect(side.height).toBe("2px");
   expect(side.colour).toBe(await colour(page, ACCENT));
   expect(side.width).toBe(side.pane); // the whole pane, not just the tab strip
   expect(side.header).toBe(side.pane);
-  expect((await headerLine(mainPane(page))).height).toBe("1px");
+  expect((await headerLine(mainPane(page))).drawn).toBe(false);
   const marks = page.locator("style[data-vim-cursor-style]");
   await expect(marks).toHaveAttribute("data-side-message-id", target);
   await expect(marks).toHaveAttribute("data-main-message-id", target);
@@ -584,20 +617,20 @@ test("with a thread beside the channel, the pane that has the keys has an accent
   await expect(html(page)).toHaveAttribute("data-vim-region", "main");
   expect((await headerLine(mainPane(page))).height).toBe("2px");
   expect((await headerLine(mainPane(page))).colour).toBe(await colour(page, ACCENT));
-  expect((await headerLine(sidePane(page))).height).toBe("1px");
+  expect((await headerLine(sidePane(page))).drawn).toBe(false);
   expect((await markOf(mainPane(page), target)).image).toContain(lift);
   expect((await markOf(sidePane(page), target)).image).toBe("none");
   // The channel list has the keys: neither message pane has a line, and the list's own ring shows.
   await press(page, "h");
   await expect(html(page)).toHaveAttribute("data-vim-region", "sidebar");
-  expect((await headerLine(mainPane(page))).height).toBe("1px");
-  expect((await headerLine(sidePane(page))).height).toBe("1px");
+  expect((await headerLine(mainPane(page))).drawn).toBe(false);
+  expect((await headerLine(sidePane(page))).drawn).toBe(false);
   await expect(page.locator("button[data-channel-id]:focus")).toHaveCSS("outline-color", await colour(page, "var(--border-focus)"));
   // Closing the thread leaves one pane again.
   await press(page, "l", "q");
   await expect(threadPane(page)).toHaveCount(0);
   await expect(html(page)).not.toHaveAttribute("data-vim-panes", "");
-  expect((await headerLine(mainPane(page))).height).toBe("1px");
+  expect((await headerLine(mainPane(page))).drawn).toBe(false);
 });
 
 test("the line, the cursor row and the label follow the user's accent colour and light or dark mode, live", async ({
@@ -3103,7 +3136,8 @@ test.describe("the g page keys", () => {
         ["w", "buzz.workflows/workflows"],
         ["t", "buzz.reminders/reminders"],
         ["v", /^megatech\.vim-mode\//],
-      ]) {
+        // From a list, gr and gt are the host's keys on v1.0.2 (the tests after this one): only a message box takes them.
+      ].filter(([key]) => inBox || (key !== "r" && key !== "t"))) {
         await enter(page, place);
         await press(page, "g", key);
         await expect
@@ -3141,19 +3175,32 @@ test.describe("the g page keys", () => {
     });
   }
 
-  // g1 ... g9 are the entries of the top bar, counted from its left. The harness has a plugin whose page is placed there (and one placed in the
-  // toolbar, which is not an entry of the bar), so the bar is Messages, Reminders, that page, Agents, Workflows: the host puts the others by name.
-  const tabs = (page) => page.getByRole("tablist", { name: "Topbar pages", exact: true }).getByRole("tab");
-  const ORDER = ["Messages", "Reminders", "A deliberately long topbar destination", "Agents", "Workflows"];
+  for (const place of ["the channel's list", "the thread's list", "the channel list"]) {
+    test(`gr and gt open Reminders from ${place} (known not to work on Buzz v1.0.2)`, async ({ page, app }) => {
+      test.fail(true, HOST_RESERVES_KEYS);
+      await open(page, app);
+      for (const key of ["r", "t"]) {
+        await enter(page, place);
+        await press(page, "g", key);
+        await expect.poll(() => where(page), { message: `g${key} from ${place}` }).toBe("buzz.reminders/reminders");
+      }
+    });
+  }
+
+  // g1 ... g9 are the entries of the dock, counted from its top. The harness has two plugins whose pages are placed in it, one as `topbar` and
+  // one as `toolbar`: both are names from before the dock and both mean it (src/app/shell/presentation.ts, pagePlacement). So the dock is
+  // Messages, Reminders, those two pages, Agents, Workflows: the host puts the others by name.
+  const tabs = (page) => page.getByRole("navigation", { name: "Apps dock", exact: true }).getByRole("tab");
+  const ORDER = ["Messages", "Reminders", "A deliberately long topbar destination", "Agents", "Toolbar destination", "Workflows"];
   for (const place of ["the channel's list", "the thread's list", "the channel list", "the channel's box", "the thread's box"]) {
-    test(`g1 to g5 open the entries of the top bar from ${place}, g6 and g0 nothing`, async ({ page, app }) => {
+    test(`g1 to g6 open the entries of the dock from ${place}, g7 and g0 nothing`, async ({ page, app }) => {
       await page.addInitScript(() => {
         localStorage.setItem("buzzodz.plugins.v1", JSON.stringify({ version: 2, enabled: { "fixture.page-placement": true } }));
       });
       await open(page, app);
       const inBox = place.endsWith("box");
       await expect(tabs(page)).toHaveText(ORDER);
-      for (const n of [1, 2, 3, 4, 5]) {
+      for (const n of [1, 2, 3, 4, 5, 6]) {
         await enter(page, place);
         const draft = inBox ? await composer(page).evaluate((el) => el.textContent) : "";
         await press(page, "g", String(n));
@@ -3165,19 +3212,19 @@ test.describe("the g page keys", () => {
           if (inBox) expect(await composer(page).evaluate((el) => el.textContent)).toBe(draft);
         }
       }
-      // Nothing is the sixth entry, and nothing happens: the page stays, the prefix is gone.
-      await press(page, "g", "6");
-      await expect(tabs(page).nth(4)).toHaveAttribute("aria-selected", "true");
+      // Nothing is the seventh entry, and nothing happens: the page stays, the prefix is gone.
+      await press(page, "g", "7");
+      await expect(tabs(page).nth(5)).toHaveAttribute("aria-selected", "true");
       await press(page, "g", "0");
-      await expect(tabs(page).nth(4)).toHaveAttribute("aria-selected", "true");
+      await expect(tabs(page).nth(5)).toHaveAttribute("aria-selected", "true");
       await expect(bar(page)).not.toContainText("g");
     });
   }
 
-  // Two pages pinned to the bar. The second fixture (test/pins-fixture.tsx) is registered after the first and sorts before it by name,
-  // and both sort before Agents: the numbers follow the names, as the host draws the bar, not the order the pages were registered in
-  // or the order of their keys. The pinned pages are the third and fourth entries and Agents and Workflows move down by two.
-  test("two pinned pages are numbered by name among the bar's entries", async ({ page, app }) => {
+  // Two pages pinned to the dock. The second fixture (test/pins-fixture.tsx) is registered after the first and sorts before it by name,
+  // and both sort before Agents: the numbers follow the names, as the host draws the dock, not the order the pages were registered in
+  // or the order of their keys. The pinned pages are the third and fourth entries and Agents, the toolbar page and Workflows move down by two.
+  test("two pinned pages are numbered by name among the dock's entries", async ({ page, app }) => {
     await page.addInitScript(() => {
       localStorage.setItem(
         "buzzodz.plugins.v1",
@@ -3185,19 +3232,19 @@ test.describe("the g page keys", () => {
       );
     });
     await open(page, app);
-    const order = ["Messages", "Reminders", "A bar", "A deliberately long topbar destination", "Agents", "Workflows"];
+    const order = ["Messages", "Reminders", "A bar", "A deliberately long topbar destination", "Agents", "Toolbar destination", "Workflows"];
     await expect(tabs(page)).toHaveText(order);
-    for (const n of [3, 4, 5, 6, 2, 1]) {
+    for (const n of [3, 4, 5, 6, 7, 2, 1]) {
       await enter(page, "the channel's list");
       await press(page, "g", String(n));
       await expect(tabs(page).nth(n - 1), `g${n}`).toHaveAttribute("aria-selected", "true");
       await expect(tabs(page).nth(n - 1)).toHaveText(order[n - 1]);
     }
-    // There are six entries now: the seventh is nothing, and the page stays.
-    await press(page, "g", "6");
-    await expect(tabs(page).nth(5)).toHaveAttribute("aria-selected", "true");
+    // There are seven entries now: the eighth is nothing, and the page stays.
     await press(page, "g", "7");
-    await expect(tabs(page).nth(5)).toHaveAttribute("aria-selected", "true");
+    await expect(tabs(page).nth(6)).toHaveAttribute("aria-selected", "true");
+    await press(page, "g", "8");
+    await expect(tabs(page).nth(6)).toHaveAttribute("aria-selected", "true");
     await expect(bar(page)).not.toContainText("g");
   });
 
@@ -3274,9 +3321,9 @@ test.describe("the g page keys", () => {
   }
 
   // Where the focus is when no list has it: the app's main region (where it leaves the focus when it opens), a button of a pane, a tab of the
-  // top bar. The host takes Esc in such places before the plugin's shortcut sees it (in the main region it never gets past the capture phase
+  // dock. The host takes Esc in such places before the plugin's shortcut sees it (in the main region it never gets past the capture phase
   // of the window), so the plugin cancels the pending g in the capture phase itself and leaves Esc to the host.
-  for (const place of ["the page as the app opens it", "the app's main region", "a button in the channel's pane", "a button in the thread's pane", "a tab of the top bar"]) {
+  for (const place of ["the page as the app opens it", "the app's main region", "a button in the channel's pane", "a button in the thread's pane", "a tab of the dock"]) {
     test(`Esc cancels a pending g with the focus on ${place}`, async ({ page, app }) => {
       await open(page, app);
       await page.waitForTimeout(600);
@@ -3298,8 +3345,9 @@ test.describe("the g page keys", () => {
     });
   }
 
-  // The pages other than Messages have no message list, and the same Esc is wanted there.
-  for (const [letter, name] of [["a", "Agents"], ["r", "Reminders"], ["i", "Inbox"], ["w", "Workflows"]]) {
+  // The pages other than Messages have no message list, and the same Esc is wanted there. Reminders is reached by its number in the dock
+  // (g2): from the page the app opens on, `gr` is one of the keys the host reserves on v1.0.2 (HOST_RESERVES_KEYS).
+  for (const [letter, name] of [["a", "Agents"], ["2", "Reminders"], ["i", "Activity"], ["w", "Workflows"]]) {
     test(`Esc cancels a pending g on the ${name} page`, async ({ page, app }) => {
       await open(page, app);
       await press(page, "g", letter);
@@ -3409,9 +3457,13 @@ test.describe("the Settings dialog", () => {
     for (let i = 0; i < 5; i++) await press(page, "j");
     await expect(detail(page).getByRole("tab", { name: "All plugins", exact: true })).toBeFocused();
     await press(page, "j");
-    await expect(button("View Emoji details")).toBeFocused();
+    // The first plugin row is the first plugin the host lists (Emoji before Buzz 1.0, Activity in v1.0.2): its name is read, not assumed.
+    const first = await detail(page).locator(":focus").getAttribute("aria-label");
+    expect(first).toMatch(/^View .+ details$/);
+    const plugin = first.slice("View ".length, -" details".length);
+    await expect(button(`View ${plugin} details`)).toBeFocused();
     await press(page, "j");
-    await expect(button("Disable Emoji")).toBeFocused();
+    await expect(detail(page).getByRole("button", { name: new RegExp(`^(Disable|Enable) ${plugin}$`) })).toBeFocused();
     await expect(detail(page).getByRole("searchbox")).toHaveValue("");
     const walked = 2;
     // k goes back up the same way, over the search box, to the tab list.
@@ -3720,9 +3772,15 @@ test.describe("Ctrl-e and Ctrl-y scroll the view a line at a time", () => {
   });
 
   test("in the channel list it scrolls the list, and the focus moves only when its row would leave the view", async ({ page, app }) => {
+    // The sidebar of Buzz 1.0 has about 100px of header (the Solo and Team tabs, the Channels heading) at the top of the list's scrolling area,
+    // and in a window 360px high the list gets 49px: at its top no row shows at all, so no row could take the focus. In one 620px high it gets
+    // about 140, enough for a row or two under the header, and the list still scrolls. The focus starts on a row further down (the open channel's
+    // row is one of the first, and would stay partly in view at the top), so that scrolling to the top takes it out of the view.
+    await page.setViewportSize({ width: 1200, height: 620 });
     await open(page, app);
     await press(page, "h");
     await expect(bar(page)).toHaveText("-- NORMAL --  sidebar");
+    await press(page, "6", "j");
     const nav = channelNav(page);
     const line = await lineOf(nav);
     expect(await nav.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(2 * line);
@@ -3735,9 +3793,13 @@ test.describe("Ctrl-e and Ctrl-y scroll the view a line at a time", () => {
         const b = el.getBoundingClientRect();
         return a.bottom > b.top && a.top < b.bottom;
       });
+    // The focus is on a channel row of the list, by the plugin's own rule for one (SIDEBAR_ROW in src/constants.ts), not only on something with text.
+    const onChannelRow = () => nav.evaluate((el) => !!document.activeElement && el.contains(document.activeElement) && document.activeElement.matches("[data-sidebar-section] button[data-channel-id]"));
     const start = await top(nav);
     const first = await focused();
-    expect(first).toContain("Alpha");
+    expect(await onChannelRow(), "the focus is on a channel row of the list").toBe(true);
+    expect(first).toBeTruthy();
+    expect(start).toBeGreaterThanOrEqual(line); // the focused row's own scroll left room to scroll up a line
     await ctrl(page, "y");
     await expect.poll(() => top(nav)).toBe(start - line);
     expect(await focused()).toBe(first);
@@ -3755,27 +3817,33 @@ test.describe("Ctrl-e and Ctrl-y scroll the view a line at a time", () => {
   });
 
   // Pages with a list of their own. The fixture has no reminders and no workflows, so those two pages are given a
-  // tall element to scroll; Agents and Inbox scroll their own lists.
+  // tall element to scroll; Agents and Activity (the Inbox, a row of the Messages sidebar since Buzz 1.0) scroll their own lists.
   for (const [keys, name] of [
     ["a", "Agents"],
-    ["i", "Inbox"],
+    ["i", "Activity"],
   ]) {
     test(`on the ${name} page, with the focus in the channel list, it scrolls the page's list`, async ({ page, app }) => {
-      await page.setViewportSize({ width: 1200, height: 300 });
+      // The Agents page of Buzz v1.0.2 is 54px taller than its area in a window 300px high: not the five lines the test scrolls. At 240 it is 114.
+      await page.setViewportSize({ width: 1200, height: 240 });
       await open(page, app);
       await press(page, "h", "g", keys);
-      await expect(page.getByRole("tab", { name, exact: true }).first()).toHaveAttribute("aria-selected", "true");
+      if (name === "Activity") await expect(page.getByRole("region", { name, exact: true })).toBeVisible();
+      else await expect(page.getByRole("tab", { name, exact: true }).first()).toHaveAttribute("aria-selected", "true");
       await expect.poll(async () => (await pageScroller(page)).count()).toBe(1);
       const area = await pageScroller(page);
       const line = await lineOf(area);
-      const navTop = await top(channelNav(page));
+      // Since Buzz 1.0 an app of the dock (Agents) shows its own sidebar in place of the Messages one (src/app/shell/presentation.ts,
+      // navigationOwner), so there is no channel list to leave alone there; Activity is a row of the Messages sidebar, whose list stays.
+      const listStays = (await channelNav(page).count()) > 0;
+      expect(listStays).toBe(name === "Activity");
+      const navTop = listStays ? await top(channelNav(page)) : 0;
       await ctrl(page, "e");
       await expect.poll(() => top(area)).toBe(line);
       await press(page, "2", "Control+e");
       await expect.poll(() => top(area)).toBe(3 * line);
       await ctrl(page, "y");
       await expect.poll(() => top(area)).toBe(2 * line);
-      expect(await top(channelNav(page))).toBe(navTop);
+      if (listStays) expect(await top(channelNav(page))).toBe(navTop);
     });
   }
 
@@ -3803,7 +3871,7 @@ test.describe("Ctrl-e and Ctrl-y scroll the view a line at a time", () => {
   test("on the Reminders page it scrolls the page", async ({ page, app }) => {
     await page.setViewportSize({ width: 1200, height: 300 });
     await open(page, app);
-    await press(page, "h", "g", "r");
+    await press(page, "h", "g", "2"); // the dock's second entry: gr is one of the keys the host reserves on v1.0.2 (HOST_RESERVES_KEYS)
     await expect(page.getByRole("tab", { name: "Reminders", exact: true })).toHaveAttribute("aria-selected", "true");
     // The page's root clips its content; let it scroll, and give it something tall.
     const root = page.getByText("Connect to a community to see your reminders.").locator("xpath=ancestor::*[@data-buzz-ui][1]");

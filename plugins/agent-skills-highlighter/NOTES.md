@@ -61,6 +61,13 @@ Run-to-run noise on a 2-CPU machine is about ±10% (the three passes of one run 
 
 The test list is far denser than real talk: every fifth message repeats "/brainstorming … /plan-review" up to nineteen times. It is a worst case, chosen so a cost would show.
 
+## On Buzz v1.0.2
+
+The browser tests run on block/buzz-app v1.0.2 (`51d63954c074e94497dc030b54a204d34b7471be`, 13 November 2026) now. Three of them failed on the first run there, and none on `d92bfb2c`, so the cause was Buzz and not the machine:
+
+- **Contrast.** The message's own text on the highlight, in its worst frame, was 4.55 at rest and 4.32 on hover in the dark theme and 4.67 and 4.44 in the light one, against a floor of 4.5. On `d92bfb2c` the same tint measured 4.96 and 4.69 (dark) and 4.99 and 4.72 (light): the host's text and background colours moved, and the margin went with them. The tint is lowered to bring the margin back, not the floor: dark rest 0.10, hover 0.15, dither 0.09, scan beam 0.08 (it was 0.12, 0.16, 0.12 and 0.10), light rest 0.18, hover 0.22, dither 0.18, scan beam 0.18 (it was 0.20, 0.26, 0.20 and 0.20). The worst frame now measures 5.13 at rest and 4.78 on hover in the dark theme and 4.95 and 4.79 in the light one. The split colours' share is as it was.
+- **The glitch's neighbours.** The test compares the pixels of the two letters beside the highlight at rest and in every frame of the decloak. It parked the pointer 60px to the right of the highlight, which is the author's avatar in this layout, and since Buzz 1.0 a pointer on an avatar opens the profile card (`ProfilePeek`, `trigger-hover`) over the line after a moment. It parks the pointer on the message's own text, to the left of the highlight now. And the row's hover transitions were still running when the "at rest" strips were taken: while one runs, Chromium draws the line's text with grayscale smoothing instead of the subpixel smoothing it settles on, which changed the pixels of the letter beside the highlight in every frame. The test waits until nothing is animating first. Nothing the plugin draws was found to leak out of the highlight.
+
 ## What was and was not checked
 
 See the README's last section. In short: unit tests, the real script, the browser tests and the speed comparison were run; the card and the highlight were looked at in the installed desktop app in a channel and a thread. A DM was checked only in the browser harness (it would have meant sending a message to a person). On a Mac the highlight with its glow, the card, the description and its source line were run by hand in the desktop app; Windows was not run (it has no `sh`).
