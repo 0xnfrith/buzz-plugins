@@ -219,9 +219,10 @@ test("restarts the shell, ends it, and starts a new one", async ({ page, app }) 
     await open(page, app);
     await show(page);
     const first = world.host.calls.length;
-    await typeLine(page, "echo old-$$");
-    await shows(page, "old-");
-    const oldShell = Number(/old-(\d+)/.exec(await screenText(page))?.[1]);
+    // The typed line is echoed before the shell runs it, so wait for a marker that only its output has (the sum, not the text of the sum).
+    await typeLine(page, "echo old-$((6*7))-$$");
+    await expect.poll(() => screenText(page), { timeout: 30_000 }).toMatch(/old-42-\d+/);
+    const oldShell = Number(/old-42-(\d+)/.exec(await screenText(page))?.[1]);
     expect(alive(oldShell)).toBe(true);
 
     await restart(page).click();
@@ -260,9 +261,9 @@ test("hangs up the shell when the plugin is disabled", async ({ page, app }) => 
   try {
     await open(page, app);
     await show(page);
-    await typeLine(page, "echo shell-$$");
-    await shows(page, "shell-");
-    const shell = Number(/shell-(\d+)/.exec(await screenText(page))?.[1]);
+    await typeLine(page, "echo shell-$((6*7))-$$");
+    await expect.poll(() => screenText(page), { timeout: 30_000 }).toMatch(/shell-42-\d+/);
+    const shell = Number(/shell-42-(\d+)/.exec(await screenText(page))?.[1]);
     expect(alive(shell)).toBe(true);
 
     // A focused terminal keeps every key but its own toggle chord for the shell, so leave it before the app's Settings shortcut.

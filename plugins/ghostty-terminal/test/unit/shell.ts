@@ -7,7 +7,8 @@ import { createHost } from "../host-sim.mjs";
 import manifest from "../../manifest.json" with { type: "json" };
 import { LineAssembler, encodeInput, encodeResize, fromBase64 } from "../../src/protocol";
 
-export const ALLOWLIST = "HOME USER LOGNAME LANG LC_ALL LC_CTYPE TZ TMPDIR SHELL PATH TERM COLORTERM TERM_PROGRAM".split(" ");
+export const ALLOWLIST =
+  "HOME USER LOGNAME LANG LC_ALL LC_CTYPE TZ TMPDIR PATH TERM COLORTERM TERM_PROGRAM BUZZ_VERSION BUZZ_CHANNEL_ID BUZZ_CHANNEL BUZZ_NPUB BUZZ_RELAY_URL BUZZ_THREAD_ID".split(" ");
 export const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export type Shell = Awaited<ReturnType<typeof openShell>>;

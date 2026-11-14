@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { userInfo } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { randomSplit } from "../host-sim.mjs";
 import { ALLOWLIST, alive, delay, gone, openShell, scratchHome, type Shell } from "./shell";
@@ -51,6 +52,21 @@ describe("the shell", () => {
     await shell.send("echo BYE-$((6*7)); exit 3\n");
     expect(await shell.exited).toBe(3);
     expect(shell.text()).toContain("BYE-42");
+  });
+});
+
+describe("how the shell ends", () => {
+  it("reports a shell killed by a signal as 128+N, as shells do (SIGKILL is 137)", async () => {
+    const shell = await open(home.home);
+    await shell.send("echo dying-$((6*7)); kill -9 $$\n");
+    expect(await shell.exited).toBe(137);
+    expect(shell.text()).toContain("dying-42");
+  });
+
+  it("reports status 0 for a shell that just exits", async () => {
+    const shell = await open(home.home);
+    await shell.send("exit\n");
+    expect(await shell.exited).toBe(0);
   });
 });
 
@@ -112,11 +128,14 @@ describe("the shell's environment", () => {
     const shell = await open(home.home, {
       baseEnv: minimal,
       appEnv: secrets,
-      env: { BUZZ_CHANNEL_ID: "channel-1", BUZZ_CHANNEL: "general", PLUGIN_ONLY_EXTRA: "dropped" },
+      env: { BUZZ_CHANNEL_ID: "channel-1", BUZZ_CHANNEL: "general", PLUGIN_ONLY_EXTRA: "dropped", BUZZ_UNLISTED: "dropped", BUZZ_AGENT_KEY: "dropped" },
     });
     const variables = await names(shell);
     for (const name of Object.keys(secrets)) expect(variables.has(name), `${name} reached the shell`).toBe(false);
     expect(variables.has("PLUGIN_ONLY_EXTRA")).toBe(false);
+    // BUZZ_* is a list of names, not a prefix: a variable Buzz or a plugin adds later does not reach the shell unless it is named.
+    expect(variables.has("BUZZ_UNLISTED")).toBe(false);
+    expect(variables.has("BUZZ_AGENT_KEY")).toBe(false);
     expect(variables.get("BUZZ_CHANNEL_ID")).toBe("channel-1");
     expect(variables.get("BUZZ_CHANNEL")).toBe("general");
     expect(variables.get("BUZZ_VERSION")).toBe("1.0.2");
@@ -129,11 +148,18 @@ describe("the shell's environment", () => {
     expect(stray, "names the secrets-free control run does not have").toEqual([]);
   });
 
-  it("is built from the bridge's own list: every name on it is in the plugin's allowlist the tests and README name", async () => {
+  it("is built from the bridge's own list, which names every BUZZ_ variable and keeps no prefix", () => {
     const source = readFileSync(new URL("../../src/bridge.py", import.meta.url), "utf8");
     const listed = /KEEP = '([^']*)'/.exec(source)?.[1].split(" ");
     expect(listed).toEqual(ALLOWLIST);
     expect(listed).not.toContain("SSH_AUTH_SOCK");
+    expect(listed).not.toContain("SHELL"); // set by the bridge to the shell that runs
+    expect(source).not.toMatch(/startswith/);
+  });
+
+  it("has SHELL set to the shell that runs, not the one the app was started with", async () => {
+    const shell = await open(home.home, { appEnv: { SHELL: "/bin/false" } });
+    expect(await shell.run("echo $SHELL")).toBe(userInfo().shell);
   });
 });
 
@@ -194,6 +220,21 @@ describe("stopping", () => {
     await shell.proc.kill();
     expect(Date.now() - started).toBeLessThan(2500);
     expect(await gone(job, 3000), "the background job outlived the stop").toBe(true);
+  });
+
+  it("notices the shell exiting while a background job still holds the terminal: the bridge ends within about a second, with the status and the last output", async () => {
+    const shell = await open(home.home);
+    const job = await pidOf(shell, "sleep 4251 & echo BG-$!", "BG");
+    const started = Date.now();
+    await shell.send("echo last-$((6*7)); exit 4\n");
+    expect(await shell.exited).toBe(4);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(shell.text()).toContain("last-42");
+    try {
+      process.kill(job, "SIGKILL"); // whether the job outlived the shell is up to the system; the test only cleans up
+    } catch {
+      // it did not
+    }
   });
 
   it("hangs up a background job when its input closes", async () => {

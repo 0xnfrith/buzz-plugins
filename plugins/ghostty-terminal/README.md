@@ -10,20 +10,20 @@ It is a prototype because nobody has run it in the Buzz desktop app yet. Everyth
 
 - A button in the channel header, and **Cmd+Shift+J** (Ctrl+Shift+J elsewhere), show a terminal drawer for that channel. Hiding the drawer keeps the shell and its scrollback; showing it again attaches the same terminal. One shell per community and channel.
 - **Restart** hangs up the shell and starts a new one. **End** hangs it up and leaves none. Disabling the plugin, or closing Buzz, hangs up every shell.
-- The shell is your login shell (`$SHELL -l`, from your account), started in your home folder, on a real terminal (a PTY).
+- The shell is your account's login shell (the one in the password database, started as a login shell), in your home folder, on a real terminal (a PTY). If it exits while a background job is still running, the drawer still says so; the job is not hung up.
 
 ### The shell's environment
 
 The plugin passes `TERM=xterm-256color`, `COLORTERM=truecolor`, `TERM_PROGRAM=Buzz`, and Buzz's public channel context, the same variables Buzz's own Terminal sets: `BUZZ_CHANNEL_ID`, `BUZZ_CHANNEL`, `BUZZ_NPUB`, `BUZZ_RELAY_URL`, and `BUZZ_THREAD_ID` when a thread is open. A value that does not check out is left out rather than passed.
 
-The bridge then drops everything else Buzz was started with, except `HOME USER LOGNAME LANG LC_ALL LC_CTYPE TZ TMPDIR SHELL PATH`. This is the list Buzz's own Terminal uses. Two consequences:
+The bridge then drops everything else Buzz was started with. It keeps `HOME USER LOGNAME LANG LC_ALL LC_CTYPE TZ TMPDIR PATH` (Buzz's own Terminal's list), the variables above by name (`BUZZ_VERSION` too), and no other `BUZZ_` name; it sets `SHELL` to the shell that runs. Two consequences:
 
 - **`SSH_AUTH_SOCK` is dropped, so `git` over an SSH agent does not work in this terminal**, as in Buzz's own Terminal.
 - `PATH` is the one Buzz gives a plugin's process (on macOS it includes the one your login shell sets up); your shell's startup files can add to it.
 
 ### Why there is a Python bridge
 
-A plugin that starts a process gets pipes, not a terminal, and Buzz's own native terminal is not available to plugins. So the manifest declares one process, `python3`, that runs [src/bridge.py](src/bridge.py): it puts your login shell on a PTY and passes bytes between it and the plugin. The text of that file is copied, byte for byte, into `manifest.json`, so **the install review shows it in full**. It is run as `python3 -I -c "import sys;exec(sys.argv[1]+sys.argv[2])" <first half> <second half>`: `-I` is python's isolated mode, and the fixed loader joins exactly the two halves and ignores any argument Buzz adds after them. It reads no arguments, runs only your login shell, and takes no input but its own lines on stdin.
+A plugin that starts a process gets pipes, not a terminal, and Buzz's own native terminal is not available to plugins. So the manifest declares one process, `python3`, that runs [src/bridge.py](src/bridge.py): it puts your login shell on a PTY and passes bytes between it and the plugin. The text of that file is copied, byte for byte, into `manifest.json`, so **the install review shows it in full**. It is run as `python3 -I -c "import sys;exec(sys.argv[1]+sys.argv[2]+sys.argv[3])" <first> <second> <third>`: `-I` is python's isolated mode, and the fixed loader joins exactly the three slices and ignores any argument Buzz adds after them. (Buzz allows 1024 bytes in an argument and the bridge is about 2.4 KB, so it is cut at blank lines.) It reads no arguments, runs only your login shell, and takes no input but its own lines on stdin.
 
 It needs `python3` 3.9 or newer.
 
@@ -37,7 +37,7 @@ corepack pnpm@12.16.1 run build
 shasum -a 256 plugin.js
 ```
 
-Then in Buzz: **Settings → Plugins → Manage plugins → Add**, choose to load a **folder**, press **Browse**, and pick this folder. Read the access it asks for before you press **Install plugin**. It should list one process: `python3` with the arguments `-I`, `-c`, a one-line loader, and two blocks of Python that are the text of `src/bridge.py`. It asks for nothing else (no commands, network or files). If it shows anything else, do not install it.
+Then in Buzz: **Settings → Plugins → Manage plugins → Add**, choose to load a **folder**, press **Browse**, and pick this folder. Read the access it asks for before you press **Install plugin**. It should list one process: `python3` with the arguments `-I`, `-c`, a one-line loader, and three blocks of Python that are the text of `src/bridge.py`. It asks for nothing else (no commands, network or files). If it shows anything else, do not install it.
 
 ### What to check, and write down
 

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { TERMINAL_ENV, bech32, npub, relayUrl, shellEnv, type ChannelContext } from "../../src/env";
 
@@ -92,5 +93,11 @@ describe("shellEnv", () => {
     expect(Object.keys(shellEnv(context)).sort()).toEqual(
       ["BUZZ_CHANNEL", "BUZZ_CHANNEL_ID", "BUZZ_NPUB", "BUZZ_RELAY_URL", "BUZZ_THREAD_ID", "COLORTERM", "TERM", "TERM_PROGRAM"].sort(),
     );
+  });
+
+  it("only asks for names the bridge keeps, so nothing the plugin passes is dropped on the way", () => {
+    const bridge = readFileSync(new URL("../../src/bridge.py", import.meta.url), "utf8");
+    const kept = /KEEP = '([^']*)'/.exec(bridge)?.[1].split(" ") ?? [];
+    for (const name of Object.keys(shellEnv(context))) expect(kept, name).toContain(name);
   });
 });

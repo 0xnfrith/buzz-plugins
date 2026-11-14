@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { LIMIT, LOADER, bridgeArgs, render } from "../../scripts/manifest.mjs";
+import { LIMIT, MAX_SLICES, bridgeArgs, loaderFor, render } from "../../scripts/manifest.mjs";
 import { processProblems } from "../host-sim.mjs";
 import manifest from "../../manifest.json" with { type: "json" };
 
@@ -8,6 +8,7 @@ const read = (path: string) => readFileSync(new URL(`../../${path}`, import.meta
 const bridge = read("src/bridge.py");
 const bytes = (text: string) => new TextEncoder().encode(text).length;
 const [process] = manifest.host.processes;
+const [, , loader, ...slices] = process.args;
 
 describe("manifest.json", () => {
   it("is what scripts/manifest.mjs writes from src/bridge.py (run `pnpm run manifest` after editing the bridge)", () => {
@@ -19,18 +20,21 @@ describe("manifest.json", () => {
     expect(process.args.slice(0, 2)).toEqual(["-I", "-c"]);
   });
 
-  it("shows the bridge in full: the two halves joined are src/bridge.py, byte for byte, and each fits Buzz's 1024-byte argument", () => {
-    const [, , loader, ...halves] = process.args;
-    expect(loader).toBe(LOADER);
-    expect(halves).toHaveLength(2);
-    expect(halves.join("")).toBe(bridge);
-    for (const half of halves) expect(bytes(half)).toBeLessThanOrEqual(LIMIT);
+  it("shows the bridge in full: the slices joined are src/bridge.py, byte for byte, and each fits Buzz's 1024-byte argument", () => {
+    expect(slices.length).toBeGreaterThanOrEqual(2);
+    expect(slices.length).toBeLessThanOrEqual(MAX_SLICES);
+    expect(slices.join("")).toBe(bridge);
+    for (const slice of slices) {
+      expect(bytes(slice)).toBeLessThanOrEqual(LIMIT);
+      expect(slice.endsWith("\n\n") || slice === slices.at(-1), "a slice ends at a blank line").toBe(true);
+    }
     expect(bytes(loader)).toBeLessThanOrEqual(LIMIT);
   });
 
-  it("uses the fixed loader: it joins exactly two arguments, so the arguments Buzz appends after them are never run", () => {
-    expect(LOADER).toBe("import sys;exec(sys.argv[1]+sys.argv[2])");
-    expect(process.args).toHaveLength(5);
+  it("uses a fixed loader: it joins exactly the slices by index, so the arguments Buzz appends after them are never run", () => {
+    expect(loaderFor(3)).toBe("import sys;exec(sys.argv[1]+sys.argv[2]+sys.argv[3])");
+    expect(loader).toBe(loaderFor(slices.length));
+    expect(process.args).toHaveLength(3 + slices.length);
     // The bridge itself must not read its arguments either (they are the plugin's to add, and Buzz appends them).
     expect(bridge).not.toMatch(/sys\.argv|import sys|\bargv\b/);
   });
@@ -83,21 +87,35 @@ describe("the process-rule check (so a bad manifest cannot pass quietly)", () =>
 });
 
 describe("bridgeArgs", () => {
+  const paragraph = (line: string, count: number) => line.repeat(count);
+
   it("passes a source that fits one argument through whole, with no loader", () => {
     expect(bridgeArgs("print(1)\n")).toEqual(["-I", "-c", "print(1)\n"]);
   });
 
-  it("cuts a longer source at the last blank line inside its first 1024 bytes", () => {
-    const source = `${"a = 1\n".repeat(100)}\n${"b = 2\n".repeat(100)}`;
-    const [, , loader, first, second] = bridgeArgs(source);
-    expect(loader).toBe(LOADER);
+  it("cuts a longer source at the last blank line that fits, and joins nothing but those slices", () => {
+    const source = `${paragraph("a = 1\n", 100)}\n${paragraph("b = 2\n", 100)}`;
+    const [, , joined, first, second] = bridgeArgs(source);
+    expect(joined).toBe(loaderFor(2));
     expect(first + second).toBe(source);
     expect(first.endsWith("\n\n")).toBe(true);
+    expect(first).toHaveLength(601);
   });
 
-  it("refuses a source that cannot be cut into two arguments, or that is not ASCII", () => {
+  it("uses three slices when two will not do, with the loader to match", () => {
+    const source = [100, 100, 100].map((count) => paragraph("c = 3\n", count)).join("\n");
+    const [, , joined, ...parts] = bridgeArgs(source);
+    expect(parts).toHaveLength(3);
+    expect(parts.join("")).toBe(source);
+    expect(joined).toBe("import sys;exec(sys.argv[1]+sys.argv[2]+sys.argv[3])");
+    for (const part of parts) expect(part.length).toBeLessThanOrEqual(LIMIT);
+  });
+
+  it("refuses a source that needs more than three slices, one with no blank line to cut at, and one that is not ASCII", () => {
+    const four = [150, 150, 150, 150].map((count) => paragraph("d = 4\n", count)).join("\n");
+    expect(() => bridgeArgs(four)).toThrow(/too long/);
     expect(() => bridgeArgs("a = 1\n".repeat(400))).toThrow(/blank line/);
-    expect(() => bridgeArgs(`${"a = 1\n".repeat(100)}\n${"b = 2\n".repeat(300)}`)).toThrow(/too long/);
+    expect(() => bridgeArgs(`${paragraph("a = 1\n", 100)}\n${paragraph("b = 2\n", 300)}`)).toThrow(/blank line/);
     expect(() => bridgeArgs("print('é')\n")).toThrow(/ASCII/);
   });
 });
