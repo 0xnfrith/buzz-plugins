@@ -8,16 +8,30 @@ import { createSessions } from "./session";
 export const inject = ["react", "panels", "shortcuts", "host"];
 
 const TOGGLE = { key: "j", mod: true, shift: true } as const;
+/** `mod` is Command on Apple platforms and Control elsewhere (docs/plugin-architecture.md in block/buzz-app). */
+const isToggle = (event: KeyboardEvent) =>
+  event.type === "keydown" &&
+  event.key.toLowerCase() === TOGGLE.key &&
+  event.shiftKey &&
+  !event.altKey &&
+  (/Mac|iPhone|iPad/.test(navigator.platform) ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey);
 const BAR = { background: "#161b22", color: "#e6edf3", fontSize: 12, padding: "4px 8px", display: "flex", gap: 8, alignItems: "center" } as const;
 
 export function apply(ctx: any) {
   const React = ctx.react;
   const h = React.createElement;
-  const sessions = createSessions(ctx.host);
-  ctx.effect(() => () => sessions.dispose());
-
   // The launcher and the shortcut share one toggle: the launcher is what knows the channel, so it hands the shortcut its own.
   let binding: { toggle(): void; available(): boolean } | undefined;
+  // While the terminal has focus it swallows keys, so the toggle chord is handed over here and not by the shortcut service below.
+  const sessions = createSessions(ctx.host, {
+    intercept(event) {
+      if (!isToggle(event)) return false;
+      binding?.toggle();
+      return true;
+    },
+  });
+  ctx.effect(() => () => sessions.dispose());
+
   ctx.effect(() => () => {
     binding = undefined;
   });

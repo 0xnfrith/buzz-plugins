@@ -51,6 +51,7 @@ jobs:
       artifacts: ${{ steps.match.outputs.artifacts }}
       artifacts-browser: ${{ steps.match.outputs.artifacts-browser }}
       beeper: ${{ steps.match.outputs.beeper }}
+      ghostty-terminal: ${{ steps.match.outputs.ghostty-terminal }}
       linear: ${{ steps.match.outputs.linear }}
       megatech-support: ${{ steps.match.outputs.megatech-support }}
       megatech-support-browser: ${{ steps.match.outputs.megatech-support-browser }}
@@ -119,6 +120,12 @@ jobs:
     if: ${{ needs.changes.outputs.beeper == 'true' }}
     uses: ./.github/workflows/beeper-tests.yml
 
+  ghostty-terminal:
+    name: Ghostty terminal tests
+    needs: changes
+    if: ${{ needs.changes.outputs.ghostty-terminal == 'true' }}
+    uses: ./.github/workflows/ghostty-terminal-tests.yml
+
   linear:
     name: Linear tests
     needs: changes
@@ -169,7 +176,7 @@ jobs:
     #     left without a job and no job without a row;
     #   - each test workflow did what its row said: passed when it was called ("true"), was skipped when it was not ("false").
     name: all-tests
-    needs: [changes, after-merge, agent-skills-highlighter, agent-stats, ai-sorter, artifacts, artifacts-browser, beeper, linear, megatech-support, megatech-support-browser, merge-by-policy, plugin-assets, vim-tests, vim-latency]
+    needs: [changes, after-merge, agent-skills-highlighter, agent-stats, ai-sorter, artifacts, artifacts-browser, beeper, ghostty-terminal, linear, megatech-support, megatech-support-browser, merge-by-policy, plugin-assets, vim-tests, vim-latency]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5

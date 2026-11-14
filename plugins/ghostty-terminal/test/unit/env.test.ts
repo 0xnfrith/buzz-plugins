@@ -5,21 +5,25 @@ const context: ChannelContext = {
   scope: "community-a",
   channelId: "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
   channelName: "General Chat",
-  viewer: "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d",
+  viewer: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
   relayUrl: "wss://relay.example.com",
   threadId: "ab".repeat(32),
 };
 
 describe("npub", () => {
-  it("encodes a public key as NIP-19 does (the NIP's own example)", () => {
-    expect(npub("3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d")).toBe(
-      "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6",
-    );
+  // Expected values from the BIP-173 reference algorithm, written independently of this code (in python), for keys that belong to no one.
+  it("encodes a public key as NIP-19 does, byte for byte", () => {
+    expect(npub("00".repeat(32))).toBe("npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqzqujme");
+    expect(npub("ff".repeat(32))).toBe("npub1lllllllllllllllllllllllllllllllllllllllllllllllllllsq7lrjw");
+    expect(npub("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")).toBe("npub1qqqsyqcyq5rqwzqfpg9scrgwpugpzysnzs23v9ccrydpk8qarc0st5hsmq");
   });
 
-  it("matches BIP-173's checksum for the empty and short inputs", () => {
-    // BIP-173 valid strings: "a12uel5l" is hrp "a" with no data.
+  it("matches BIP-173's own published checksum for an empty input", () => {
     expect(bech32("a", new Uint8Array())).toBe("a12uel5l");
+  });
+
+  it("takes upper-case hex as well", () => {
+    expect(npub("000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F")).toBe("npub1qqqsyqcyq5rqwzqfpg9scrgwpugpzysnzs23v9ccrydpk8qarc0st5hsmq");
   });
 
   it("refuses anything that is not 64 hex characters", () => {
@@ -45,7 +49,7 @@ describe("shellEnv", () => {
       ...TERMINAL_ENV,
       BUZZ_CHANNEL_ID: context.channelId,
       BUZZ_CHANNEL: "General Chat",
-      BUZZ_NPUB: "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6",
+      BUZZ_NPUB: "npub1qqqsyqcyq5rqwzqfpg9scrgwpugpzysnzs23v9ccrydpk8qarc0st5hsmq",
       BUZZ_RELAY_URL: "wss://relay.example.com/",
       BUZZ_THREAD_ID: "ab".repeat(32),
     });

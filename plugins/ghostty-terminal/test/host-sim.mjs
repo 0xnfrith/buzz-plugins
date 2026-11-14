@@ -111,14 +111,18 @@ export function createHost(manifest, { env = process.env, version = "1.0.2", hom
     const exited = new Promise((resolve) => {
       exit = resolve;
     });
-    child.on("close", (code) => {
-      exit(code);
-      live.delete(handle);
+    // host_process.rs: the process's exit is what is waited for, not its pipes. The group is killed at once ("descendants that outlived it
+    // go with it"), the readers then drain what is left, and only then is the exit reported, so output always comes before it.
+    child.once("exit", () => {
       try {
-        process.kill(-child.pid, "SIGKILL"); // "the group is always killed once the process exits"
+        process.kill(-child.pid, "SIGKILL");
       } catch {
         // already gone
       }
+    });
+    child.once("close", (code) => {
+      live.delete(handle);
+      exit(code);
     });
     child.stdin.on("error", () => {});
 

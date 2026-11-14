@@ -6,7 +6,9 @@
     "manifest": "node scripts/manifest.mjs",
     "typecheck": "tsc",
     "build": "node scripts/manifest.mjs && tsc && vite build && node scripts/check-bundle.mjs",
-    "test": "vitest run"
+    "test": "vitest run",
+    "bench:build": "vite build --config test/bench/vite.config.ts",
+    "bench": "node test/bench/run.mjs"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

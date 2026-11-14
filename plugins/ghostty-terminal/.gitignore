@@ -1,3 +1,4 @@
 node_modules/
 # A prototype: the build is run by hand and never committed (README.md). A committed plugin.js would make the importer offer it.
 plugin.js
+test/bench/dist/

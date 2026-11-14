@@ -31,7 +31,14 @@ type Entry = {
   stopped: boolean;
 };
 
-export function createSessions(host: Host, makeScreen: (handlers: Handlers) => Promise<Screen> = createScreen) {
+export type Options = {
+  /** How a terminal is put on screen. The real one by default; a test passes a fake. */
+  makeScreen?: (handlers: Handlers) => Promise<Screen>;
+  /** Keys the terminal must keep from the shell (see Handlers.intercept). */
+  intercept?: Handlers["intercept"];
+};
+
+export function createSessions(host: Host, { makeScreen = createScreen, intercept }: Options = {}) {
   const entries = new Map<string, Entry>();
   const listeners = new Set<() => void>();
   const notify = () => listeners.forEach((listener) => listener());
@@ -66,6 +73,7 @@ export function createSessions(host: Host, makeScreen: (handlers: Handlers) => P
       const screen = await makeScreen({
         onInput: (text) => send(entry, encodeInput(text)),
         onResize: (cols, rows) => send(entry, [encodeResize(cols, rows)]),
+        ...(intercept && { intercept }),
       });
       if (entry.stopped) return screen.dispose();
       entry.screen = screen;
