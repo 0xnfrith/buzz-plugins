@@ -15,7 +15,9 @@ const SHOTS = process.env.SHOTS;
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 const shot = (page, name) => SHOTS && page.screenshot({ path: join(SHOTS, `${name}.png`) });
 
-test.use({ pluginFixtures: true });
+// Since Buzz 1.0 the Reminders plugin is off until a person turns it on, and the harness starts a test with it off (tests/browser/fixture.mjs,
+// `enabledPlugins`): the tests that visit that page opt in, as Buzz's own do.
+test.use({ pluginFixtures: true, enabledPlugins: ["buzz.reminders"] });
 
 const KEY_NAME = "megatech.linear.api-key.v1";
 
@@ -95,6 +97,9 @@ async function arrange(page, app, { key = "good", prepare, mac = false, linux = 
   return fake;
 }
 
+// The plugin's own team list. Since Buzz 1.0 the Messages sidebar has a "Team" section whose header is labelled "Team" too, so the label alone
+// matches two elements; the list is the only combobox with that name.
+const teamSelect = (page) => page.getByRole("combobox", { name: "Team", exact: true });
 const board = (page) => page.getByRole("list", { name: "Board" });
 const column = (page, name) => board(page).getByRole("listitem", { name: new RegExp(`^${name}, `) });
 const card = (page, identifier) => page.locator(`[data-identifier="${identifier}"]`);
@@ -110,8 +115,8 @@ test("the board shows the team's columns in Linear's order", async ({ page, app 
   await openBoard(page, app);
   await expect(page.getByRole("heading", { name: "Backlog" })).toBeVisible();
   await shot(page, "01-first-load");
-  await expect(page.getByLabel("Team")).toHaveValue("team-dsn");
-  await page.getByLabel("Team").selectOption("team-plt");
+  await expect(teamSelect(page)).toHaveValue("team-dsn");
+  await teamSelect(page).selectOption("team-plt");
   await expect(card(page, "PLT-120")).toBeVisible();
   const names = await board(page).getByRole("heading", { level: 2 }).allTextContents();
   expect(names).toEqual(["Backlog", "Todo", "In Progress", "In Review", "Done", "Canceled", "Duplicate"]);
@@ -134,7 +139,7 @@ const stateOf = (fake, identifier) =>
 test("dragging a card to another column changes its state in Linear", async ({ page, app }) => {
   await page.setViewportSize({ width: 1500, height: 900 });
   const fake = await openBoard(page, app);
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   await expect(column(page, "Todo")).toContainText("PLT-110");
   await dragCard(page, "PLT-110", "In Progress", { release: false });
   await expect(column(page, "In Progress")).toHaveAttribute("data-over", "");
@@ -155,7 +160,7 @@ test("dragging a card to another column changes its state in Linear", async ({ p
 test("Escape during a drag puts the card back and sends nothing", async ({ page, app }) => {
   await page.setViewportSize({ width: 1500, height: 900 });
   const fake = await openBoard(page, app);
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   await expect(card(page, "PLT-110")).toBeVisible();
   await dragCard(page, "PLT-110", "In Progress", { release: false });
   await page.keyboard.press("Escape");
@@ -168,7 +173,7 @@ test("Escape during a drag puts the card back and sends nothing", async ({ page,
 test("a move Linear refuses is undone, with a message", async ({ page, app }) => {
   await page.setViewportSize({ width: 1500, height: 900 });
   const fake = await openBoard(page, app);
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   await expect(card(page, "PLT-110")).toBeVisible();
   fake.control.fail("reject", { operation: "MoveIssue" });
   await dragCard(page, "PLT-110", "In Progress");
@@ -182,7 +187,7 @@ test("a move Linear refuses is undone, with a message", async ({ page, app }) =>
 test("Duplicate ends the board; a card dropped there or picked from the status menu is not sent, because Linear needs a duplicate relation", async ({ page, app }) => {
   await page.setViewportSize({ width: 2600, height: 900 }); // wide enough that all seven columns are on screen to drop on
   const fake = await openBoard(page, app);
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   await expect(card(page, "PLT-110")).toBeVisible();
   await expect(column(page, "Duplicate")).toContainText("PLT-152");
   // Its header carries the same cross as Canceled's, not the generic glyph of a state type the board does not know.
@@ -204,7 +209,7 @@ test("Duplicate ends the board; a card dropped there or picked from the status m
 test("a click opens the details; its status menu moves the card; Escape closes and returns focus", async ({ page, app }) => {
   await page.setViewportSize({ width: 1500, height: 900 });
   const fake = await openBoard(page, app);
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   const opener = card(page, "PLT-130");
   await opener.click();
   const details = page.getByRole("dialog", { name: "PLT-130 Keyboard-first review queue" });
@@ -226,7 +231,7 @@ test("a click opens the details; its status menu moves the card; Escape closes a
 
 test("cards work from the keyboard", async ({ page, app }) => {
   await openBoard(page, app);
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   const first = card(page, "PLT-110");
   await first.focus();
   await page.keyboard.press("Enter");
@@ -288,7 +293,7 @@ test("the key is never logged and Linear is reached only through the host", asyn
   page.on("pageerror", (error) => logs.push(String(error)));
   page.on("request", (request) => requests.push(request.url()));
   const fake = await openBoard(page, app);
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   fake.control.fail("reject", { operation: "MoveIssue" });
   await dragCard(page, "PLT-110", "In Progress");
   await expect(page.getByRole("alert")).toBeVisible();
@@ -300,7 +305,7 @@ test("the key is never logged and Linear is reached only through the host", asyn
 test("a project or a saved view narrows the board", async ({ page, app }) => {
   await page.setViewportSize({ width: 1500, height: 900 });
   await openBoard(page, app);
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   await expect(card(page, "PLT-102")).toBeVisible();
   await page.getByLabel("Filter").selectOption({ label: "Launch readiness" });
   await expect(card(page, "PLT-120")).toBeVisible();
@@ -315,19 +320,19 @@ test("a project or a saved view narrows the board", async ({ page, app }) => {
 
 test("the choice of team and filter is remembered", async ({ page, app }) => {
   await openBoard(page, app);
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   await page.getByLabel("Filter").selectOption({ label: "Stability" });
   await expect(card(page, "PLT-112")).toBeVisible();
   await page.reload();
   await openPage(page, "Linear");
-  await expect(page.getByLabel("Team")).toHaveValue("team-plt");
+  await expect(teamSelect(page)).toHaveValue("team-plt");
   await expect(page.getByLabel("Filter")).toHaveValue("project:proj-stability");
 });
 
 test("a long column loads a page at a time", async ({ page, app }) => {
   await page.setViewportSize({ width: 1500, height: 900 });
   const fake = await openBoard(page, app);
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   const done = column(page, "Done");
   await expect(done).toHaveAccessibleName("Done, 50+ issues");
   const more = done.getByRole("button", { name: "Show more" });
@@ -341,7 +346,7 @@ test("a long column loads a page at a time", async ({ page, app }) => {
 test("a change made in Linear shows up by itself, and a quiet minute costs one small request", async ({ page, app }) => {
   await page.clock.install();
   const fake = await openBoard(page, app);
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   await expect(card(page, "PLT-110")).toBeVisible();
   const before = fake.control.log.requests.length;
   await page.clock.fastForward(61_000);
@@ -356,7 +361,7 @@ test("a change made in Linear shows up by itself, and a quiet minute costs one s
 test("a rate limit keeps the board and says when it will look again", async ({ page, app }) => {
   await page.clock.install();
   const fake = await openBoard(page, app);
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   await expect(card(page, "PLT-110")).toBeVisible();
   fake.control.fail("rate-limit");
   await page.clock.fastForward(61_000);
@@ -367,7 +372,7 @@ test("a rate limit keeps the board and says when it will look again", async ({ p
 
 test("losing the connection keeps the board and offers to try again", async ({ page, app }) => {
   const fake = await openBoard(page, app);
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   await expect(card(page, "PLT-110")).toBeVisible();
   fake.control.fail("network");
   await page.getByRole("button", { name: "Refresh" }).click();
@@ -381,7 +386,7 @@ for (const mode of ["Dark", "Light"]) {
   test(`${mode} mode: surfaces come from the host and the brand colour follows the mode`, async ({ page, app }) => {
     await page.setViewportSize({ width: 1500, height: 900 });
     await openBoard(page, app);
-    await page.getByLabel("Team").selectOption("team-plt");
+    await teamSelect(page).selectOption("team-plt");
     await expect(card(page, "PLT-120")).toBeVisible();
     await openSettings(page);
     await selectSettingsSection(page, "Appearance");
@@ -442,7 +447,7 @@ for (const mode of ["Dark", "Light"]) {
 test("a narrow window still shows the board and the details", async ({ page, app }) => {
   await page.setViewportSize({ width: 800, height: 700 });
   await openBoard(page, app);
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   await card(page, "PLT-120").click();
   await expect(page.getByRole("dialog", { name: /PLT-120/ })).toBeVisible();
   await shot(page, "13-narrow");
@@ -473,10 +478,17 @@ test("leaving the page and coming back, or turning the plugin off and on, leaves
     window.__listenerCounts = () => Object.fromEntries([...counts].map(([k, v]) => [k, v.size]));
   });
   await openBoard(page, app);
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   await expect(card(page, "PLT-120")).toBeVisible();
   const styles = () => page.locator("style[data-megatech-linear]").count();
-  const counts = () => page.evaluate(() => window.__listenerCounts());
+  // Every count is taken after a Tab. Buzz's design system keeps a capture keydown listener on window that a first Tab ends (the keyboard-modality
+  // tracker, src/shared/design-system/useKeyboardFocusVisibility.ts), and one more for each control with a tooltip that was pressed with the pointer,
+  // until the next Tab or a key on a sibling control (Tooltip.tsx:70-97): the Search button and the toggles of Settings are such controls, so the
+  // number of them left over is the number pressed since the last Tab, not something the plugin did.
+  const counts = async () => {
+    await page.keyboard.press("Tab");
+    return page.evaluate(() => window.__listenerCounts());
+  };
   const onBoard = await counts();
   expect(await styles()).toBe(1);
   await openPage(page, "Reminders");
@@ -510,7 +522,7 @@ test("leaving the page and coming back, or turning the plugin off and on, leaves
 test("Escape ends a drag, and the release that follows does not open the card or move it", async ({ page, app }) => {
   await page.setViewportSize({ width: 1500, height: 900 });
   const fake = await openBoard(page, app);
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   const source = await card(page, "PLT-110").boundingBox();
   await dragCard(page, "PLT-110", "In Progress", { release: false });
   await page.keyboard.press("Escape");
@@ -525,7 +537,7 @@ test("Escape ends a drag, and the release that follows does not open the card or
 test("a drop outside the board, or under the details panel, moves nothing", async ({ page, app }) => {
   await page.setViewportSize({ width: 1500, height: 900 });
   const fake = await openBoard(page, app);
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   const source = await card(page, "PLT-110").boundingBox();
   const header = await page.locator(".mtl-bar").boundingBox();
   await page.mouse.move(source.x + source.width / 2, source.y + 24);
@@ -552,7 +564,7 @@ test("a drop outside the board, or under the details panel, moves nothing", asyn
 test("a drag whose release the page never heard of ends at the next movement", async ({ page, app }) => {
   await page.setViewportSize({ width: 1500, height: 900 });
   const fake = await openBoard(page, app);
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   await dragCard(page, "PLT-110", "In Progress", { release: false });
   await expect(page.locator(".mtl-lift")).toBeVisible();
   // The button comes up in another window: the next move arrives with no button held.
@@ -564,7 +576,7 @@ test("a drag whose release the page never heard of ends at the next movement", a
 test("a completed move is announced", async ({ page, app }) => {
   await page.setViewportSize({ width: 1500, height: 900 });
   await openBoard(page, app);
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   await expect(card(page, "PLT-110")).toBeVisible();
   await dragCard(page, "PLT-110", "In Progress");
   await expect(page.getByRole("status").filter({ hasText: "PLT-110 moved to In Progress" })).toHaveCount(1);
@@ -655,7 +667,7 @@ test("Linear's own wording of a refusal never reaches the page, even when it rep
   await page.getByRole("button", { name: "Cancel" }).click();
   await closeSettings(page);
   await openPage(page, "Linear");
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   await expect(card(page, "PLT-110")).toBeVisible();
   await page.setViewportSize({ width: 1500, height: 900 });
   fake.control.fail("echo", { operation: "MoveIssue" });
@@ -683,7 +695,7 @@ test("a colour from Linear that is not a plain hex colour never reaches the page
     },
   });
   await openPage(page, "Linear");
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   await expect(card(page, "PLT-121")).toBeVisible();
   await card(page, "PLT-121").click(); // a card with a Feature label
   const details = page.getByRole("dialog", { name: /PLT-121/ });
@@ -704,7 +716,7 @@ test("a colour from Linear that is not a plain hex colour never reaches the page
 test("while a card is held, the Duplicate column is greyed out and is not a target; dropping there still says why", async ({ page, app }) => {
   await page.setViewportSize({ width: 2600, height: 900 });
   const fake = await openBoard(page, app);
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   await expect(card(page, "PLT-110")).toBeVisible();
   const dup = column(page, "Duplicate");
   await expect(dup).not.toHaveAttribute("data-refuses");
@@ -917,7 +929,7 @@ test("on a Mac Linear's own wording of a refusal, even one that repeats the key 
   page.on("console", (message) => logs.push(message.text()));
   await page.setViewportSize({ width: 1500, height: 900 });
   const fake = await openBoard(page, app, { key: null, mac: true, inKeychain: "good" });
-  await page.getByLabel("Team").selectOption("team-plt");
+  await teamSelect(page).selectOption("team-plt");
   await expect(card(page, "PLT-110")).toBeVisible();
   fake.control.fail("echo", { operation: "MoveIssue" });
   await dragCard(page, "PLT-110", "In Progress");
