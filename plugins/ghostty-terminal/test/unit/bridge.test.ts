@@ -63,6 +63,18 @@ describe("how the shell ends", () => {
     expect(shell.text()).toContain("dying-42");
   });
 
+  it("passes on the last output of a shell that printed and exited while the bridge was not running (the final drain)", async () => {
+    const shell = await open(home.home);
+    await shell.run("true"); // the shell is up
+    // The shell stops its parent, the bridge, then prints and exits. The bridge is frozen while it does, so when it runs again the output
+    // and the exit reach it together; the output is only passed on by the drain after the shell has been reaped.
+    await shell.send("kill -STOP $PPID; echo drained-$((6*7)); exit 4\n");
+    await delay(1000);
+    process.kill(shell.pid, "SIGCONT");
+    expect(await shell.exited).toBe(4);
+    expect(shell.text()).toContain("drained-42");
+  });
+
   it("reports status 0 for a shell that just exits", async () => {
     const shell = await open(home.home);
     await shell.send("exit\n");
