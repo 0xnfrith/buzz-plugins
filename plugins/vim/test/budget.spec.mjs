@@ -190,11 +190,13 @@ const repeat = async (page, seq) => {
   return { ...sample, pre };
 };
 
-// A control row: F9 and F10 run the two bodies of code in the page (the work of a plugin key, done by the page itself).
+// A control row: F9 and F10 run the two bodies of code in the page (the work of a plugin key, done by the page itself). The page keeps
+// their source as well, so that a row can check it runs with its own F9 and F10 (measureRow).
 const controls = (f9, f10) => (page) =>
   page.evaluate(
     ({ f9, f10 }) => {
-      window.__controls = { F9: new Function(f9), F10: new Function(f10) };
+      window.__controls = { F9: new Function(f9), F10: new Function(f10) }; // safe: f9 and f10 are string constants of this spec, run in a test page; no input reaches them
+      window.__controlsOf = JSON.stringify([f9, f10]);
     },
     { f9, f10 },
   );
@@ -327,12 +329,22 @@ const measureRow = async (page, cdp, surface, row, rowsOfSurface, id, defined, c
   await row.before?.(page);
   const parts = row.pair ?? [row];
   const known = (part) => (part.control ? undefined : BASELINE[`${id} ${part.key}`]);
+  // A row with a part that presses F9 or F10 runs every attempt with the ones its own `before` put in the page. The control it is read against
+  // puts its own there, and they must not reach the next attempt: the F9 of the first press of a branch's pill (the page closing the thread)
+  // was the other row's (the page pressing a pill that was gone) in the second attempt, a TypeError on each of its 35 presses.
+  const pressesControls = parts.some((part) => (part.seq ?? [part.key]).some((key) => key === "F9" || key === "F10"));
+  const ownControls = pressesControls ? await page.evaluate(() => window.__controlsOf) : undefined;
+  const names = parts.map((part) => part.key).join('" and "');
   const attempts = [];
   const limits = [];
   const controls = [];
   const overs = [];
   let last;
   for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
+    if (pressesControls) {
+      expect(ownControls, `"${names}" press F9 or F10: their before sets them`).toBeTruthy();
+      expect(await page.evaluate(() => window.__controlsOf), `attempt ${attempt} of "${names}" runs with the F9 and F10 of its own before`).toBe(ownControls);
+    }
     last = await attemptRow(page, cdp, surface, id, row, checked);
     attempts.push(last.map((entry) => entry.p99));
     const limit = [];
@@ -360,6 +372,9 @@ const measureRow = async (page, cdp, surface, row, rowsOfSurface, id, defined, c
     controls.push(control);
     overs.push(over);
     if (!over.some(Boolean)) break;
+    // The control it was read against put its own F9 and F10 in the page and left the page as its own presses left it: the next attempt of
+    // this row starts as the first one did.
+    if (attempt < ATTEMPTS && control.some(Boolean)) await row.before?.(page);
   }
   for (const [index, entry] of last.entries()) {
     entry.control = !!parts[index].control;
