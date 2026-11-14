@@ -344,9 +344,14 @@ test("the glitch stays inside the highlight, behind its own letters: every shado
     const clip = (x) => ({ x, y: box.y - 2, width: 9, height: box.height + 4 });
     return [await page.screenshot({ clip: clip(box.x - 9) }), await page.screenshot({ clip: clip(box.x + box.width) })];
   };
-  // The pointer rests on the message (its own row has a hover state) but not on the highlight.
+  // The pointer rests on the message (its own row has a hover state) but not on the highlight. It rests to the left of it, on the message's own
+  // text: to the right, 60px on, is the author's avatar in this layout, and since Buzz 1.0 a pointer on an avatar opens the profile card
+  // (ProfilePeek, `trigger-hover`), which then covers the line and changes every pixel this test compares.
   const box = await mark.boundingBox();
-  await page.mouse.move(box.x + box.width + 60, box.y + box.height / 2);
+  await page.mouse.move(box.x - 40, box.y + box.height / 2);
+  // The row's hover transitions run for a moment, and while one runs the line's text is drawn with grayscale smoothing instead of the subpixel
+  // smoothing it settles on: the strips "at rest" are taken once nothing is animating.
+  await expect.poll(() => page.evaluate(() => document.getAnimations().length)).toBe(0);
   const [leftAtRest, rightAtRest] = await strips();
   // Each frame of the decloak, held still: a negative delay picks the moment, `paused` stops it there.
   for (const at of [0, 40, 80, 120, 160, 200, 280, 360, 399]) {

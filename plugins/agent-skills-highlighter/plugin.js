@@ -248,8 +248,8 @@ export const ditherTile = (rgb, top) =>
 // with all of it at its strongest at once (a test adds them up): the base, the dither's darkest cell and the middle of the scan beam. The
 // light theme has more room, because its letters are dark and the tint is a dark teal.
 const BEHIND = {
-  dark: { tint: "#00d4ff", beam: "#4aeaff", rest: 0.12, hot: 0.16, dither: 0.12, scan: 0.1, split: 0.14 },
-  light: { tint: "#00708f", beam: "#00708f", rest: 0.2, hot: 0.26, dither: 0.2, scan: 0.2, split: 0.12 },
+  dark: { tint: "#00d4ff", beam: "#4aeaff", rest: 0.1, hot: 0.15, dither: 0.09, scan: 0.08, split: 0.14 },
+  light: { tint: "#00708f", beam: "#00708f", rest: 0.18, hot: 0.22, dither: 0.18, scan: 0.18, split: 0.12 },
 };
 const behind = (mode) => `--megatech-skills-tint:${BEHIND[mode].tint};--megatech-skills-beam-color:${BEHIND[mode].beam};--megatech-skills-a-rest:${BEHIND[mode].rest};--megatech-skills-a-hot:${BEHIND[mode].hot};--megatech-skills-a-dither:${BEHIND[mode].dither};--megatech-skills-a-scan:${BEHIND[mode].scan};--megatech-skills-a-split:${BEHIND[mode].split};--megatech-skills-dither:${ditherTile(BEHIND[mode].tint, BEHIND[mode].dither)};--megatech-skills-frame:${ditherTile(BEHIND[mode].tint, 0.95)};`;
 const share = (colour, alpha) => `color-mix(in srgb,${colour} calc(var(--${alpha}) * 100%),transparent)`;
