@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 376 376" width="376" height="376" role="img" aria-label="Agent Stats"><title>Agent Stats</title><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0b0f14"/><stop offset="1" stop-color="#06222b"/></linearGradient><radialGradient id="h" cx="50%" cy="46%" r="60%"><stop offset="0" stop-color="#00d4ff" stop-opacity="0.16"/><stop offset="1" stop-color="#00d4ff" stop-opacity="0"/></radialGradient></defs>
+<rect width="376" height="376" fill="url(#g)"/>
+<rect width="376" height="376" fill="url(#h)"/>
+<rect x="20" y="20" width="336" height="336" rx="70" fill="none" stroke="#00d4ff" stroke-width="8" stroke-opacity="0.9"/>
+<rect x="78" y="226" width="44" height="70" rx="6" fill="#00d4ff"/>
+<rect x="140" y="186" width="44" height="110" rx="6" fill="#00d4ff"/>
+<rect x="202" y="136" width="44" height="160" rx="6" fill="#00d4ff"/>
+<rect x="264" y="86" width="44" height="210" rx="6" fill="#ff2bd6"/>
+<rect x="66" y="306" width="254" height="10" rx="5" fill="#e9eef4"/>
+<rect x="148" y="326" width="12" height="8" fill="#ff2bd6"/>
+<rect x="160" y="326" width="68" height="8" fill="#00d4ff"/>
+</svg>

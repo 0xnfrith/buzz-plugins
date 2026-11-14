@@ -26,6 +26,18 @@ Move through Buzz with vim keys: normal and insert modes, `j` and `k` through me
 
 ## How to install
 
+Copy and paste: in **Settings → Plugins → Manage plugins → Add**, put this in **Git or GitHub repository**, press **Find** and pick **Vim mode**:
+
+```text
+https://github.com/0xnfrith/buzz-plugins
+```
+
+To install the last version that passed the checks instead, put its tag in **Branch or tag** first ([what a tag means](../../docs/known-good.md)):
+
+```text
+good/vim
+```
+
 1. In the desktop app open Settings, Plugins, Manage plugins, Add. Enter `https://github.com/0xnfrith/buzz-plugins` as the Git or GitHub repository, press **Find** and pick **Vim mode**; or press **Browse** and choose this folder (the one that contains `manifest.json` and `plugin.js`). Install it with **Enable plugin** on (it is on by default).
 2. Open Messages and a channel with some history. A small `-- NORMAL --  main` label appears in the window's bottom-right corner (it says the mode and which pane has the keys), and the sidebar shows a **Vim mode** page with an `N` badge.
 3. Work through the checklist below.

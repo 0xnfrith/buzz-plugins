@@ -26,6 +26,18 @@ Your Linear board inside Buzz: one column for each workflow state, in Linear's o
 
 ## How to install
 
+Copy and paste: in **Settings → Plugins → Manage plugins → Add**, put this in **Git or GitHub repository**, press **Find** and pick **Linear**:
+
+```text
+https://github.com/0xnfrith/buzz-plugins
+```
+
+To install the last version that passed the checks instead, put its tag in **Branch or tag** first ([what a tag means](../../docs/known-good.md)):
+
+```text
+good/linear
+```
+
 1. Install it: Settings, Plugins, Manage plugins, Add, then load this folder or enter `https://github.com/0xnfrith/buzz-plugins` as the Git or GitHub repository and pick **Linear**. Review what it asks for (one network origin, `https://api.linear.app`, and six commands for the key store: `security` three times and `secret-tool` three times) and install, then enable it.
 2. In Linear make a personal API key: Settings, Account, Security & access, Personal API keys. It needs the **Write** scope (Write is what lets a dragged card change state; it includes reading). If Linear lets you limit the key to certain teams, limit it to the teams you use.
 3. In Buzz open Settings, Plugins, **Linear**. Paste the key, press **Save key**. Linear is asked first: the card says who you are connected as. A key Linear refuses is not saved. If a key is already saved and Linear cannot be asked (it is unreachable, down or rate limiting), the saved key stays, nothing is saved, and the card says to try again, so a mistyped replacement never replaces a key that works. Only when there is no key yet is a key saved without being checked, and the card says so. On a Mac the key goes to your Keychain and on Linux to the system secret store (see below), and "saved" is said only once it has been read back from there.

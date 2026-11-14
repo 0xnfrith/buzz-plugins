@@ -39,6 +39,18 @@ No address is built in. You add, rename and remove your own in **Settings → Ar
 
 ## How to install
 
+Copy and paste: in **Settings → Plugins → Manage plugins → Add**, put this in **Git or GitHub repository**, press **Find** and pick **Artifacts**:
+
+```text
+https://github.com/0xnfrith/buzz-plugins
+```
+
+To install the last version that passed the checks instead, put its tag in **Branch or tag** first ([what a tag means](../../docs/known-good.md)):
+
+```text
+good/artifacts
+```
+
 1. In Buzz: **Settings → Plugins → Manage plugins → Add**. Enter `https://github.com/0xnfrith/buzz-plugins` as the Git or GitHub repository, press **Find**, pick **Artifacts** and press **Continue**. (Or clone this repository, press **Browse** instead and choose the folder `plugins/artifacts`.)
 2. Review, press **Install plugin**, make sure it is enabled.
 

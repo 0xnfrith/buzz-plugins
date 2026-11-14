@@ -1,0 +1,8 @@
+{
+  "_": "Files that still have the placeholder of a screenshot that was never made, because the screenshot is not in the repository yet. The check lists each one it finds, and fails on a placeholder that is not listed here and on a file listed here that has none. When the screenshot is in, this list is empty.",
+  "placeholders": [
+    "README.md",
+    "assets/cards/artifacts.svg",
+    "plugins/artifacts/README.md"
+  ]
+}

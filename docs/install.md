@@ -11,6 +11,12 @@ Every installable plugin here is a folder with a built `manifest.json` and `plug
 3. Press **Add**, choose to load a **folder**, and pick the plugin's own folder, for example `plugins/vim`.
 4. Review what the plugin asks for, check the **Enable** switch in the review, and install.
 
+To get the files:
+
+```sh
+git clone https://github.com/0xnfrith/buzz-plugins.git
+```
+
 Buzz remembers the folder. When the files in it change, the plugin's details show **Update**; press it to install the new version. An enabled plugin stays enabled, and the old version is disposed before the new one starts.
 
 ## From a Git repository
@@ -20,6 +26,16 @@ Buzz remembers the folder. When the files in it change, the plugin's details sho
 3. Optionally fill **Branch or tag** below it. Leave it empty for the default branch.
 4. Press **Find**. **Choose a plugin** lists one row for each folder that has a built `plugin.js` beside its `manifest.json`, with the plugin's name, the repository and path, and its manifest id.
 5. Pick one and press **Continue**. **Review plugin access** shows what the plugin asks for. Press **Install plugin**.
+
+Copy and paste the repository, and, for the last version that passed the checks, a plugin's tag (Vim mode here; [`known-good.md`](known-good.md) says what a tag means):
+
+```text
+https://github.com/0xnfrith/buzz-plugins
+```
+
+```text
+good/vim
+```
 
 Notes:
 

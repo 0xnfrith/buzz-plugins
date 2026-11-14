@@ -26,6 +26,18 @@ The agents, keys and numbers in the screenshots are made up.
 
 ## Getting started
 
+Copy and paste: in **Settings → Plugins → Manage plugins → Add**, put this in **Git or GitHub repository**, press **Find** and pick **Agent Stats**:
+
+```text
+https://github.com/0xnfrith/buzz-plugins
+```
+
+To install the last version that passed the checks instead, put its tag in **Branch or tag** first ([what a tag means](../../docs/known-good.md)):
+
+```text
+good/agent-stats
+```
+
 1. Install the plugin: Settings, Plugins, Manage plugins, Add, then **Browse** to this folder (`plugins/agent-stats`, the one with `manifest.json` and `plugin.js`), or add this repository as a Git repository. The plugin asks for no program, no network address and no file.
 2. Open the **Agent stats** page from the Messages sidebar, or search for it.
 3. Let your agents work. Their cards appear as soon as they report.

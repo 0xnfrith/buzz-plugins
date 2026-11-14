@@ -53,6 +53,7 @@ jobs:
       megatech-support: ${{ steps.match.outputs.megatech-support }}
       megatech-support-browser: ${{ steps.match.outputs.megatech-support-browser }}
       merge-by-policy: ${{ steps.match.outputs.merge-by-policy }}
+      plugin-assets: ${{ steps.match.outputs.plugin-assets }}
       vim-tests: ${{ steps.match.outputs.vim-tests }}
       vim-latency: ${{ steps.match.outputs.vim-latency }}
     steps:
@@ -140,6 +141,12 @@ jobs:
     if: ${{ needs.changes.outputs.merge-by-policy == 'true' }}
     uses: ./.github/workflows/merge-by-policy-tests.yml
 
+  plugin-assets:
+    name: Plugin assets check
+    needs: changes
+    if: ${{ needs.changes.outputs.plugin-assets == 'true' }}
+    uses: ./.github/workflows/plugin-assets-tests.yml
+
   vim-tests:
     name: Vim functional tests
     needs: changes
@@ -160,7 +167,7 @@ jobs:
     #     left without a job and no job without a row;
     #   - each test workflow did what its row said: passed when it was called ("true"), was skipped when it was not ("false").
     name: all-tests
-    needs: [changes, after-merge, agent-skills-highlighter, agent-stats, ai-sorter, artifacts, artifacts-browser, beeper, linear, megatech-support, megatech-support-browser, merge-by-policy, vim-tests, vim-latency]
+    needs: [changes, after-merge, agent-skills-highlighter, agent-stats, ai-sorter, artifacts, artifacts-browser, beeper, linear, megatech-support, megatech-support-browser, merge-by-policy, plugin-assets, vim-tests, vim-latency]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
