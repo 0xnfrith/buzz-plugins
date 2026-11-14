@@ -18,7 +18,9 @@ const SHOTS = process.env.SHOTS;
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 const shot = (page, name) => SHOTS && page.screenshot({ path: join(SHOTS, `${name}.png`) });
 
-test.use({ pluginFixtures: true, timezoneId: "UTC", locale: "en-US" });
+// Since Buzz 1.0 the Reminders plugin is off until a person turns it on, and the harness starts a test with it off (tests/browser/fixture.mjs,
+// `enabledPlugins`): the tests that visit that page opt in, as Buzz's own do.
+test.use({ pluginFixtures: true, timezoneId: "UTC", locale: "en-US", enabledPlugins: ["buzz.reminders"] });
 
 const TOKEN_KEY = "megatech.beeper.token.v1";
 const URL_KEY = "megatech.beeper.base-url.v1";
@@ -724,7 +726,14 @@ test("leaving the page, or turning the plugin off and on, leaves nothing behind 
   const { fake } = await openInbox(page, app);
   await expect(row(page, "Alice Example")).toBeVisible();
   const styles = () => page.locator("style[data-megatech-beeper]").count();
-  const counts = () => page.evaluate(() => window.__listenerCounts());
+  // Every count is taken after a Tab. Buzz's design system keeps a capture keydown listener on window that a first Tab ends (the keyboard-modality
+  // tracker, src/shared/design-system/useKeyboardFocusVisibility.ts), and one more for each control with a tooltip that was pressed with the pointer,
+  // until the next Tab or a key on a sibling control (Tooltip.tsx:70-97): the Search button and the toggles of Settings are such controls, so the
+  // number of them left over is the number pressed since the last Tab, not something the plugin did.
+  const counts = async () => {
+    await page.keyboard.press("Tab");
+    return page.evaluate(() => window.__listenerCounts());
+  };
   const onPage = await counts();
   expect(await styles()).toBe(1);
   await openPage(page, "Reminders");
