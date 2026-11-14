@@ -39,7 +39,7 @@ good/vim
 
 Notes:
 
-- In this repository the list shows the folders under `plugins/`: `plugins/vim` (Vim mode), `plugins/beeper` (the Beeper inbox), `plugins/linear` (the Linear board), `plugins/artifacts` (saved web pages in Buzz's browser) and `plugins/key-probe` (a measuring tool used by the vim tests; you do not need it).
+- In this repository the list shows the folders under `plugins/`: `plugins/vim` (Vim mode), `plugins/beeper` (the Beeper inbox), `plugins/linear` (the Linear board), `plugins/artifacts` (saved web pages in Buzz's browser), `plugins/agent-skills-highlighter` (Agent Skills Highlighter, `/skill` names in messages, highlighted), `plugins/agent-stats` (Agent Stats, what each of your agents did today), `plugins/megatech-support` (Megatech support, coming soon: it does nothing until the support service is live) and `plugins/key-probe` (a measuring tool used by the vim tests; you do not need it).
 - Folders with a `manifest.json` but no built `plugin.js` are listed under **Folders skipped** ("No built plugin.js beside manifest.json; build the plugin first").
 - To install the last version of a plugin that was checked, put its tag in **Branch or tag**: `good/vim`, `good/linear` and so on. What the tag means, and what it does not prove, is in [`known-good.md`](known-good.md).
 - Do not paste a GitHub `tree/...` URL (a link to a folder on a branch). Buzz rejects it before cloning. Give the repository, and the branch or tag in its own field.

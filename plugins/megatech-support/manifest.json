@@ -2,7 +2,7 @@
   "id": "megatech.support",
   "name": "Megatech support",
   "apiVersion": 1,
-  "description": "Ask Megatech support, open a ticket and follow your tickets without leaving Buzz.",
+  "description": "Coming soon. Ask Megatech support, open a ticket and follow your tickets without leaving Buzz. It does nothing yet: the support service it talks to is not live.",
   "discovery": {
     "category": "developer-tools-and-integrations",
     "tags": ["Support", "Tickets", "Help desk"]

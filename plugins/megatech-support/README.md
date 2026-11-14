@@ -1,9 +1,9 @@
 # Megatech support
 
-Ask Megatech support, open a ticket and follow your tickets without leaving Buzz. It can also give your agents two tools, so an agent can ask support or open a ticket for you.
+**Coming soon.** Ask Megatech support, open a ticket and follow your tickets without leaving Buzz. It can also give your agents two tools, so an agent can ask support or open a ticket for you.
 
 > [!IMPORTANT]
-> **It works against a mock only, for now.** The support service it talks to does not exist yet, so the plugin points at a placeholder address, `https://support.megatech.invalid`, that never resolves. Until the service is hosted and the plugin is changed to its real address, installing it shows the page and the Settings card, and nothing more. The tests run it against a fake service.
+> **Coming soon: it works against a mock only, for now.** The support service it talks to does not exist yet, so the plugin points at a placeholder address, `https://support.megatech.invalid`, that never resolves. Until the service is hosted and the plugin is changed to its real address, installing it shows the page and the Settings card, and nothing more. The tests run it against a fake service.
 
 ## Who it is for
 
