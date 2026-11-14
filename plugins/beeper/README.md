@@ -28,6 +28,18 @@ Every person, chat and message in the screenshots is made up: they come from the
 
 ## How to install
 
+Copy and paste: in **Settings → Plugins → Manage plugins → Add**, put this in **Git or GitHub repository**, press **Find** and pick **Beeper**:
+
+```text
+https://github.com/0xnfrith/buzz-plugins
+```
+
+To install the last version that passed the checks instead, put its tag in **Branch or tag** first ([what a tag means](../../docs/known-good.md)):
+
+```text
+good/beeper
+```
+
 ### What you need
 
 - **Beeper Desktop** running on this computer, signed in, with its Desktop API turned on: Settings, then Developers, then Beeper Desktop API. (Beeper's own docs: [developers.beeper.com/desktop-api](https://developers.beeper.com/desktop-api/).)

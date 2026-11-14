@@ -1,0 +1,33 @@
+# The plugin-assets check (.github/plugin-assets): what each plugin folder carries besides its code. A manifest, an icon.png and a README
+# that Buzz's installer accepts, the install blocks in the READMEs, and no placeholder where a screenshot should be. The web build the other
+# workflows use does not run Buzz's installer, and the load check of after-merge.yml reads only an id, a name and apiVersion 1, so this is
+# the one place a `description` that is too long, an unknown manifest key or a broken icon is caught before it reaches `main`. It needs
+# nothing but Node: no build, no browser, no checkout of block/buzz-app.
+name: Plugin assets tests
+
+on:
+  # Called by tests.yml, which runs on every pull request to main, every push to main and every merge group, and calls this workflow when
+  # a plugin, the README, docs/, assets/ or the check itself changes (or anything under .github/). Its `all-tests` check is the one to
+  # require. Run by hand from the Actions tab with workflow_dispatch.
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Plugin assets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: The check's own tests, a vector for every rule
+        run: node --test .github/plugin-assets/plugin-assets.test.mjs
+      - name: Every plugin folder passes
+        run: node .github/plugin-assets/check.mjs

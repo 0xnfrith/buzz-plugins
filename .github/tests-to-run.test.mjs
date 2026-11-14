@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const script = join(dirname(fileURLToPath(import.meta.url)), "tests-to-run.sh");
-const ROWS = ["after-merge", "agent-skills-highlighter", "agent-stats", "ai-sorter", "artifacts", "artifacts-browser", "beeper", "linear", "megatech-support", "megatech-support-browser", "merge-by-policy", "vim-tests", "vim-latency"];
+const ROWS = ["after-merge", "agent-skills-highlighter", "agent-stats", "ai-sorter", "artifacts", "artifacts-browser", "beeper", "linear", "megatech-support", "megatech-support-browser", "merge-by-policy", "plugin-assets", "vim-tests", "vim-latency"];
 const ZERO = "0".repeat(40);
 
 // A throwaway repository. `commit(files, deleted)` writes and deletes files and returns the new commit.
@@ -70,20 +70,23 @@ const pullRequest = (files, deleted = [], raw = false) => {
 };
 
 test("a name git would quote (non-ASCII, a quote, a backslash, a newline) still calls its plugin's tests", () => {
-  assert.deepEqual(pullRequest({ "plugins/vim/café.ts": "x\n" }), ["vim-tests", "vim-latency"]);
-  assert.deepEqual(pullRequest({ 'plugins/linear/a "quoted" name.ts': "x\n" }), ["linear"]);
-  assert.deepEqual(pullRequest({ "plugins/artifacts/back\\slash.md": "x\n" }), ["artifacts", "artifacts-browser"]);
-  assert.deepEqual(pullRequest({ "plugins/beeper/new\nline.md": "x\n" }), ["beeper"]);
+  assert.deepEqual(pullRequest({ "plugins/vim/café.ts": "x\n" }), ["plugin-assets", "vim-tests", "vim-latency"]);
+  assert.deepEqual(pullRequest({ 'plugins/linear/a "quoted" name.ts': "x\n" }), ["linear", "plugin-assets"]);
+  assert.deepEqual(pullRequest({ "plugins/artifacts/back\\slash.md": "x\n" }), ["artifacts", "artifacts-browser", "plugin-assets"]);
+  assert.deepEqual(pullRequest({ "plugins/beeper/new\nline.md": "x\n" }), ["beeper", "plugin-assets"]);
 });
 
-test("a change to one plugin calls only that plugin's tests", () => {
-  assert.deepEqual(pullRequest({ "plugins/beeper/plugin.js": "changed\n" }), ["beeper"]);
-  assert.deepEqual(pullRequest({ "plugins/linear/plugin.js": "changed\n" }), ["linear"]);
-  assert.deepEqual(pullRequest({ "plugins/agent-stats/plugin.js": "changed\n" }), ["agent-stats"]);
+test("a change to one plugin calls only that plugin's tests, and the plugin-assets check that reads every plugin folder", () => {
+  assert.deepEqual(pullRequest({ "plugins/beeper/plugin.js": "changed\n" }), ["beeper", "plugin-assets"]);
+  assert.deepEqual(pullRequest({ "plugins/linear/plugin.js": "changed\n" }), ["linear", "plugin-assets"]);
+  assert.deepEqual(pullRequest({ "plugins/agent-stats/plugin.js": "changed\n" }), ["agent-stats", "plugin-assets"]);
 });
 
-test("a change outside plugins/ and .github/ calls none", () => {
-  assert.deepEqual(pullRequest({ "README.md": "changed\n", "docs/new.md": "new\n" }), []);
+test("a change to the README or docs/ calls the plugin-assets check; a change outside plugins/, docs/, assets/ and .github/ calls none", () => {
+  assert.deepEqual(pullRequest({ "README.md": "changed\n" }), ["plugin-assets"]);
+  assert.deepEqual(pullRequest({ "docs/new.md": "new\n" }), ["plugin-assets"]);
+  assert.deepEqual(pullRequest({ "assets/icons/new.svg": "new\n" }), ["plugin-assets"]);
+  assert.deepEqual(pullRequest({ "CONTRIBUTING.md": "changed\n", "LICENSE": "changed\n" }), []);
 });
 
 test("any change under .github/ calls every test workflow", () => {
@@ -93,7 +96,7 @@ test("any change under .github/ calls every test workflow", () => {
 });
 
 test("a moved file calls the tests of the folder it left (no rename detection)", () => {
-  assert.deepEqual(pullRequest({ "docs/plugin.js": "vim\n" }, ["plugins/vim/plugin.js"]), ["vim-tests", "vim-latency"]);
+  assert.deepEqual(pullRequest({ "docs/plugin.js": "vim\n" }, ["plugins/vim/plugin.js"]), ["plugin-assets", "vim-tests", "vim-latency"]);
 });
 
 test("a plugin folder with no row fails, and says which; a plugin without tests on purpose does not", () => {
@@ -101,13 +104,13 @@ test("a plugin folder with no row fails, and says which; a plugin without tests 
   assert.notEqual(result.status, 0, result.log);
   assert.match(result.log, /::error::plugins\/new-plugin\/ changed, but no test workflow runs for it/);
   assert.deepEqual(result.outputs, {}, "no output when it fails");
-  assert.deepEqual(pullRequest({ "plugins/key-probe/plugin.js": "changed\n" }), []);
+  assert.deepEqual(pullRequest({ "plugins/key-probe/plugin.js": "changed\n" }), ["plugin-assets"]);
   // Deleting a plugin that has no row is not a change to test.
   const repo = repository();
   try {
     const before = repo.commit({ ...base, "plugins/old/plugin.js": "x\n" });
     const after = repo.commit({}, ["plugins/old/plugin.js"]);
-    assert.deepEqual(running(run(repo.dir, "pull_request", before, after)), []);
+    assert.deepEqual(running(run(repo.dir, "pull_request", before, after)), ["plugin-assets"]);
   } finally {
     repo.done();
   }
@@ -121,8 +124,8 @@ test("a pull request is read from its merge base, as GitHub lists its files: a l
     const head = repo.commit({ "README.md": "topic\n" });
     repo.git("checkout", "-q", "main");
     const main = repo.commit({ "plugins/vim/plugin.js": "main moved on\n" });
-    assert.deepEqual(running(run(repo.dir, "pull_request", main, head)), []);
-    assert.deepEqual(running(run(repo.dir, "pull_request", start, head)), []);
+    assert.deepEqual(running(run(repo.dir, "pull_request", main, head)), ["plugin-assets"]);
+    assert.deepEqual(running(run(repo.dir, "pull_request", start, head)), ["plugin-assets"]);
   } finally {
     repo.done();
   }
@@ -133,8 +136,8 @@ test("a push and a merge group are read from their base to their commit; a base 
   try {
     const before = repo.commit(base);
     const after = repo.commit({ "plugins/linear/plugin.js": "changed\n" });
-    assert.deepEqual(running(run(repo.dir, "push", before, after)), ["linear"]);
-    assert.deepEqual(running(run(repo.dir, "merge_group", before, after)), ["linear"]);
+    assert.deepEqual(running(run(repo.dir, "push", before, after)), ["linear", "plugin-assets"]);
+    assert.deepEqual(running(run(repo.dir, "merge_group", before, after)), ["linear", "plugin-assets"]);
     assert.deepEqual(running(run(repo.dir, "push", ZERO, after)), ROWS);
     assert.deepEqual(running(run(repo.dir, "push", "1234567890123456789012345678901234567890", after)), ROWS);
     assert.deepEqual(running(run(repo.dir, "pull_request", "1234567890123456789012345678901234567890", after)), ROWS);

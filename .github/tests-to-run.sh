@@ -29,11 +29,13 @@ rows=(
   "megatech-support          plugins/megatech-support/"
   "megatech-support-browser  plugins/megatech-support/"
   "merge-by-policy           .github/merge-by-policy/ .github/workflows/merge-by-policy.yml .github/workflows/merge-by-policy-wake.yml .github/workflows/merge-by-policy-tests.yml"
+  "plugin-assets             plugins/ assets/ docs/ README.md .github/plugin-assets/ .github/workflows/plugin-assets-tests.yml"
   "vim-tests                 plugins/vim/"
   "vim-latency               plugins/vim/"
 )
 # The plugin folders that have no test workflow, on purpose:
-#   key-probe  a measuring tool for the Vim tests that are run by hand in the desktop app (plugins/vim/test/real-app); no tests of its own
+#   key-probe  a measuring tool for the Vim tests that are run by hand in the desktop app (plugins/vim/test/real-app); no tests of its own.
+#              `plugin-assets` still runs when key-probe changes: it reads every plugin folder and holds key-probe's manifest to Buzz's rules.
 untested=(key-probe)
 
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT is not set}"

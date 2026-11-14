@@ -33,6 +33,18 @@ Every skill, message and path in the screenshots is made up.
 
 ## Getting started
 
+Copy and paste: in **Settings → Plugins → Manage plugins → Add**, put this in **Git or GitHub repository**, press **Find** and pick **Agent Skills Highlighter**:
+
+```text
+https://github.com/0xnfrith/buzz-plugins
+```
+
+To install the last version that passed the checks instead, put its tag in **Branch or tag** first ([what a tag means](../../docs/known-good.md)):
+
+```text
+good/agent-skills-highlighter
+```
+
 1. Install the plugin: Settings, Plugins, Manage plugins, Add, **Browse** to this folder (`plugins/agent-skills-highlighter`, the one with `manifest.json` and `plugin.js`), or add this repository as a Git repository. The install review lists the one program the plugin runs; it is `sh`, and the review shows the script.
 2. Open Settings, **Agent Skills**. It says how many skill names it found. Nothing to configure unless your skills live somewhere unusual.
 3. Open any channel, thread or DM and look for a `/skill-name` that matches one of yours.

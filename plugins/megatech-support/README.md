@@ -40,6 +40,18 @@ From Buzz's own web build (block/buzz-app `5a7f4952`), against the fake service 
 
 ## How to install
 
+Copy and paste: in **Settings → Plugins → Manage plugins → Add**, put this in **Git or GitHub repository**, press **Find** and pick **Megatech support**:
+
+```text
+https://github.com/0xnfrith/buzz-plugins
+```
+
+To install the last version that passed the checks instead, put its tag in **Branch or tag** first ([what a tag means](../../docs/known-good.md)):
+
+```text
+good/megatech-support
+```
+
 1. Install it: Settings, Plugins, Manage plugins, Add, then load this folder or enter `https://github.com/0xnfrith/buzz-plugins` as the Git or GitHub repository and pick **Megatech support**. Review what it asks for: one network address, `https://support.megatech.invalid`, and nothing else (no commands, no files).
 2. Open **Megatech support** in the page navigation and press **Verify with Megatech support**. The card says what is sent: your public key, and a signature made with your key over a hash of a one-time code from the service. Nothing is published to your community and your key is never read or sent.
 3. Ask a question, or open a ticket.

@@ -4,8 +4,10 @@
 # workflow runs on every pull request to main, every push to main and every merge group, and the plugin test workflows have no
 # events of their own: they are called from here (`workflow_call`), each one once, and only when the change touches its plugin.
 # The `changes` job decides which, with .github/tests-to-run.sh, which holds the list (one row per test workflow, and the plugins that
-# have no tests on purpose). A change that touches no plugin (a README, say) calls none of them, so `all-tests` passes as soon as the
-# list of changed files is made. A change to any file under .github/ calls every one, and so does running this workflow by hand.
+# have no tests on purpose). A change that touches none of their files (CONTRIBUTING.md, say) calls none of them, so `all-tests` passes as
+# soon as the list of changed files is made. The `plugin-assets` row is broad on purpose: it reads every plugin folder, so a change
+# to plugins/, assets/, docs/ or the top README.md calls it. A change to any file under .github/ calls every one, and so does running
+# this workflow by hand.
 # `all-tests` waits for all of them and fails unless the list was made and each test workflow did what the list said: passed when
 # it was called, was skipped when it was not.
 #
@@ -53,6 +55,7 @@ jobs:
       megatech-support: ${{ steps.match.outputs.megatech-support }}
       megatech-support-browser: ${{ steps.match.outputs.megatech-support-browser }}
       merge-by-policy: ${{ steps.match.outputs.merge-by-policy }}
+      plugin-assets: ${{ steps.match.outputs.plugin-assets }}
       vim-tests: ${{ steps.match.outputs.vim-tests }}
       vim-latency: ${{ steps.match.outputs.vim-latency }}
     steps:
@@ -140,6 +143,12 @@ jobs:
     if: ${{ needs.changes.outputs.merge-by-policy == 'true' }}
     uses: ./.github/workflows/merge-by-policy-tests.yml
 
+  plugin-assets:
+    name: Plugin assets check
+    needs: changes
+    if: ${{ needs.changes.outputs.plugin-assets == 'true' }}
+    uses: ./.github/workflows/plugin-assets-tests.yml
+
   vim-tests:
     name: Vim functional tests
     needs: changes
@@ -160,7 +169,7 @@ jobs:
     #     left without a job and no job without a row;
     #   - each test workflow did what its row said: passed when it was called ("true"), was skipped when it was not ("false").
     name: all-tests
-    needs: [changes, after-merge, agent-skills-highlighter, agent-stats, ai-sorter, artifacts, artifacts-browser, beeper, linear, megatech-support, megatech-support-browser, merge-by-policy, vim-tests, vim-latency]
+    needs: [changes, after-merge, agent-skills-highlighter, agent-stats, ai-sorter, artifacts, artifacts-browser, beeper, linear, megatech-support, megatech-support-browser, merge-by-policy, plugin-assets, vim-tests, vim-latency]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5

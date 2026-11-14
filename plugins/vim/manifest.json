@@ -1,5 +1,14 @@
 {
   "id": "megatech.vim-mode",
   "name": "Vim mode",
-  "apiVersion": 1
+  "apiVersion": 1,
+  "description": "Move through Buzz with vim keys: normal and insert modes, j and k through messages and channels, h and l between panes and threads, and vim editing in the message box.",
+  "discovery": {
+    "category": "productivity",
+    "tags": [
+      "Vim",
+      "Keyboard",
+      "Navigation"
+    ]
+  }
 }

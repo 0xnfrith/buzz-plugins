@@ -36,7 +36,7 @@
       <br>Your Linear board inside Buzz. Drag a card to another column to change its state.
     </td>
     <td width="50%" valign="top">
-      <a href="plugins/artifacts"><img src="assets/cards/artifacts.svg" width="100%" alt="Artifacts: placeholder, screenshot needed"></a>
+      <a href="plugins/artifacts"><img src="assets/cards/artifacts.svg" width="100%" alt="Artifacts: a public Claude artifact, a sample permissions page, as a browser shows it"></a>
       <br><b><a href="plugins/artifacts">Artifacts</a></b>
       <br>Your saved web pages, such as Claude artifacts, in Buzz's built-in browser. macOS only.
     </td>
@@ -64,6 +64,24 @@ In the Buzz **desktop** app (the browser build cannot install plugins):
 1. Open **Settings → Plugins → Manage plugins** and press **Add**.
 2. Enter `https://github.com/0xnfrith/buzz-plugins` as the **Git or GitHub repository** and press **Find**. Or load a plugin's **folder**, such as `plugins/vim`, from a clone.
 3. Pick the plugin, press **Continue**, review what it asks for, and press **Install plugin**.
+
+Copy and paste. The repository, for **Git or GitHub repository**:
+
+```text
+https://github.com/0xnfrith/buzz-plugins
+```
+
+Or get the files and load a plugin's folder (such as `plugins/vim`) with **Browse**:
+
+```sh
+git clone https://github.com/0xnfrith/buzz-plugins.git
+```
+
+The last version of a plugin that passed the checks, for **Branch or tag** (Vim mode here; [what a tag means](docs/known-good.md)):
+
+```text
+good/vim
+```
 
 Some plugins need one more step, such as pasting your own token or key: each plugin's page says how. Updating, turning a plugin off and safe mode are in [`docs/install.md`](docs/install.md).
 
@@ -107,7 +125,7 @@ docs/
   building.md         how we build plugins
   install.md          how to install one
   known-good.md       the good/<plugin> tags: the last commit where each plugin loaded
-assets/               the banner, the gallery cards and the plugin headers of these READMEs
+assets/               the banner, the gallery cards and the plugin headers of these READMEs, and the art of each plugin's icon (icons/)
 .github/workflows/    the checks every pull request runs
 CONTRIBUTING.md       how to send a change (and the key-latency rule for vim mode)
 ```

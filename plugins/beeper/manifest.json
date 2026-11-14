@@ -2,7 +2,7 @@
   "id": "megatech.beeper",
   "name": "Beeper",
   "apiVersion": 1,
-  "description": "Your Beeper inbox inside Buzz: read your chats from every network and reply, through Beeper Desktop on this computer.",
+  "description": "Your Beeper inbox inside Buzz: read your chats from every network and reply, through Beeper Desktop on this computer. First step: paste your Beeper access token in Settings, Beeper.",
   "discovery": {
     "category": "communication",
     "tags": [
