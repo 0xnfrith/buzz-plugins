@@ -34,7 +34,8 @@ rows=(
   "vim-latency               plugins/vim/"
 )
 # The plugin folders that have no test workflow, on purpose:
-#   key-probe  a measuring tool for the Vim tests that are run by hand in the desktop app (plugins/vim/test/real-app); no tests of its own
+#   key-probe  a measuring tool for the Vim tests that are run by hand in the desktop app (plugins/vim/test/real-app); no tests of its own.
+#              `plugin-assets` still runs when key-probe changes: it reads every plugin folder and holds key-probe's manifest to Buzz's rules.
 untested=(key-probe)
 
 : "${GITHUB_OUTPUT:?GITHUB_OUTPUT is not set}"

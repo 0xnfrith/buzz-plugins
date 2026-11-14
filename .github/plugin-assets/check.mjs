@@ -113,7 +113,8 @@ const METADATA = ["tEXt", "zTXt", "iTXt", "eXIf", "tIME"];
  * The problems with an icon.png (a Buffer): what Buzz refuses (more than 1 MiB, not a PNG that decodes, a side over 4096 or more than
  * 1,048,576 pixels) and what this repository adds (exactly 376 by 376, not interlaced, no metadata chunks). It decodes the container
  * (every chunk's CRC, the header, the palette, the end) and checks that the compressed image inflates to exactly the size the header
- * promises; it does not unfilter the pixels.
+ * promises; it does not unfilter the pixels, so a PNG with bad filter bytes passes here and fails Buzz's decoder. The real decode is
+ * Buzz's; assets/icons/render.sh, which draws every icon, is what keeps the committed PNGs safe from that.
  */
 export function pngProblems(bytes) {
   if (bytes.length > MAX_ICON_BYTES) return [`icon.png exceeds 1 MiB (${bytes.length} bytes)`];
