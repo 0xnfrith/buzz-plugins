@@ -17,7 +17,7 @@ permissions:
 env:
   # The block/buzz-app commit the plugin is tested against. The other workflows that build the app name the same commit: the first step
   # of each of them (.github/check-app-ref.sh) fails when any two differ, or when one uses it without defining it, so change them together.
-  BUZZ_APP_REF: d92bfb2c4dd89fc5ae6e7a1445f38ad1e8ab7060
+  BUZZ_APP_REF: 51d63954c074e94497dc030b54a204d34b7471be
 
 jobs:
   test:

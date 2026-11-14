@@ -4,7 +4,7 @@
 #   plugins/agent-stats/test/run.sh /path/to/block/buzz-app/checkout [extra playwright args]
 #
 # The checkout needs `pnpm install --frozen-lockfile` and `pnpm exec playwright install chromium` done once, and must be at the commit
-# the workflow names (AGENT_STATS_APP_REF in .github/workflows/agent-stats-tests.yml). The script copies the plugin, a small wrapper and
+# the workflow names (BUZZ_APP_REF in .github/workflows/agent-stats-tests.yml). The script copies the plugin, a small wrapper and
 # the spec into the checkout (a scratch clone, not a place to commit) and adds the plugin to the harness's installed-fixture list, so it
 # goes through the same registration code as a bundled one. Screenshots land in $SHOTS if set.
 set -euo pipefail

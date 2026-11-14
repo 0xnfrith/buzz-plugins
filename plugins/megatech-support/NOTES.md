@@ -6,7 +6,7 @@ What works through the plugin API, what the plugin does not do, what was verifie
 
 An MVP built **against a mock**. The service it talks to is run by another team and has no address yet, so the origin is a placeholder (`https://support.megatech.invalid`; the `.invalid` top-level domain never resolves) kept in one constant, `src/support/origin.ts`, and in the manifest's `host.networkOrigins`. A test checks that the two are the same. **That is the one open seam:** the placeholder and the manifest stay as they are until the service has a real address, and the two change together. The contract below is a **proposal**: the service's team has not agreed it yet. The plugin does nothing useful until the hosted service exists and the origin is changed.
 
-**Tested against two Buzz commits.** The design was written against block/buzz-app `d92bfb2c`, the commit CI runs the browser spec on. The identity route, the host's request fields and the plugin API this plugin uses were read again against `5a7f4952` (see "Checked again" below), `src/buzz.d.ts` is trimmed from that commit, and the browser spec was also run on it (20 of 20), which is where the screenshots in the README come from. CI stays on `d92bfb2c`.
+**Tested against three Buzz commits.** The design was written against block/buzz-app `d92bfb2c`, which CI ran the browser spec on until it moved to v1.0.2 (`51d63954`, the shared `BUZZ_APP_REF`). The identity route, the host's request fields and the plugin API this plugin uses were read again against `5a7f4952` (see "Checked again" below), `src/buzz.d.ts` is trimmed from that commit, and the browser spec was also run on it (20 of 20), which is where the screenshots in the README come from. CI runs the spec on `51d63954`.
 
 ## Works on any relay
 
@@ -88,7 +88,7 @@ JSON in and out; `Authorization: Bearer <session>` on everything except the firs
 
 ## What was verified
 
-Where, and against what: `test/unit` (Node, vitest) and `test/web/support.spec.mjs` (the web build of block/buzz-app, headless Chromium, run by `test/run.sh`; CI runs both, the spec on `d92bfb2c`, and it was also run by hand on `5a7f4952`: 20 of 20). In the real desktop app on Linux (see the README for the version): see "In the real app" below.
+Where, and against what: `test/unit` (Node, vitest) and `test/web/support.spec.mjs` (the web build of block/buzz-app, headless Chromium, run by `test/run.sh`; CI runs both, the spec on `51d63954`, and it was also run by hand on `5a7f4952`: 20 of 20). In the real desktop app on Linux (see the README for the version): see "In the real app" below.
 
 - Every request goes to the one origin; the session is sent only in `Authorization`; the identity calls carry no credential; nothing is sent before **Verify**; ask, open (once, even after a failed try), list, read, refresh; a lost session returns to the Verify card; fixed text for every error class, with the service's own words never on the page.
 - Forget, a lost session or switching the plugin off while a check is running: the check keeps nothing and starts no timer (and tells the service if its answer arrives late); a late 401 for an old session does not end a newer one; a session that ends in the middle of a form says so and keeps what was typed.
