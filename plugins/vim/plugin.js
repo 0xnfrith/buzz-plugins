@@ -601,7 +601,7 @@ var PANE_HEADER = {
 	main: "[data-main-workspace] > header",
 	side: "[data-panel-workspace] > header"
 };
-var LINE_CSS = PANES.map(([pane]) => `html[data-vim-on][data-vim-panes][data-vim-region="${pane}"] ${PANE_HEADER[pane]}::after{inset-inline:0;height:2px;background:${ACCENT}}`).join("");
+var LINE_CSS = PANES.map(([pane]) => `html[data-vim-on][data-vim-panes][data-vim-region="${pane}"] ${PANE_HEADER[pane]}::after{content:"";position:absolute;inset-inline:0;bottom:-1px;height:2px;background:${ACCENT};pointer-events:none}`).join("");
 var BUBBLE = "[data-bubble] [data-message-action-anchor]:not([data-solo-cards])";
 var LIFT = "var(--affordance-backdrop-pressed, #80808040)";
 var MARK_ACTIVE = {
@@ -1545,6 +1545,21 @@ var threadRootOf = (messageId) => {
 };
 var beneath;
 var leaving;
+var SETTLED_MS = 500;
+var holdInView = (scroller, id) => {
+	const epoch = keyEpoch;
+	let moved = performance.now();
+	settle(() => {
+		if (keyEpoch !== epoch || cursors.main !== id || !scroller.isConnected) return true;
+		const row = rowsOf(scroller).find((row) => row.dataset.messageId === id);
+		const now = performance.now();
+		if (row && !inView(scroller, row)) {
+			row.scrollIntoView({ block: "nearest" });
+			moved = now;
+		}
+		return now - moved > SETTLED_MS;
+	}, 3e3);
+};
 var cursorBack = () => {
 	if (!beneath || visible(beneath.tab)) return;
 	const scroller = timelineOf("main");
@@ -1554,10 +1569,16 @@ var cursorBack = () => {
 	leaving?.disconnect();
 	const rows = rowsOf(scroller);
 	const kept = rows.find((row) => row.dataset.messageId === cursors.main);
-	if (kept) return selectRow(kept);
+	if (kept) {
+		selectRow(kept);
+		return holdInView(scroller, kept.dataset.messageId);
+	}
 	clearCursor("main");
 	const row = rows.find((row) => row.dataset.messageId === id);
-	if (row) selectRow(row);
+	if (row) {
+		selectRow(row);
+		holdInView(scroller, id);
+	}
 	paintCursor();
 };
 var watchBeneath = (tab) => {
@@ -1877,7 +1898,7 @@ var groups = () => {
 				],
 				[
 					"r",
-					"Reply in a thread to the message under the cursor; focus lands in the reply box",
+					"Reply in a thread to the message under the cursor; focus lands in the reply box. Not on Buzz v1.0.2 and later, which keeps the plain key r for its own message actions",
 					"DOM"
 				],
 				[
@@ -1892,12 +1913,12 @@ var groups = () => {
 				],
 				[
 					"gt  gT",
-					"Next / previous page, cycling through the pages the app lists",
+					"Next / previous page, cycling through the pages the app lists: the dock from the top, then the sidebar. In the message lists not on Buzz v1.0.2 and later (which keeps the plain key t), in a message box in NORMAL they work",
 					"API"
 				],
 				[
 					"gi gm ga gr gw gv gs",
-					"Open Inbox, Messages, Agents, Reminders, Workflows, the Vim mode page (its switches), Settings (the page whose name starts with the letter). The app has Cmd+, or Ctrl+, for Settings too",
+					"Open Inbox (Activity in Buzz 1.0 and later), Messages, Agents, Reminders, Workflows, the Vim mode page (its switches), Settings (any other page: the one whose name starts with the letter). gr is not on Buzz v1.0.2 and later in the message lists, which keep the plain key r. The app has Cmd+, or Ctrl+, for Settings too",
 					"API"
 				],
 				[
@@ -1907,7 +1928,7 @@ var groups = () => {
 				],
 				[
 					"g1  ...  g9",
-					"Open the nth entry of the top bar, counted from the left as the bar shows them: Messages, Reminders, then the others by name (Agents and Workflows, and the pages plugins pin to the bar, such as Artifacts' pins, among them). A digit after g is the entry's number, not a count. The pages of the sidebar (Inbox, the Vim mode page) keep their letters and gt",
+					"Open the nth entry of the app dock, counted from the top as the dock shows them: Messages, Reminders, then the others by name (Agents and Workflows, and the pages plugins put in the dock, such as Artifacts' pins, among them), Bestie first when it is on. A digit after g is the entry's number, not a count. The pages of the sidebar (Activity, the Vim mode page) keep their letters and gt",
 					"API"
 				],
 				[
@@ -2032,7 +2053,7 @@ var keepFocusInView = (scroller, items, direction) => {
 	};
 	const current = items.find((el) => el === document.activeElement);
 	if (!current || within(current, false)) return;
-	const shown = items.filter((el) => within(el, true));
+	const shown = items.filter((el) => within(el, true) && !el.disabled && el.getAttribute("aria-disabled") !== "true");
 	const next = direction > 0 ? shown[0] : shown.at(-1);
 	if (!next) return;
 	document.documentElement.dataset.keyboardNavigation = "";
@@ -2229,30 +2250,48 @@ var onMenuKey = (event) => {
 	items[at < 0 ? down ? 0 : items.length - 1 : (at + (down ? 1 : -1) + items.length) % items.length].focus();
 };
 // src/pages.ts
-var TOPBAR = [
-	"buzz.channels/channels",
+var MESSAGES = "buzz.channels/channels";
+var INBOX = "buzz.inbox/inbox";
+var DOCK = [
+	MESSAGES,
+	"buzz.bestie/bestie",
 	"buzz.reminders/reminders",
 	"buzz.agents/agents",
 	"buzz.workflows/workflows"
 ];
-var BUNDLED_ORDER = [
-	"buzz.channels/channels",
-	"buzz.inbox/inbox",
+var DOCK_ORDER = [
+	"buzz.bestie/bestie",
+	MESSAGES,
+	"buzz.reminders/reminders"
+];
+var SIDEBAR_ORDER = [
+	MESSAGES,
+	INBOX,
+	"buzz.drafts-and-sent/drafts-sent",
 	"buzz.reminders/reminders",
 	"buzz.bestie/bestie"
 ];
-var MESSAGES = "buzz.channels/channels";
-var pageName = (page) => page.key === MESSAGES ? "Messages" : page.title;
-var pageRank = (page) => {
-	const slot = BUNDLED_ORDER.indexOf(page.key);
-	return slot < 0 ? BUNDLED_ORDER.length : slot;
+var LETTERS = {
+	i: INBOX,
+	m: MESSAGES,
+	a: "buzz.agents/agents",
+	r: "buzz.reminders/reminders",
+	w: "buzz.workflows/workflows"
 };
-var byShell = (a, b) => pageRank(a) - pageRank(b) || pageName(a).localeCompare(pageName(b), "en") || a.key.localeCompare(b.key, "en");
-var onTopBar = (page) => TOPBAR.includes(page.key) || page.placement === "topbar";
-var topBar = () => ctx.pages.snapshot().filter((page) => page.primary && onTopBar(page)).sort(byShell);
+var pageName = (page) => page.key === MESSAGES ? "Messages" : page.title;
+var rankIn = (order) => (page) => {
+	const slot = order.indexOf(page.key);
+	return slot < 0 ? order.length : slot;
+};
+var byOrder = (order) => {
+	const rank = rankIn(order);
+	return (a, b) => rank(a) - rank(b) || pageName(a).localeCompare(pageName(b), "en") || a.key.localeCompare(b.key, "en");
+};
+var inDock = (page) => page.key !== INBOX && (DOCK.includes(page.key) || page.placement !== void 0 && page.placement !== "sidebar");
+var dock = () => ctx.pages.snapshot().filter((page) => page.primary && inDock(page)).sort(byOrder(DOCK_ORDER));
 var pageList = () => {
 	const pages = ctx.pages.snapshot().filter((page) => page.primary);
-	return [...pages.filter(onTopBar).sort(byShell), ...pages.filter((page) => !onTopBar(page)).sort(byShell)];
+	return [...pages.filter(inDock).sort(byOrder(DOCK_ORDER)), ...pages.filter((page) => !inDock(page)).sort(byOrder(SIDEBAR_ORDER))];
 };
 var openPage = (page) => void ctx.navigation.open({
 	version: 1,
@@ -2293,13 +2332,15 @@ var openSettings = (section) => {
 var goPage = (letter) => {
 	clearPending();
 	if (/^[1-9]$/.test(letter)) {
-		const page = topBar()[Number(letter) - 1];
+		const page = dock()[Number(letter) - 1];
 		return page ? openPage(page) : void 0;
 	}
 	if (letter === "t" || letter === "T") return cyclePage(letter === "t" ? 1 : -1);
 	if (letter === "s") return openSettings();
 	if (letter === "p") return openSettings("plugins");
-	const page = pageList().find((entry) => pageName(entry).toLowerCase().startsWith(letter));
+	const named = LETTERS[letter];
+	const claimed = Object.values(LETTERS);
+	const page = named ? pageList().find((entry) => entry.key === named) : pageList().find((entry) => !claimed.includes(entry.key) && pageName(entry).toLowerCase().startsWith(letter));
 	if (page) openPage(page);
 };
 var afterG = (letter, run) => () => state.operator === "g" ? goPage(letter) : run();

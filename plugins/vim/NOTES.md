@@ -2,7 +2,7 @@
 
 The question was whether a vim-mode plugin is possible, and what trying it teaches about the plugin system. This file is the answer. The plugin itself is `plugin.js` in this folder.
 
-Everything below was read from block/buzz-app at commit `d92bfb2c` (main, 2026-10-22) and checked by running the plugin in that app's own browser test harness. See "What was and was not verified" before trusting any claim about a Mac.
+Everything below was read from block/buzz-app at commit `d92bfb2c` (main, 2026-10-22) and checked by running the plugin in that app's own browser test harness, except "On Buzz v1.0.2" below, which is v1.0.2 (`51d63954`, 13 November 2026), the commit the tests now run on. See "What was and was not verified" before trusting any claim about a Mac.
 
 ## Verdict
 
@@ -22,7 +22,7 @@ A useful vim mode is possible, but only partly through the plugin API. Roughly h
 | `h` / `l`: move focus between channel list, message list, thread pane | Yes, as DOM | Finds each region by its `data-*` markers and calls `focus()`. DOM. |
 | `/` search | Yes, indirectly | Presses the host's own Cmd/Ctrl+F by dispatching a synthetic `keydown` on the window. The host's dispatcher does not check `isTrusted`. |
 | Switch community (`{`, `}`, `C`) | Yes, as DOM only | No service lists or selects communities. The plugin clicks the switcher's trigger, reads its rows, clicks one, and hides the popover with CSS meanwhile. DOM. |
-| Go to a page (`gt`, `gT`, `gi`, `gm`, ...), a top-bar entry by number (`g1` ... `g9`), Settings (`gs`) and Manage plugins (`gp`) | Yes | `pages.snapshot()` lists the primary pages and `navigation.open` opens one. Settings is a navigation target (`{ version: 1, kind: "settings", scope }`, the call the host's own settings shortcut makes). API. The order the app shows them in is shell policy and is copied into the plugin. `g1` ... `g9` are the first nine of the pages the host puts in the top bar (`placement: "topbar"`, and the four it always puts there), in the host's order: Messages, Reminders, then the others by name. |
+| Go to a page (`gt`, `gT`, `gi`, `gm`, ...), a dock entry by number (`g1` ... `g9`; a top-bar entry before Buzz 1.0), Settings (`gs`) and Manage plugins (`gp`) | Yes | `pages.snapshot()` lists the primary pages and `navigation.open` opens one. Settings is a navigation target (`{ version: 1, kind: "settings", scope }`, the call the host's own settings shortcut makes). API. The order the app shows them in is shell policy and is copied into the plugin. `g1` ... `g9` are the first nine of the pages the host puts in the dock (`placement: "dock"`, or `"topbar"` and `"toolbar"`, the names from before the dock, and the five it always puts there), in the host's order: Bestie when it is on, Messages, Reminders, then the others by name. |
 | Reply to, or open the menu of, the message under the cursor (`r`, `m`) | Yes, as DOM only | The row's action bar is built lazily. A synthetic Tab keydown on `window` (the host's own "keyboard user" signal) builds it on every row, and the plugin clicks Reply or More. DOM. |
 | Copy the link or the text of the message under the cursor (`yy`, `yY`) | Yes, as DOM only | Presses the host's own controls and lets its toast speak: the Copy link button of the message's action bar, and the Copy message item of its More message actions menu (opened with the menu kept from showing: a MutationObserver marks the menu with `data-vim-yanking` as it is drawn, before the frame is painted, and a CSS rule hides what carries it; then waited on until it is gone; the focus goes back to the list). The link and the text are the host's (`buzz://message?channel=…&id=…`, with `&thread=` for a reply; mentions written as links, attachment addresses added). No API reaches the clipboard or a message's controls. DOM. |
 | `j` / `k` inside the host's menus and the community switcher | Yes, as DOM | Moves focus along the roving list, like the host's arrow keys. |
@@ -35,6 +35,19 @@ A useful vim mode is possible, but only partly through the plugin API. Roughly h
 | Visual mode in the message box (`v`, `V`, motions, `y`, `d`, `x`, `c`) | Yes, DOM only | The same listener, `Selection.modify`, `Range` and `setBaseAndExtent` for the highlight, `execCommand("delete")` and a `copy` event for the actions. See "Normal and visual mode inside the message box". |
 | React to, edit or delete the message under the cursor | Not directly | Only what the message menu offers is reachable, by `m` and then `j`, `k`, Enter. No API calls an existing message action. |
 | Multi-key chords as a first-class feature, operators and motions in the message list, registers, macros, visual mode in the message list | No | Not expressible with the key service. (Visual mode in the message *box* works, as DOM.) |
+
+## On Buzz v1.0.2
+
+Read from block/buzz-app at v1.0.2 (`51d63954c074e94497dc030b54a204d34b7471be`, 13 November 2026), which is the commit CI runs the browser tests on. What it changed for this plugin, and what was done:
+
+- **The top bar became an app dock.** `src/app/shell/AppShell.tsx` builds a vertical dock (`<nav aria-label="Apps dock">`, a tablist named "Apps") from the primary pages whose placement is not the sidebar; `pagePlacement` and `orderPages` in `src/app/shell/presentation.ts` are the policy: Inbox is always a sidebar row, Messages, Bestie, Reminders, Agents and Workflows are always dock entries, a plugin page is a dock entry when it says `dock`, `topbar` or `toolbar` (the last two "predate the dock; both mean it"), and the dock lists Bestie first, then Messages, then Reminders, then the rest by name. `src/pages.ts` copies that policy: `gt` walks the dock from the top and then the sidebar, and `g1` ... `g9` count the dock. A page the harness placed as `toolbar` used to be outside the bar and is now the fifth entry of the dock, so the tests count six entries (seven with the second pinned page).
+- **The Inbox is titled Activity.** `gi` goes to `buzz.inbox/inbox` by its key (`src/pages.ts`, `LETTERS`), as `gm`, `ga`, `gr` and `gw` go to theirs; the letters of the bundled pages no longer depend on what the app calls them, and the one other pages are picked by (the first letter of the name) leaves those pages alone, so `ga` is still Agents and not Activity.
+- **Reminders and Workflows are off on a new install** (`src/plugins/storage.ts`: they are on by default only for an installation that already existed, and `tests/browser/fixture.mjs` starts a test with them off). The tests that visit those pages turn them on with `enabledPlugins`.
+- **The host reserves plain keys.** `src/app/shortcuts.ts:228-301` registers `e`, `r`, `t` (and the right arrow), `u` and Delete as the host's keys for the message it has selected, and `src/features/shortcuts/service.ts:104-118` runs no plugin shortcut on a reserved key even when the host's action is not available. So `r` (reply to the cursor message), `gr`, `gt` and `gT` do nothing from the lists. They work in a message box in NORMAL, which has its own key handler. Decided with the change that moved the tests to v1.0.2 (14 November 2026): leave them doing nothing, say so in the README, and keep their tests marked as expected to fail (`HOST_RESERVES_KEYS` in `test/vim.spec.mjs`); a fallback listener that acts when the host left the key unhandled would keep the keys, but depends on listener order Buzz does not promise, and is a product decision that was not taken.
+- **The pane header's separator is a border.** The host draws it as the header's `border-bottom` and no longer as its `::after`, so the plugin's accent line, which restyled that `::after`, drew nothing. It draws the line itself now (`src/theme.ts`), positioned over the border.
+- **The host puts the channel's list back at its bottom late.** After a thread tab is closed the list is scrolled to its bottom a few frames after the plugin scrolled the cursor row into view; the plugin shows the row again until the list stays put (`holdInView` in `src/threads.ts`).
+- **A disabled button can be the nearest item.** The channel list of Buzz 1.0 starts with a disabled "Create channel" button, which `focus()` skips; the focus-keeping after Ctrl-e and Ctrl-y now passes over disabled items (`keepFocusInView` in `src/scroll.ts`).
+- **Smaller test changes.** The message menu has four items (it gained "Unfollow thread"), so the wrap is counted, not assumed; Manage plugins lists Activity first, so the first plugin row's name is read; the Agents page has its own sidebar, so there is no channel list to leave alone on it; the channel list of a 360px high window has 49px for rows and a 100px header, so the Ctrl-e test uses a taller window and starts on a row further down.
 
 ## Status and open ideas
 
@@ -49,7 +62,7 @@ A useful vim mode is possible, but only partly through the plugin API. Roughly h
 - `q`, `zc` `zo`, `>` `<` `|` `=`: the host's window event for closing a tab, its toggle button and its split handle.
 - Everything inside the message box: normal and visual mode, which use a capture-phase `keydown`, `Selection.modify`, `Range`, `execCommand` and a `copy` listener.
 
-**To run the tests**: check out block/buzz-app at `d92bfb2c`, run `pnpm install --frozen-lockfile` and `pnpm exec playwright install chromium` in it, then `test/run.sh <that checkout>` (about a minute and a half; it copies the plugin and the spec into the checkout). WebKit does not run on the Linux test VM, so a Mac stays a manual check.
+**To run the tests**: check out block/buzz-app at the commit in `BUZZ_APP_REF` of `.github/workflows/vim-tests.yml` (v1.0.2, `51d63954`, now; `d92bfb2c` before), run `pnpm install --frozen-lockfile` and `pnpm exec playwright install chromium` in it, then `test/run.sh <that checkout>` (about a minute and a half; it copies the plugin and the spec into the checkout). WebKit does not run on the Linux test VM, so a Mac stays a manual check.
 
 **Open ideas**
 
@@ -446,7 +459,7 @@ Typing and NORMAL motions are bound by the frame (about 12 ms), not by the plugi
 
 ## What was and was not verified
 
-Run with `test/run.sh` against block/buzz-app `d92bfb2c`: the production web build, a fixture relay, headless Chromium on Linux, the plugin installed through the same registration code as a bundled plugin. Ninety-two tests, all passing against the final `plugin.js`.
+Run with `test/run.sh` against block/buzz-app v1.0.2 (`51d63954`; it was `d92bfb2c` when this was first written, and ninety-two tests then): the production web build, a fixture relay, headless Chromium on Linux, the plugin installed through the same registration code as a bundled plugin. 199 tests, all passing against the final `plugin.js`; five of them are marked as expected to fail because of the keys Buzz v1.0.2 reserves (see "On Buzz v1.0.2").
 
 | Test | What it proves |
 | --- | --- |
@@ -522,7 +535,7 @@ Not verified:
 | `package.json`, `pnpm-lock.yaml`, `tsconfig.json`, `vite.config.ts`, `scripts/ship.mjs` | The build: type-check, bundle with Vite, copy the bundle next to the manifest |
 | `README.md` | How to load it and what to try |
 | `test/vim.spec.mjs`, `test/run.sh` | The Playwright spec and the script that runs it inside a block/buzz-app checkout |
-| `test/pins-fixture.tsx` | A test-only plugin with one more page in the top bar (off until a test turns it on), which `test/run.sh` adds to the harness next to the vim plugin |
+| `test/pins-fixture.tsx` | A test-only plugin with one more page in the dock, placed as `topbar` (off until a test turns it on), which `test/run.sh` adds to the harness next to the vim plugin |
 | `test/perf.spec.mjs`, `test/leak.spec.mjs`, `test/idle.spec.mjs`, `test/perf.sh` | The measuring specs and the script that runs them with or without the plugin (see "Measuring the plugin") |
 | `test/screenshots.spec.mjs` | Takes the pictures in `screenshots/` in the fixture app, light and dark (run it with `perf.sh`, see `README.md`) |
 | `screenshots/` | The plugin in the fixture app |
