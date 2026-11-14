@@ -1,0 +1,121 @@
+# Type check, unit tests and build of the Ghostty terminal prototype (plugins/ghostty-terminal/test/unit, which run the real PTY bridge on a
+# real PTY), and its browser suite (plugins/ghostty-terminal/test/web) in headless Chromium against block/buzz-app's own production web
+# build, the way plugins/ghostty-terminal/test/run.sh runs it by hand. plugins/ghostty-terminal/NOTES.md says what both cover and what
+# neither can: the web build has no `ctx.host.spawn`, so a host simulator starts the real bridge; the desktop app is not run here.
+#
+# This is a prototype, and the one place that says so in CI is the first step below: its folder has no committed plugin.js, so Buzz's
+# importer skips it and nothing here is offered for install. The tests build plugin.js themselves.
+name: Ghostty terminal tests
+
+on:
+  # Called by tests.yml, which runs on every pull request to main, every push to main and every merge group, and calls this
+  # workflow when its plugin changes (or anything under .github/). Its `all-tests` check is the one to require. Run by hand from the
+  # Actions tab with workflow_dispatch.
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # The block/buzz-app commit the plugin is tested against. The other workflows that build the app name the same commit: the first step
+  # of each of them (.github/check-app-ref.sh) fails when any two differ, or when one uses it without defining it, so change them together.
+  BUZZ_APP_REF: d92bfb2c4dd89fc5ae6e7a1445f38ad1e8ab7060
+
+jobs:
+  test:
+    name: Ghostty terminal type check, unit tests and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: plugins/ghostty-terminal
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: A prototype stays one - no committed plugin.js, so the importer does not offer it
+        working-directory: .
+        run: |
+          tracked=$(git ls-files -- plugins/ghostty-terminal/plugin.js)
+          if [ -n "$tracked" ]; then
+            echo "::error::plugins/ghostty-terminal/plugin.js is committed: that makes the folder installable. Ship it in its own change, after a run in the desktop app."
+            exit 1
+          fi
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@12.16.1 --activate
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: manifest.json is what src/bridge.py makes
+        # The review of this plugin's process shows manifest.json's arguments, and they are src/bridge.py, byte for byte.
+        run: |
+          pnpm run manifest
+          git diff --exit-code -- manifest.json || { echo "::error::manifest.json is not the build of src/bridge.py: run 'pnpm run manifest' in plugins/ghostty-terminal and commit it"; exit 1; }
+      - name: Type check
+        run: pnpm exec tsc
+      - name: Unit tests
+        # The bridge tests start a real shell on a real PTY and need python3, pgrep and setsid, all on the runner.
+        run: pnpm test
+      - name: Build, and check the bundle
+        # tsc, vite, then scripts/check-bundle.mjs: the pinned WASM, the MIT notices, no way into Buzz's private terminal IPC.
+        run: pnpm run build
+
+  browser:
+    # plugins/ghostty-terminal/test/web/ghostty-terminal.spec.mjs in headless Chromium against block/buzz-app's own production web build, at
+    # BUZZ_APP_REF. test/run.sh copies the built plugin, a wrapper that points the host's `spawn` at a simulator, and the spec into the app
+    # checkout. The simulator starts the real bridge on a real PTY on this runner; no network, key or token is used.
+    name: Ghostty terminal browser tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30 # the tests take a few minutes; the set-up is most of it
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: BUZZ_APP_REF is defined, and the same, in every workflow that builds the app
+        run: .github/check-app-ref.sh
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: block/buzz-app
+          ref: ${{ env.BUZZ_APP_REF }}
+          path: buzz-app
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: pnpm, as the app pins it
+        run: |
+          corepack enable
+          corepack prepare "$(node -p "require('./buzz-app/package.json').packageManager")" --activate
+      - name: Install the app's dependencies (frozen lockfile)
+        working-directory: buzz-app
+        run: pnpm install --frozen-lockfile
+      - name: Install Chromium
+        working-directory: buzz-app
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Install the plugin's own dependencies (frozen lockfile) and build it
+        run: |
+          corepack pnpm@12.16.1 --dir plugins/ghostty-terminal install --frozen-lockfile
+          corepack pnpm@12.16.1 --dir plugins/ghostty-terminal run build
+      - name: Browser tests
+        run: plugins/ghostty-terminal/test/run.sh buzz-app
+      - name: Speed numbers (the render path only; relative, and never a gate)
+        # plugins/ghostty-terminal/test/bench: this plugin's terminal and xterm 6.0.0 (what Buzz's own Terminal uses) fed the same 16 MB of
+        # output in this browser. The table goes to the run summary. It says nothing about the bridge, the host or the Tauri channel, and a
+        # shared runner's numbers move, so a failure here is reported and does not fail the job (plugins/ghostty-terminal/NOTES.md).
+        continue-on-error: true
+        run: |
+          corepack pnpm@12.16.1 --dir plugins/ghostty-terminal run bench:build
+          node plugins/ghostty-terminal/test/bench/run.mjs buzz-app | tee "$RUNNER_TEMP/bench.txt"
+          { echo "### Ghostty terminal: render-path speed"; echo; sed '$d' "$RUNNER_TEMP/bench.txt"; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: ghostty-terminal-browser-test-results
+          path: buzz-app/test-results
+          if-no-files-found: ignore
+          retention-days: 14

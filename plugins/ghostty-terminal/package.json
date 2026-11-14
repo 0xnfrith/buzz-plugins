@@ -1,0 +1,24 @@
+{
+  "name": "megatech.ghostty-terminal",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "manifest": "node scripts/manifest.mjs",
+    "typecheck": "tsc",
+    "build": "node scripts/manifest.mjs && tsc && vite build && node scripts/check-bundle.mjs",
+    "test": "vitest run",
+    "bench:build": "vite build --config test/bench/vite.config.ts",
+    "bench": "node test/bench/run.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@xterm/xterm": "6.0.0",
+    "ghostty-web": "0.4.0",
+    "typescript": "7.0.2",
+    "vite": "8.2.2",
+    "vitest": "5.0.4"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

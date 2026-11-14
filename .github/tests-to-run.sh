@@ -25,6 +25,7 @@ rows=(
   "artifacts                 plugins/artifacts/"
   "artifacts-browser         plugins/artifacts/"
   "beeper                    plugins/beeper/"
+  "ghostty-terminal          plugins/ghostty-terminal/"
   "linear                    plugins/linear/"
   "megatech-support          plugins/megatech-support/"
   "megatech-support-browser  plugins/megatech-support/"
