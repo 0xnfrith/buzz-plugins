@@ -3793,8 +3793,11 @@ test.describe("Ctrl-e and Ctrl-y scroll the view a line at a time", () => {
         const b = el.getBoundingClientRect();
         return a.bottom > b.top && a.top < b.bottom;
       });
+    // The focus is on a channel row of the list, by the plugin's own rule for one (SIDEBAR_ROW in src/constants.ts), not only on something with text.
+    const onChannelRow = () => nav.evaluate((el) => !!document.activeElement && el.contains(document.activeElement) && document.activeElement.matches("[data-sidebar-section] button[data-channel-id]"));
     const start = await top(nav);
     const first = await focused();
+    expect(await onChannelRow(), "the focus is on a channel row of the list").toBe(true);
     expect(first).toBeTruthy();
     expect(start).toBeGreaterThanOrEqual(line); // the focused row's own scroll left room to scroll up a line
     await ctrl(page, "y");

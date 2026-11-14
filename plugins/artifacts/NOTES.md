@@ -18,7 +18,7 @@ Read from block/buzz-app at `b86b9f3c92c10705a892d234f90002a7452690d6` (2026-10-
 
 First release tag containing the commit: `desktop-v0.7.0-beta.1`.
 
-## Pinning a page to the top bar, with sources (all at `d92bfb2c`, the commit the other plugins in this repository are tested against)
+## Pinning a page to the top bar, with sources (all read at `d92bfb2c`; CI now runs the browser tests on the shared pin, Buzz v1.0.2, `51d63954`)
 
 The files below are identical at `d92bfb2c`, at `f4e95770` and at the `v0.0.0-preview.156.1` release the plugin was run in, except `docs/plugin-architecture.md`, which differs between `d92bfb2c` and `f4e95770` only in parts unrelated to pages.
 
