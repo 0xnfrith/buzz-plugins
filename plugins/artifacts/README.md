@@ -10,9 +10,9 @@ A sidebar page in Buzz with your saved web pages. Click one and it opens in Buzz
 
 No address is built in. You add, rename and remove your own in **Settings → Artifacts**.
 
-<img src="../../assets/cards/artifacts.svg" width="560" alt="Placeholder frame: no screenshot of this plugin exists yet">
+<img src="../../assets/cards/artifacts.svg" width="560" alt="A public Claude artifact, a sample permissions page, as a browser shows it">
 
-<sub>A placeholder: no screenshot of this plugin is in the repository yet. It needs a run in the macOS app.</sub>
+<sub>The kind of page it holds: a public Claude artifact, drawn by a browser ([full size](screenshots/sample-page.png)). It is not a screenshot of Buzz, and it does not show the plugin: the built-in browser has not run yet, as "What was and was not checked" says.</sub>
 
 ## Platforms
 

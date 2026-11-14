@@ -36,7 +36,7 @@
       <br>Your Linear board inside Buzz. Drag a card to another column to change its state.
     </td>
     <td width="50%" valign="top">
-      <a href="plugins/artifacts"><img src="assets/cards/artifacts.svg" width="100%" alt="Artifacts: placeholder, screenshot needed"></a>
+      <a href="plugins/artifacts"><img src="assets/cards/artifacts.svg" width="100%" alt="Artifacts: a public Claude artifact, a sample permissions page, as a browser shows it"></a>
       <br><b><a href="plugins/artifacts">Artifacts</a></b>
       <br>Your saved web pages, such as Claude artifacts, in Buzz's built-in browser. macOS only.
     </td>
