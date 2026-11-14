@@ -236,7 +236,7 @@ Every key the plugin handles has to answer within a frame or two, in a channel w
 | A channel with a long thread (12 messages, one with 80 replies) | `o` on the message that has the thread, with the thread open already, and `h` back from it |
 | Message box (600 words, and 30 mentions) | `w b 5w 5b 0 $ h l` |
 | Reminders, Agents, Workflows pages | `Ctrl-e Ctrl-y`; `j k 5j 5k G gg` are control rows (a page has no message list: they find nothing to move) |
-| Settings dialog | `j k 5j 5k l h`, `l` opening another section, `Ctrl-e Ctrl-y` |
+| Settings dialog | `j k 5j 5k l h`, `l` opening another section, `Ctrl-e Ctrl-y` (inside the open section: since Buzz v1.0.2 the list of sections fits the dialog and has nothing to scroll) |
 
 **Not pressed yet.** The suite does not cover every key of the plugin. In the lists and panes: `Ctrl-d` `Ctrl-u`, `]` `[`, `}` `{`, `zc` `zo`, `>` `<` `|` `=`, `/`, `?` and the keys of its overlay, `i` `a` `A` `I`, `r`, `m`, `gt` `gT`, the page keys (`gi` `gm` `ga` `gr` `gw` `gs` `gv`, and `g3` to `g9`), the leader. In the message box: `e E W B ge gE ^`, `j` `k`, `gg` `G`, `f t F T ; ,`, `x`, `d`, `dd`, `u`, `v` `V` and what they do in VISUAL. A key with no row has no budget; CONTRIBUTING.md asks that a change to a key adds it.
 

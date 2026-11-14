@@ -910,7 +910,29 @@ surface("settings", "Settings dialog", async ({ page, rows }) => {
       `const b = [...document.querySelectorAll('nav[aria-label="Settings sections"] button')]; b[Math.max(0, b.findIndex((x) => x.hasAttribute("aria-current")) - 1)].click()`,
     ),
     control("click the open section (the page itself)", "focus the open section (the page itself)", `document.querySelector('nav[aria-label="Settings sections"] button[aria-current]').click()`, `document.querySelector('nav[aria-label="Settings sections"] button[aria-current]').focus()`, 30),
-    { pair: [{ key: "Ctrl-e", seq: ["Control+e"] }, { key: "Ctrl-y", seq: ["Control+y"] }] },
+    // Ctrl-e and Ctrl-y scroll the list of sections when that has the focus and scrolls, and else the open section. The list overflowed its
+    // pane by 9 px on the commit before Buzz v1.0.2 and fits it exactly on v1.0.2 at this window's height (701 px both), so with the focus
+    // on it nothing moves and the row measures nothing. They are pressed inside the open section (Profile, 103 px taller than its pane).
+    {
+      pair: [{ key: "Ctrl-e", seq: ["Control+e"] }, { key: "Ctrl-y", seq: ["Control+y"] }],
+      before: async (page) => {
+        await page.evaluate(() => document.querySelector('nav[aria-label="Settings sections"] button[aria-current]')?.focus());
+        await press(page, "l"); // opens the section and goes into it
+        await expect(page.locator("#settings-content")).toBeFocused();
+        // The area that scrolls is not #settings-content itself on Buzz v1.0.2: it is the nearest one at or around it (as vim.spec.mjs finds
+        // it), and the fingerprint watches it once marked.
+        const marked = await page.evaluate(() => {
+          document.querySelectorAll("[data-budget-scroller]").forEach((x) => x.removeAttribute("data-budget-scroller"));
+          const content = document.getElementById("settings-content");
+          const above = [];
+          for (let node = content; node && node.getAttribute("role") !== "dialog"; node = node.parentElement) above.push(node);
+          const area = [...above, ...content.querySelectorAll("*")].find((x) => /auto|scroll/.test(getComputedStyle(x).overflowY) && x.scrollHeight > x.clientHeight + 1);
+          area?.setAttribute("data-budget-scroller", "");
+          return !!area;
+        });
+        expect(marked, "the open section has an area that scrolls").toBe(true);
+      },
+    },
     // Inside a section: j and k move from one control to the next. Manage plugins has the most (the cards, the tabs and two buttons
     // for each of some forty plugins; the search box is stepped over). The row starts on the fourth control, and the two keys alternate between the fourth and the third.
     {
