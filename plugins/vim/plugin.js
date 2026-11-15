@@ -2631,7 +2631,7 @@ var onReservedKey = (event) => {
 	const run = key === "r" || key === "R" ? replyKey : state.operator === "g" ? nextPageKey : void 0;
 	if (!run) return;
 	if (event.composedPath().some((target) => isEditable(target)) || document.querySelector(MODAL)) return;
-	if (isHelpOpen() || !contextOk()) return;
+	if (!contextOk()) return;
 	event.preventDefault();
 	if (!event.repeat) run();
 };

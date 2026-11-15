@@ -101,7 +101,7 @@ The public services, from `src/plugins/author.ts`:
 - By default a binding does not run when the event path contains an input, textarea, select, content-editable element or `role="textbox"` (`bindings.ts:106`), while a `dialog[open]` or `[aria-modal]` exists, or on a held key. `allowInEditable`, `allowInModal` and `repeat` opt in.
 - `when()` is a free-form predicate, so modes are easy: gate every binding on your own state.
 - Host chords win. They are matched first and reserved even when unavailable. This plugin avoids them and registers one chord of its own (Cmd/Ctrl+Shift+E, turn Vim keys on or off). The exception is `r` and `t` after a `g`, which `src/reserved.ts` takes ahead of the service (see "On Buzz v1.0.2").
-- Users can rebind any registered shortcut in Settings, Shortcuts, so every vim key here is rebindable, and every one shows up there under "Vim mode".
+- Users can rebind any registered shortcut in Settings, Shortcuts, and every vim key here shows up there under "Vim mode". A rebind moves the registered shortcut, but Reply (`r`) and Next page (`t` after a `g`) are also run by `src/reserved.ts` on those plain keys, whatever the user set: the plain keys keep doing them, and another action bound to `r` never gets that key.
 - Key matching uses the logical key, so on macOS an Option chord arrives as a composed character, and Shift+digit arrives as punctuation. The docs list this as a known limitation (lines 1749-1757). `?` here is `{ key: "?", shift: true }`, which is right for a US layout and untested elsewhere.
 
 ### What the plugin does not get from the service
@@ -459,7 +459,7 @@ Typing and NORMAL motions are bound by the frame (about 12 ms), not by the plugi
 
 ## What was and was not verified
 
-Run with `test/run.sh` against block/buzz-app v1.0.2 (`51d63954`; it was `d92bfb2c` when this was first written, and ninety-two tests then): the production web build, a fixture relay, headless Chromium on Linux, the plugin installed through the same registration code as a bundled plugin. 202 tests, all passing against the final `plugin.js`, none marked as expected to fail (the keys Buzz v1.0.2 reserves are taken by `src/reserved.ts`; see "On Buzz v1.0.2").
+Run with `test/run.sh` against block/buzz-app v1.0.2 (`51d63954`; it was `d92bfb2c` when this was first written, and ninety-two tests then): the production web build, a fixture relay, headless Chromium on Linux, the plugin installed through the same registration code as a bundled plugin. 206 tests, all passing against the final `plugin.js`, none marked as expected to fail (the keys Buzz v1.0.2 reserves are taken by `src/reserved.ts`; see "On Buzz v1.0.2").
 
 | Test | What it proves |
 | --- | --- |

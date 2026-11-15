@@ -8,7 +8,6 @@
 // It leans on that order, which Buzz documents for editors but does not promise to plugins: the test "Buzz's shortcut dispatch order"
 // in test/vim.spec.mjs fails the moment a Buzz release changes it.
 import { contextOk, isEditable } from "./dom";
-import { isHelpOpen } from "./help";
 import * as perf from "./perf";
 import { nextPage, reply } from "./shortcuts";
 import { state } from "./state";
@@ -28,8 +27,9 @@ export const onReservedKey = (event: KeyboardEvent) => {
   const run = key === "r" || key === "R" ? replyKey : state.operator === "g" ? nextPageKey : undefined;
   if (!run) return;
   // What the service asks of a plain-key shortcut: nothing editable on the event's path, no modal open, and the shortcut's own `when`.
+  // (The key help needs no check of its own: its listener runs before this one and prevents every key, and its card is a dialog.)
   if (event.composedPath().some((target) => isEditable(target as Element)) || document.querySelector(MODAL)) return;
-  if (isHelpOpen() || !contextOk()) return;
+  if (!contextOk()) return;
   event.preventDefault();
   // A held key is consumed but runs once, as in the service.
   if (!event.repeat) run();

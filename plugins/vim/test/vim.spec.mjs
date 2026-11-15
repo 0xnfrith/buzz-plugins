@@ -426,6 +426,82 @@ test.describe("the keys Buzz reserves", () => {
     expect(await replyClicks(page)).toBe(1);
   });
 
+  // The guards of the listener, each with a control: the same r, once nothing stands in its way, replies. They count the clicks on the Reply
+  // button that Vim's reply makes, so they need a cursor (k k) and watchKeys.
+  const replyAfterwards = async (page) => {
+    await press(page, "r");
+    await expect.poll(() => replyClicks(page), { message: "r replied once nothing stood in its way" }).toBe(1);
+  };
+  const noReplyYet = async (page, why) => {
+    await page.waitForTimeout(300); // Vim's reply clicks the button a moment after the key
+    expect(await replyClicks(page), why).toBe(0);
+  };
+
+  test("a held r is consumed and runs once", async ({ page, app }) => {
+    await open(page, app);
+    await press(page, "k", "k");
+    await watchKeys(page);
+    // A synthetic keydown, because a real held key's repeats land in the reply box the first press opens.
+    const fire = (repeat) =>
+      page.evaluate((repeat) => {
+        const event = new KeyboardEvent("keydown", { key: "r", repeat, bubbles: true, cancelable: true });
+        document.activeElement.dispatchEvent(event);
+        return event.defaultPrevented;
+      }, repeat);
+    expect(await fire(true), "the held r was left for Buzz").toBe(true);
+    await noReplyYet(page, "the held r replied");
+    expect(await fire(false), "the first r was left for Buzz").toBe(true);
+    await expect.poll(() => replyClicks(page)).toBe(1);
+  });
+
+  test("an open modal anywhere on the page keeps r Buzz's, as for every plain key", async ({ page, app }) => {
+    await open(page, app);
+    await press(page, "k", "k");
+    await watchKeys(page);
+    await page.evaluate(() => {
+      const modal = document.createElement("div");
+      modal.id = "probe-modal";
+      modal.setAttribute("aria-modal", "true");
+      document.body.append(modal);
+    });
+    await press(page, "r");
+    await expect.poll(async () => (await seen(page)).length).toBe(1);
+    expect(await seen(page)).toEqual([{ key: "r", prevented: false }]);
+    await noReplyYet(page, "r replied under an open modal");
+    await page.evaluate(() => document.getElementById("probe-modal").remove());
+    await replyAfterwards(page);
+  });
+
+  test("with a menu open r is the menu's", async ({ page, app }) => {
+    await open(page, app);
+    await press(page, "k", "k");
+    await watchKeys(page);
+    await press(page, "m");
+    await expect(page.getByRole("menu")).toBeVisible();
+    await press(page, "r");
+    await noReplyYet(page, "r replied from inside the message menu");
+    await press(page, "Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await replyAfterwards(page);
+  });
+
+  test("with the key help open r is the help's", async ({ page, app }) => {
+    await open(page, app);
+    await press(page, "k", "k");
+    await watchKeys(page);
+    // A real keyboard sends key "?" with Shift held; Playwright's "Shift+/" sends "/" instead.
+    await page.keyboard.down("Shift");
+    await page.keyboard.press("?");
+    await page.keyboard.up("Shift");
+    const help = page.getByRole("dialog", { name: "Vim keys", exact: true });
+    await expect(help).toBeVisible();
+    await press(page, "r");
+    await noReplyYet(page, "r replied from behind the key help");
+    await press(page, "Escape");
+    await expect(help).toHaveCount(0);
+    await replyAfterwards(page);
+  });
+
   // The listener leans on one fact about Buzz: its dispatcher skips a keydown that was already prevented before it ran. If a Buzz release moves
   // its listener (to capture, or ahead of ours) or stops checking, Vim's r and gt stop working again on that Buzz and this test goes red first.
   // The control above it shows the key does open the thread when nothing prevents it, so this one cannot pass for nothing.
