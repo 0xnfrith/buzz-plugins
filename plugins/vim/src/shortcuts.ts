@@ -20,6 +20,11 @@ import { yankMessage } from "./yank";
 const eligible = () => state.enabled && contextOk();
 const ctrl = (letter: string): Binding => (apple ? { key: letter, ctrl: true } : { key: letter, mod: true });
 
+// What r does (reply; after a g, Reminders) and what t does after a g (the next page). Buzz 1.0 reserves the plain keys r and t, so the shortcut
+// service never runs the shortcuts below for them: reserved.ts runs these same two actions from its own listener, ahead of the service.
+export const reply = afterG("r", () => void rowControl("Reply"));
+export const nextPage = () => state.operator === "g" && goPage("t");
+
 export const registerShortcuts = () => {
   let order = 0;
   const key = (
@@ -61,9 +66,9 @@ export const registerShortcuts = () => {
   key("insert", "Insert: focus the message box", { key: "i" }, afterG("i", () => startInsert()));
   key("insert-after", "Append: focus the message box, after the character under the caret", { key: "a" }, afterG("a", () => startInsert("after")));
   key("append", "Insert at the end of the draft", { key: "A", shift: true }, () => startInsert("end"));
-  key("reply", "Reply in a thread to the message under the cursor", { key: "r" }, afterG("r", () => void rowControl("Reply")));
+  key("reply", "Reply in a thread to the message under the cursor", { key: "r" }, reply);
   key("message-menu", "Open the menu of the message under the cursor", { key: "m" }, afterG("m", () => void rowControl("More message actions")));
-  key("page-next", "After g: next page", { key: "t" }, () => state.operator === "g" && goPage("t"));
+  key("page-next", "After g: next page", { key: "t" }, nextPage);
   key("page-previous", "After g: previous page", { key: "T", shift: true }, () => state.operator === "g" && goPage("T"));
   key("page-workflows", "After g: Workflows", { key: "w" }, afterG("w", () => {}));
   key("page-vim", "After g: the Vim mode page (its switches)", { key: "v" }, afterG("v", () => {}));

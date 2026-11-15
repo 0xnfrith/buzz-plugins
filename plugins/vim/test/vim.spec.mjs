@@ -10,12 +10,11 @@ import { closeSettings, selectSettingsSection } from "./navigation.mjs";
 // (tests/browser/fixture.mjs, `enabledPlugins`): the tests that visit those pages opt in, as Buzz's own do.
 test.use({ pluginFixtures: true, historyCounts: { alpha: 12, beta: 3 }, enabledPlugins: ["buzz.reminders", "buzz.workflows"] });
 
-// Known on Buzz v1.0.2: the host registers the plain keys `e`, `r`, `t` and `u` as its own message keys (src/app/shortcuts.ts:228-301) and its
-// shortcut dispatcher runs no plugin shortcut on a key the host has reserved, even when the host has nothing to act on (src/features/shortcuts/
-// service.ts:104-118). So Vim's `r` (reply) and `gr`, `gt` and `gT` from a list do nothing there; in a message box in NORMAL, which has its own
-// key handler, they work. The tests of those keys are kept and marked as expected to fail: when Buzz stops reserving the keys they pass, and
-// Playwright then fails the run, which is the reminder to take the mark off.
-const HOST_RESERVES_KEYS = "Buzz v1.0.2 reserves the plain keys r and t for its own message keys, so no plugin shortcut runs on them (shortcuts.ts:228-301, service.ts:104-118)";
+// Buzz v1.0.2 registers the plain keys `e`, `r`, `t` and `u` as its own message keys (src/app/shortcuts.ts:228-301), and its shortcut service
+// runs no plugin shortcut on a key the host has reserved, even when the host has nothing to act on (src/features/shortcuts/service.ts:104-118).
+// So the plugin takes `r` (reply, and the r of `gr`) and `t` after `g` (`gt`) itself, in a capture listener ahead of that service
+// (src/reserved.ts). The tests of those keys below are plain tests; "Buzz's shortcut dispatch order" is the one that fails when a Buzz release
+// changes what the listener leans on.
 
 const SETTINGS = "megatech.vim-mode.settings.v2";
 const OLD_SETTINGS = "megatech.vim-mode.settings.v1";
@@ -310,8 +309,7 @@ test("m opens the menu of the message under the cursor; j and k choose", async (
   await expect(menu).toHaveCount(0);
 });
 
-test("r replies to the message under the cursor (known not to work on Buzz v1.0.2)", async ({ page, app }) => {
-  test.fail(true, HOST_RESERVES_KEYS);
+test("r replies to the message under the cursor", async ({ page, app }) => {
   await open(page, app);
   await press(page, "k", "k");
   const ids = await rowIds(page);
@@ -325,8 +323,7 @@ test("r replies to the message under the cursor (known not to work on Buzz v1.0.
   await expect(page.getByRole("region", { name: /thread/i }).locator(`[data-message-id="${ids.at(-2)}"]`).first()).toBeVisible();
 });
 
-test("gt and gT cycle the pages in the order the app shows them (known not to work on Buzz v1.0.2)", async ({ page, app }) => {
-  test.fail(true, HOST_RESERVES_KEYS);
+test("gt and gT cycle the pages in the order the app shows them", async ({ page, app }) => {
   await open(page, app);
   const where = () =>
     page.evaluate(() => {
@@ -341,6 +338,199 @@ test("gt and gT cycle the pages in the order the app shows them (known not to wo
   await press(page, "g");
   await shifted(page, "T");
   await expect.poll(where).toBe("buzz.reminders/reminders");
+});
+
+// ---- The keys Buzz reserves: r, and t after g (src/reserved.ts) ---------------------------------------------------------------
+// Buzz acts on the message it has selected, which is the one Up from the empty message box focuses: its `t` clicks that row's Reply button and opens
+// the thread. So these tests tell Vim's key from Buzz's by what the key did to the page and to that button. The probe below sees every plain key
+// from a window listener added after Buzz's own (so it reads `defaultPrevented` after the dispatcher has had its turn), and counts the clicks on any
+// Reply button: Vim's `gt` never clicks one, so a click during `gt` is Buzz's. Buzz's own `r` (its reaction picker) cannot be told apart this way: the
+// harness mounts no reaction tool, so that key is never eligible there and only `t` shows a Buzz action.
+test.describe("the keys Buzz reserves", () => {
+  const where = (page) =>
+    page.evaluate(() => {
+      const target = JSON.parse(decodeURIComponent(location.hash.slice("#buzz=".length)));
+      return target.kind === "page" ? `${target.pluginId}/${target.pageId}` : target.kind;
+    });
+  const threadBox = (page) => page.getByRole("textbox", { name: "Reply to thread", exact: true });
+  const selectTheBuzzWay = async (page) => {
+    await composer(page).click();
+    await press(page, "ArrowUp");
+    await expect.poll(() => page.evaluate(() => !!document.activeElement?.closest("[data-message-id]"))).toBe(true);
+  };
+  const watchKeys = (page) =>
+    page.evaluate(() => {
+      window.__seen = [];
+      window.__replyClicks = 0;
+      window.addEventListener("keydown", (event) => {
+        if (event.key.length === 1) window.__seen.push({ key: event.key, prevented: event.defaultPrevented });
+      });
+      document.addEventListener(
+        "click",
+        (event) => {
+          if (event.target.closest?.('button[aria-label="Reply"]')) window.__replyClicks++;
+        },
+        true,
+      );
+    });
+  const seen = (page) => page.evaluate(() => window.__seen);
+  const replyClicks = (page) => page.evaluate(() => window.__replyClicks);
+  const vimOff = (page) => page.addInitScript((key) => localStorage.setItem(key, JSON.stringify({ enabled: false })), SETTINGS);
+
+  test("gt with a message selected the Buzz way goes to the next page, and Buzz's t does not open its thread", async ({ page, app }) => {
+    await open(page, app);
+    await selectTheBuzzWay(page);
+    await watchKeys(page);
+    await press(page, "g", "t");
+    await expect.poll(() => where(page)).toBe("buzz.reminders/reminders");
+    expect(await replyClicks(page), "Buzz's t clicked the Reply button as well").toBe(0);
+    // Vim's page change can reach the page before Buzz's dispatcher runs and take the selection away, which would leave Buzz's t with nothing to
+    // act on whether or not Vim had prevented it. So the t is also read where only Vim's listener could have prevented it.
+    expect(await seen(page)).toEqual([
+      { key: "g", prevented: true },
+      { key: "t", prevented: true },
+    ]);
+  });
+
+  test("r with a message selected the Buzz way is Vim's: prevented before Buzz's dispatcher", async ({ page, app }) => {
+    await open(page, app);
+    await selectTheBuzzWay(page);
+    await watchKeys(page);
+    await press(page, "r");
+    // Buzz has no reaction picker to open here (see above), so it leaves r unprevented: a prevented r is Vim's.
+    await expect.poll(async () => (await seen(page)).length).toBe(1);
+    expect(await seen(page)).toEqual([{ key: "r", prevented: true }]);
+  });
+
+  test("a t that no g came before is Buzz's: it opens the thread of the selected message", async ({ page, app }) => {
+    await open(page, app);
+    await selectTheBuzzWay(page);
+    await watchKeys(page);
+    await press(page, "t");
+    await expect(threadBox(page)).toBeVisible();
+    expect(await replyClicks(page)).toBe(1);
+    expect(await where(page)).toBe("conversation");
+  });
+
+  test("with Vim keys off r and t are Buzz's: nothing of Vim's prevents them", async ({ page, app }) => {
+    await vimOff(page);
+    await open(page, app);
+    await selectTheBuzzWay(page);
+    await watchKeys(page);
+    await press(page, "r");
+    // Buzz has no reaction picker to open here, so it leaves r alone, and Vim, off, must not take it.
+    await expect.poll(async () => (await seen(page)).length).toBe(1);
+    expect(await seen(page)).toEqual([{ key: "r", prevented: false }]);
+    await press(page, "t");
+    await expect(threadBox(page)).toBeVisible();
+    expect(await replyClicks(page)).toBe(1);
+  });
+
+  // The guards of the listener, each with a control: the same r, once nothing stands in its way, replies. They count the clicks on the Reply
+  // button that Vim's reply makes, so they need a cursor (k k) and watchKeys.
+  const replyAfterwards = async (page) => {
+    await press(page, "r");
+    await expect.poll(() => replyClicks(page), { message: "r replied once nothing stood in its way" }).toBe(1);
+  };
+  const noReplyYet = async (page, why) => {
+    await page.waitForTimeout(300); // Vim's reply clicks the button a moment after the key
+    expect(await replyClicks(page), why).toBe(0);
+  };
+
+  test("a held r is consumed and runs once", async ({ page, app }) => {
+    await open(page, app);
+    await press(page, "k", "k");
+    await watchKeys(page);
+    // A synthetic keydown, because a real held key's repeats land in the reply box the first press opens.
+    const fire = (repeat) =>
+      page.evaluate((repeat) => {
+        const event = new KeyboardEvent("keydown", { key: "r", repeat, bubbles: true, cancelable: true });
+        document.activeElement.dispatchEvent(event);
+        return event.defaultPrevented;
+      }, repeat);
+    expect(await fire(true), "the held r was left for Buzz").toBe(true);
+    await noReplyYet(page, "the held r replied");
+    expect(await fire(false), "the first r was left for Buzz").toBe(true);
+    await expect.poll(() => replyClicks(page)).toBe(1);
+  });
+
+  test("an open modal anywhere on the page keeps r Buzz's, as for every plain key", async ({ page, app }) => {
+    await open(page, app);
+    await press(page, "k", "k");
+    await watchKeys(page);
+    await page.evaluate(() => {
+      const modal = document.createElement("div");
+      modal.id = "probe-modal";
+      modal.setAttribute("aria-modal", "true");
+      document.body.append(modal);
+    });
+    await press(page, "r");
+    await expect.poll(async () => (await seen(page)).length).toBe(1);
+    expect(await seen(page)).toEqual([{ key: "r", prevented: false }]);
+    await noReplyYet(page, "r replied under an open modal");
+    await page.evaluate(() => document.getElementById("probe-modal").remove());
+    await replyAfterwards(page);
+  });
+
+  test("with a menu open r is the menu's", async ({ page, app }) => {
+    await open(page, app);
+    await press(page, "k", "k");
+    await watchKeys(page);
+    await press(page, "m");
+    await expect(page.getByRole("menu")).toBeVisible();
+    await press(page, "r");
+    await noReplyYet(page, "r replied from inside the message menu");
+    await press(page, "Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await replyAfterwards(page);
+  });
+
+  test("with the key help open r is the help's", async ({ page, app }) => {
+    await open(page, app);
+    await press(page, "k", "k");
+    await watchKeys(page);
+    // A real keyboard sends key "?" with Shift held; Playwright's "Shift+/" sends "/" instead.
+    await page.keyboard.down("Shift");
+    await page.keyboard.press("?");
+    await page.keyboard.up("Shift");
+    const help = page.getByRole("dialog", { name: "Vim keys", exact: true });
+    await expect(help).toBeVisible();
+    await press(page, "r");
+    await noReplyYet(page, "r replied from behind the key help");
+    await press(page, "Escape");
+    await expect(help).toHaveCount(0);
+    await replyAfterwards(page);
+  });
+
+  // The listener leans on one fact about Buzz: its dispatcher skips a keydown that was already prevented before it ran. If a Buzz release moves
+  // its listener (to capture, or ahead of ours) or stops checking, Vim's r and gt stop working again on that Buzz and this test goes red first.
+  // The control above it shows the key does open the thread when nothing prevents it, so this one cannot pass for nothing.
+  const DISPATCH_ORDER = "Buzz's shortcut dispatch order changed; see the README";
+  test("Buzz's shortcut dispatch order: t opens the thread of a selected message (the control for the next test)", async ({ page, app }) => {
+    await vimOff(page);
+    await open(page, app);
+    await selectTheBuzzWay(page);
+    await watchKeys(page);
+    await press(page, "t");
+    await expect(threadBox(page), `${DISPATCH_ORDER}: Buzz's own t no longer opens the thread of a selected message, so the next test would pass for nothing`).toBeVisible();
+    expect(await replyClicks(page)).toBe(1);
+  });
+
+  test("Buzz's shortcut dispatch order: if this fails, Buzz's shortcut dispatch order changed; see the README", async ({ page, app }) => {
+    await vimOff(page);
+    await open(page, app);
+    await selectTheBuzzWay(page);
+    await watchKeys(page);
+    await page.evaluate(() => {
+      document.addEventListener("keydown", (event) => event.key === "t" && event.preventDefault(), true);
+    });
+    await press(page, "t");
+    // The probe is the last window listener: once it has the key, Buzz's dispatcher has had its turn.
+    await expect.poll(async () => (await seen(page)).length).toBe(1);
+    expect(await seen(page)).toEqual([{ key: "t", prevented: true }]);
+    expect(await replyClicks(page), `${DISPATCH_ORDER}: a keydown prevented in document capture still reached Buzz's shortcut`).toBe(0);
+    await expect(threadBox(page)).toHaveCount(0);
+  });
 });
 
 // The Inbox is titled Activity since Buzz 1.0, and a row of the Messages sidebar; the keys name it by its key and keep their letters.
@@ -3136,8 +3326,7 @@ test.describe("the g page keys", () => {
         ["w", "buzz.workflows/workflows"],
         ["t", "buzz.reminders/reminders"],
         ["v", /^megatech\.vim-mode\//],
-        // From a list, gr and gt are the host's keys on v1.0.2 (the tests after this one): only a message box takes them.
-      ].filter(([key]) => inBox || (key !== "r" && key !== "t"))) {
+      ]) {
         await enter(page, place);
         await press(page, "g", key);
         await expect
@@ -3172,18 +3361,6 @@ test.describe("the g page keys", () => {
       await press(page, "g", "g");
       await expect(bar(page)).toContainText("NORMAL");
       await expect(bar(page)).not.toContainText("g");
-    });
-  }
-
-  for (const place of ["the channel's list", "the thread's list", "the channel list"]) {
-    test(`gr and gt open Reminders from ${place} (known not to work on Buzz v1.0.2)`, async ({ page, app }) => {
-      test.fail(true, HOST_RESERVES_KEYS);
-      await open(page, app);
-      for (const key of ["r", "t"]) {
-        await enter(page, place);
-        await press(page, "g", key);
-        await expect.poll(() => where(page), { message: `g${key} from ${place}` }).toBe("buzz.reminders/reminders");
-      }
     });
   }
 
@@ -3346,7 +3523,7 @@ test.describe("the g page keys", () => {
   }
 
   // The pages other than Messages have no message list, and the same Esc is wanted there. Reminders is reached by its number in the dock
-  // (g2): from the page the app opens on, `gr` is one of the keys the host reserves on v1.0.2 (HOST_RESERVES_KEYS).
+  // (g2).
   for (const [letter, name] of [["a", "Agents"], ["2", "Reminders"], ["i", "Activity"], ["w", "Workflows"]]) {
     test(`Esc cancels a pending g on the ${name} page`, async ({ page, app }) => {
       await open(page, app);
@@ -3871,7 +4048,7 @@ test.describe("Ctrl-e and Ctrl-y scroll the view a line at a time", () => {
   test("on the Reminders page it scrolls the page", async ({ page, app }) => {
     await page.setViewportSize({ width: 1200, height: 300 });
     await open(page, app);
-    await press(page, "h", "g", "2"); // the dock's second entry: gr is one of the keys the host reserves on v1.0.2 (HOST_RESERVES_KEYS)
+    await press(page, "h", "g", "2"); // the dock's second entry
     await expect(page.getByRole("tab", { name: "Reminders", exact: true })).toHaveAttribute("aria-selected", "true");
     // The page's root clips its content; let it scroll, and give it something tall.
     const root = page.getByText("Connect to a community to see your reminders.").locator("xpath=ancestor::*[@data-buzz-ui][1]");

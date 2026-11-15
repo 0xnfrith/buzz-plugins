@@ -6,6 +6,7 @@ import { closeHelp, onHelpKey } from "./help";
 import { onLeaderKey, onLeaderKeyUp } from "./leader";
 import { onMenuKey } from "./menus";
 import { onTextKey } from "./normal";
+import { onReservedKey } from "./reserved";
 import * as perf from "./perf";
 import { onSettingsKey } from "./settings-dialog";
 import { bar, renderBar, resetBar } from "./status";
@@ -40,6 +41,8 @@ export const mount = () => {
   listen("keydown", "onMenuKey", onMenuKey);
   listen("keydown", "onAnyKey", onAnyKey);
   listen("keydown", "onHelpKey", onHelpKey);
+  // Last of the key listeners: it skips a key the others already took (defaultPrevented), and takes r and gt before the shortcut service.
+  listen("keydown", "onReservedKey", onReservedKey);
   listen("pointerdown", "onPointerDown", onPointerDown);
   listen("click", "onFoldClick", onFoldClick);
   // The performance trace follows its setting (the Vim mode page).
