@@ -135,12 +135,12 @@ Taken in Buzz's own browser test harness with its fixture data (`test/screenshot
 | Switch channel from the message list | `]` and `[` | Next and previous channel |
 | Switch community | `}` and `{` (hold Shift), then `2{` | Next and previous community, in the switcher's order (Personal space first). Focus lands in the new community's channel list. A count jumps several |
 | Pick a community | Shift+c, or `h` twice from a message | The community switcher opens on the current one. `j` and `k` move, Enter picks, Esc closes |
-| Reply | Move the cursor with `k`, then `r` | The thread opens on that message and focus is in its reply box (`INSERT`). Not on Buzz v1.0.2: see "Known on Buzz v1.0.2" below |
+| Reply | Move the cursor with `k`, then `r` | The thread opens on that message and focus is in its reply box (`INSERT`). On Buzz v1.0.2 the plugin takes `r` from Buzz's React key while Vim keys are on: see "Known on Buzz v1.0.2" below |
 | Message menu | Move the cursor, then `m` | The message menu opens (copy, mark unread, ...). `j` and `k` move, Enter picks, Esc closes |
 | Copy a message | Move the cursor, then `yy` (its link) or `yY` (its text), in the message list or a thread | Buzz's own Copy link and Copy message run and its toast says "Link copied" or "Message copied"; the link is the one Buzz makes (`buzz://message?...`, with `thread=` for a reply). The cursor and the focus stay where they were. A `y` that nothing follows within 1.5 s, or followed by another key, copies nothing. In the message box `y` is the box's own (`y` copies the highlight in VISUAL) |
-| Pages | `g` then `t`, `g` then Shift+t | Next and previous page, in the order the app lists them: the dock from the top (Messages, Reminders, Agents, Workflows, and the pages plugins put there), then the sidebar (Activity, then the rest). In a message box in NORMAL; from the lists not on Buzz v1.0.2: see "Known on Buzz v1.0.2" below |
+| Pages | `g` then `t`, `g` then Shift+t | Next and previous page, in the order the app lists them: the dock from the top (Messages, Reminders, Agents, Workflows, and the pages plugins put there), then the sidebar (Activity, then the rest). From the lists and from a message box in NORMAL. On Buzz v1.0.2 the plugin takes the `t` after a `g` from Buzz's thread key: see "Known on Buzz v1.0.2" below |
 | Cancel a `g` | `g`, then Esc | The `g` is dropped, as in vim, and so is a count (`3`, Esc, `k` moves one message): `g` Esc `p` opens nothing, wherever the focus is (the lists, the panes, the dock, the Reminders, Agents, Activity and Workflows pages, a message box in NORMAL). Esc keeps its other jobs: it closes Settings and leaves INSERT |
-| Jump to a page | `gi` `gm` `ga` `gr` `gw` `gs` `gp`, from the message list, the channel list or a message box in NORMAL | Inbox (titled Activity since Buzz 1.0, a row of the Messages sidebar), Messages, Agents, Reminders, Workflows, Settings, and Settings on Manage plugins (`gp`: plugins). Messages opens with the cursor in the message list, not in the message box. The app has Cmd+, (Ctrl+, elsewhere) for Settings too. `gr` is not on Buzz v1.0.2 from the lists: see "Known on Buzz v1.0.2" below |
+| Jump to a page | `gi` `gm` `ga` `gr` `gw` `gs` `gp`, from the message list, the channel list or a message box in NORMAL | Inbox (titled Activity since Buzz 1.0, a row of the Messages sidebar), Messages, Agents, Reminders, Workflows, Settings, and Settings on Manage plugins (`gp`: plugins). Messages opens with the cursor in the message list, not in the message box. The app has Cmd+, (Ctrl+, elsewhere) for Settings too. On Buzz v1.0.2 the plugin takes the `r` after a `g` from Buzz's React key: see "Known on Buzz v1.0.2" below |
 | Dock entry by number | `g1` to `g9`, from the message list, the channel list or a message box in NORMAL | The nth entry of the app dock, counted from the top as the dock shows them: Messages, Reminders, then the others by name, so Agents and Workflows with the pages plugins put in the dock among them (a page called "Status board", placed in the dock with Artifacts, is between Agents and Workflows: `g4`), Bestie first when it is on. Nothing happens for a number with no entry. The digit is the entry's number, not a count (`5j` is still five `j`). The pages of the sidebar (Activity, the Vim mode page) keep their letters and `gt`. Before Buzz 1.0 the entries were the top bar's, counted from the left |
 | Write | `i` | Focus goes to the message box. Label says `INSERT` |
 | Search | `/` | Buzz's search opens (it presses Cmd+F for you) |
@@ -172,22 +172,26 @@ Taken in Buzz's own browser test harness with its fixture data (`test/screenshot
 
 ### Known on Buzz v1.0.2
 
-Buzz 1.0 moved the pages (the top bar became an app dock on the left, and the Inbox is titled Activity) and took some plain keys for itself. The browser tests of this plugin run on block/buzz-app v1.0.2 (`51d63954`). What changed for the page keys:
+Buzz 1.0 moved the pages (the top bar became an app dock on the left, and the Inbox is titled Activity) and took some plain keys for itself. The browser tests of this plugin run on block/buzz-app v1.0.2 (`51d63954`). What changed for the page keys, all of which work from the lists and from a message box in NORMAL:
 
-| Key | Before Buzz 1.0 | Buzz v1.0.2 | From a list | In a message box in NORMAL |
-|---|---|---|---|---|
-| `gm` | Messages, in the top bar | Messages, in the dock | works | works |
-| `ga` | Agents, in the top bar | Agents, in the dock | works | works |
-| `gw` | Workflows, in the top bar | Workflows, in the dock (the plugin is off on a new install until you turn it on) | works | works |
-| `gr` | Reminders, in the top bar | Reminders, in the dock (off on a new install until you turn it on) | **does nothing** | works |
-| `gi` | Inbox, in the sidebar | Activity, a row of the Messages sidebar (the same page; the key still goes there) | works | works |
-| `gv` | the Vim mode page, in the sidebar | unchanged | works | works |
-| `gs`, `gp` | Settings; Settings on Manage plugins | unchanged | works | works |
-| `gt`, `gT` | next and previous page: the top bar left to right, then the sidebar | the dock from the top, then the sidebar | **does nothing** | works |
-| `g1` to `g9` | the nth entry of the top bar, from the left | the nth entry of the dock, from the top | works | works |
-| `r` | reply to the message under the cursor | the same key | **does nothing** | not bound there |
+| Key | Before Buzz 1.0 | Buzz v1.0.2 |
+|---|---|---|
+| `gm` | Messages, in the top bar | Messages, in the dock |
+| `ga` | Agents, in the top bar | Agents, in the dock |
+| `gw` | Workflows, in the top bar | Workflows, in the dock (the plugin is off on a new install until you turn it on) |
+| `gr` | Reminders, in the top bar | Reminders, in the dock (off on a new install until you turn it on) |
+| `gi` | Inbox, in the sidebar | Activity, a row of the Messages sidebar (the same page; the key still goes there) |
+| `gv` | the Vim mode page, in the sidebar | unchanged |
+| `gs`, `gp` | Settings; Settings on Manage plugins | unchanged |
+| `gt`, `gT` | next and previous page: the top bar left to right, then the sidebar | the dock from the top, then the sidebar |
+| `g1` to `g9` | the nth entry of the top bar, from the left | the nth entry of the dock, from the top |
+| `r` | reply to the message under the cursor | the same key |
 
-From a list means the message list, a thread's list or the channel list. Why the four keys do nothing: Buzz v1.0.2 registers the plain keys `e`, `r`, `t` (and the right arrow), `u` and Delete as its own keys for the message it has selected (edit, react, reply in a thread, mark unread, delete: `src/app/shortcuts.ts:228-301`), and its shortcut dispatcher runs no plugin shortcut on a key the host has reserved, even when the host has nothing to act on (`src/features/shortcuts/service.ts:104-118`). So the plugin never sees `r` or `t` in a list. A message box in NORMAL has its own key handler, so `gr`, `gt` and `gT` work there. Meanwhile, `g2` opens Reminders from the lists (the second entry of the dock). The tests of these keys are kept and marked as expected to fail (`test/vim.spec.mjs`, `HOST_RESERVES_KEYS`); when a Buzz release stops reserving the keys they start to pass, and the run then fails to say the mark should come off.
+**Buzz's own `r` and `t`.** Buzz v1.0.2 registers the plain keys `e`, `r`, `t` (and the right arrow), `u` and Delete as its own keys for the message it has selected (edit, react, reply in a thread, mark unread, delete: `src/app/shortcuts.ts:228-301`), and its shortcut service runs no plugin shortcut on a key the host has reserved, even when the host has nothing to act on (`src/features/shortcuts/service.ts:104-118`). That would leave `r`, `gr` and `gt` dead in the lists. (`gT` is Shift+t, a different key that Buzz does not reserve, so it was never lost.) So while Vim keys are on, the plugin takes those presses itself: a listener that runs before Buzz's (`src/reserved.ts`) prevents `r`, and `t` right after a `g`, and runs Vim's action. It does this in the lists and the channel list, not in a message box, a menu or a dialog, where the keys keep their own meaning.
+
+What that costs: while Vim keys are on, Buzz's React key (`r`) does not work, and a `t` after a `g` is Vim's next page, not Buzz's thread key. A plain `t`, the right arrow and every other Buzz message key work as before. A rebind of those Buzz keys in Settings, Shortcuts does not change this, because the plugin cannot see it. Turn Vim keys off (Cmd/Ctrl+Shift+E) and Buzz has all its keys back.
+
+**The order it leans on.** Buzz's shortcut service is one listener on `window`, in the bubble phase, and it skips a keydown that was already prevented. The plugin's listener runs earlier, in the capture phase on `document`. Buzz does not promise this order to plugins. The test "Buzz's shortcut dispatch order" in `test/vim.spec.mjs` checks the one fact the listener needs (a keydown prevented in `document` capture never becomes a Buzz shortcut), next to a control that shows Buzz's `t` does open the thread when nothing prevents it. When a Buzz release changes the order the test fails with "Buzz's shortcut dispatch order changed; see the README", and `r`, `gr` and `gt` have stopped working from the lists on that Buzz. Then read how the new Buzz dispatches keys (`src/features/shortcuts/service.ts`) and move the listener, or ask Buzz for a supported way to take priority. The test app mounts no reaction picker, so Buzz's `r` is never eligible there and only Buzz's `t` is shown acting.
 
 </details>
 

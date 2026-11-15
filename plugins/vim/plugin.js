@@ -2452,6 +2452,189 @@ var onTextKey = (event) => {
 	textKey(event.key === "Backspace" ? "h" : event.key === "Delete" ? "x" : event.key);
 	if (isHelpOpen() && !helpWas) markHelpOpenedBy(event);
 };
+// src/yank.ts
+var MENU = "[role=\"menu\"][data-message-id]";
+var YANKING = "data-vim-yanking";
+var pressable = (el) => el && el.getAttribute("aria-disabled") !== "true" && !el.hasAttribute("data-disabled") ? el : void 0;
+var yankMessage = async (what) => {
+	clearPending();
+	const id = cursorRow()?.dataset.messageId;
+	if (!id) return;
+	const list = activeTimeline();
+	let hide;
+	try {
+		if (what === "link") {
+			await rowControl("Copy link");
+			await nextFrame();
+			await nextFrame();
+			return;
+		}
+		hide = new MutationObserver((records) => {
+			for (const record of records) for (const node of record.addedNodes) if (node instanceof HTMLElement) for (const menu of node.matches(MENU) ? [node] : node.querySelectorAll(MENU)) menu.setAttribute(YANKING, "");
+		});
+		hide.observe(document.body, {
+			childList: true,
+			subtree: true
+		});
+		await rowControl("More message actions");
+		const menu = () => [...document.querySelectorAll(MENU)].find((el) => el.dataset.messageId === id);
+		const item = await settle(() => [...menu()?.querySelectorAll("[role=\"menuitem\"]") ?? []].find((el) => el.textContent?.trim() === "Copy message"), 1200);
+		if (pressable(item)) item?.click();
+		else menu()?.dispatchEvent(new KeyboardEvent("keydown", {
+			key: "Escape",
+			bubbles: true,
+			cancelable: true
+		}));
+		await settle(() => !document.querySelector(MENU), 1500);
+	} catch {} finally {
+		hide?.disconnect();
+		for (const menu of document.querySelectorAll(`[${YANKING}]`)) menu.removeAttribute(YANKING);
+		if (!disposed) focusEl(list?.isConnected ? list : activeTimeline());
+	}
+};
+// src/shortcuts.ts
+var eligible = () => state.enabled && contextOk();
+var ctrl = (letter) => apple ? {
+	key: letter,
+	ctrl: true
+} : {
+	key: letter,
+	mod: true
+};
+var reply = afterG("r", () => void rowControl("Reply"));
+var nextPage = () => state.operator === "g" && goPage("t");
+var registerShortcuts = () => {
+	let order = 0;
+	const key = (id, title, binding, run, extra = {}) => ctx.shortcuts.register({
+		id,
+		title,
+		binding,
+		run: timed(`key ${id}`, run),
+		when: timed("eligible", eligible),
+		order: order += 10,
+		...extra
+	});
+	key("down", "Next message / channel", { key: "j" }, () => step(1), { repeat: true });
+	key("up", "Previous message / channel", { key: "k" }, () => step(-1), { repeat: true });
+	key("top", "Go to top (press twice)", { key: "g" }, () => {
+		if (state.operator === "g") {
+			clearPending();
+			return jumpEdge(false);
+		}
+		set({ operator: "g" });
+		armPending();
+	});
+	key("bottom", "Go to latest", {
+		key: "G",
+		shift: true
+	}, () => jumpEdge(true));
+	key("half-down", "Scroll half a page down", ctrl("d"), () => halfPage(1), { repeat: true });
+	key("half-up", "Scroll half a page up", ctrl("u"), () => halfPage(-1), { repeat: true });
+	key("line-down", "Scroll one line down, the cursor stays", ctrl("e"), () => lineScroll(1), { repeat: true });
+	key("line-up", "Scroll one line up, the cursor stays", ctrl("y"), () => lineScroll(-1), { repeat: true });
+	key("left", "Focus the region to the left", { key: "h" }, () => shiftRegion(-1));
+	key("right", "Focus the region to the right (opens a channel)", { key: "l" }, () => shiftRegion(1));
+	key("next-channel", "Next channel", { key: "]" }, () => switchChannel(1));
+	key("previous-channel", "Previous channel", { key: "[" }, () => switchChannel(-1));
+	key("insert", "Insert: focus the message box", { key: "i" }, afterG("i", () => startInsert()));
+	key("insert-after", "Append: focus the message box, after the character under the caret", { key: "a" }, afterG("a", () => startInsert("after")));
+	key("append", "Insert at the end of the draft", {
+		key: "A",
+		shift: true
+	}, () => startInsert("end"));
+	key("reply", "Reply in a thread to the message under the cursor", { key: "r" }, reply);
+	key("message-menu", "Open the menu of the message under the cursor", { key: "m" }, afterG("m", () => void rowControl("More message actions")));
+	key("page-next", "After g: next page", { key: "t" }, nextPage);
+	key("page-previous", "After g: previous page", {
+		key: "T",
+		shift: true
+	}, () => state.operator === "g" && goPage("T"));
+	key("page-workflows", "After g: Workflows", { key: "w" }, afterG("w", () => {}));
+	key("page-vim", "After g: the Vim mode page (its switches)", { key: "v" }, afterG("v", () => {}));
+	key("settings", "After g: open Settings (the host also has Cmd/Ctrl+,)", { key: "s" }, () => state.operator === "g" && goPage("s"));
+	key("plugins", "After g: open Settings on Manage plugins", { key: "p" }, () => state.operator === "g" && goPage("p"));
+	key("next-community", "Next community", {
+		key: "}",
+		shift: true
+	}, () => void switchCommunity(1));
+	key("previous-community", "Previous community", {
+		key: "{",
+		shift: true
+	}, () => void switchCommunity(-1));
+	key("communities", "Open the community switcher", {
+		key: "C",
+		shift: true
+	}, () => void openCommunityPicker());
+	key("open-thread", "Open the thread of the message under the cursor, at its end; in a thread, open or fold the replies to it (after z: show the thread pane)", { key: "o" }, afterG("o", () => state.operator === "z" ? showPane() : openOrFold()));
+	key("open-thread-enter", "Open the thread of the message under the cursor", { key: "Enter" }, () => void openThread(), { when: () => eligible() && enterOpens() });
+	key("close-thread", "Close the active thread", { key: "q" }, afterG("q", closeThread));
+	key("yank", "Yank prefix: yy copies the link of the message under the cursor, yY its text", { key: "y" }, afterG("y", () => {
+		if (state.operator === "y") return void yankMessage("link");
+		set({ operator: "y" });
+		armPending();
+	}));
+	key("yank-text", "After y: copy the text of the message under the cursor", {
+		key: "Y",
+		shift: true
+	}, () => state.operator === "y" && void yankMessage("text"));
+	key("fold", "Fold prefix: zc hides the thread pane, zo shows it", { key: "z" }, afterG("z", () => {
+		set({ operator: "z" });
+		armPending();
+	}));
+	key("close-pane", "After z: hide the thread pane", { key: "c" }, afterG("c", () => state.operator === "z" && hidePane()));
+	key("pane-wider", "Widen the thread pane", {
+		key: ">",
+		shift: true
+	}, () => void resizePane("wider"), { repeat: true });
+	key("pane-narrower", "Narrow the thread pane", {
+		key: "<",
+		shift: true
+	}, () => void resizePane("narrower"), { repeat: true });
+	key("pane-widest", "Make the thread pane as wide as it goes", {
+		key: "|",
+		shift: true
+	}, () => void resizePane("widest"));
+	key("pane-reset", "Reset the thread pane width", { key: "=" }, () => void resizePane("reset"));
+	key("search", "Search this conversation", { key: "/" }, () => {
+		if (!pressHostChord("f")) pressHostChord("k");
+	});
+	key("help", "Show the Vim keys over the page", {
+		key: "?",
+		shift: true
+	}, openHelp);
+	key("normal", "Normal mode: leave the message box", { key: "Escape" }, escape, {
+		allowInEditable: true,
+		when: () => state.enabled && !!timelineOf("main")
+	});
+	for (const digit of "1234567890") key(`count-${digit}`, `Count prefix ${digit}`, { key: digit }, afterG(digit, () => {
+		set({ count: Math.min(state.count * 10 + Number(digit), 999) });
+		armPending();
+	}), { when: () => eligible() && (digit !== "0" || state.count > 0) });
+	key("toggle", "Turn Vim keys on or off", {
+		key: "e",
+		mod: true,
+		shift: true
+	}, () => setting({ enabled: !state.enabled }), {
+		when: () => true,
+		allowInEditable: true
+	});
+};
+// src/reserved.ts
+var MODAL = "dialog[open], [aria-modal=\"true\"]";
+var replyKey = timed("key reply", reply);
+var nextPageKey = timed("key page-next", nextPage);
+var onReservedKey = (event) => {
+	const { key } = event;
+	if (key !== "r" && key !== "R" && key !== "t" && key !== "T") return;
+	if (!state.enabled || event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+	if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.getModifierState("AltGraph")) return;
+	const run = key === "r" || key === "R" ? replyKey : state.operator === "g" ? nextPageKey : void 0;
+	if (!run) return;
+	if (event.composedPath().some((target) => isEditable(target)) || document.querySelector(MODAL)) return;
+	if (isHelpOpen() || !contextOk()) return;
+	event.preventDefault();
+	if (!event.repeat) run();
+};
 // src/settings-dialog.ts
 var SETTINGS_NAV = "nav[aria-label=\"Settings sections\"]";
 var SETTINGS_OWN_KEYS = "select, [role=\"combobox\"], [role=\"listbox\"], [role=\"menu\"], [role=\"menuitem\"], [role=\"option\"]";
@@ -2606,6 +2789,7 @@ var mount = () => {
 	listen("keydown", "onMenuKey", onMenuKey);
 	listen("keydown", "onAnyKey", onAnyKey);
 	listen("keydown", "onHelpKey", onHelpKey);
+	listen("keydown", "onReservedKey", onReservedKey);
 	listen("pointerdown", "onPointerDown", onPointerDown);
 	listen("click", "onFoldClick", onFoldClick);
 	let traced = state.perf;
@@ -2717,171 +2901,6 @@ var registerPage = () => {
 				style: { width: "100%" }
 			}));
 		}
-	});
-};
-// src/yank.ts
-var MENU = "[role=\"menu\"][data-message-id]";
-var YANKING = "data-vim-yanking";
-var pressable = (el) => el && el.getAttribute("aria-disabled") !== "true" && !el.hasAttribute("data-disabled") ? el : void 0;
-var yankMessage = async (what) => {
-	clearPending();
-	const id = cursorRow()?.dataset.messageId;
-	if (!id) return;
-	const list = activeTimeline();
-	let hide;
-	try {
-		if (what === "link") {
-			await rowControl("Copy link");
-			await nextFrame();
-			await nextFrame();
-			return;
-		}
-		hide = new MutationObserver((records) => {
-			for (const record of records) for (const node of record.addedNodes) if (node instanceof HTMLElement) for (const menu of node.matches(MENU) ? [node] : node.querySelectorAll(MENU)) menu.setAttribute(YANKING, "");
-		});
-		hide.observe(document.body, {
-			childList: true,
-			subtree: true
-		});
-		await rowControl("More message actions");
-		const menu = () => [...document.querySelectorAll(MENU)].find((el) => el.dataset.messageId === id);
-		const item = await settle(() => [...menu()?.querySelectorAll("[role=\"menuitem\"]") ?? []].find((el) => el.textContent?.trim() === "Copy message"), 1200);
-		if (pressable(item)) item?.click();
-		else menu()?.dispatchEvent(new KeyboardEvent("keydown", {
-			key: "Escape",
-			bubbles: true,
-			cancelable: true
-		}));
-		await settle(() => !document.querySelector(MENU), 1500);
-	} catch {} finally {
-		hide?.disconnect();
-		for (const menu of document.querySelectorAll(`[${YANKING}]`)) menu.removeAttribute(YANKING);
-		if (!disposed) focusEl(list?.isConnected ? list : activeTimeline());
-	}
-};
-// src/shortcuts.ts
-var eligible = () => state.enabled && contextOk();
-var ctrl = (letter) => apple ? {
-	key: letter,
-	ctrl: true
-} : {
-	key: letter,
-	mod: true
-};
-var registerShortcuts = () => {
-	let order = 0;
-	const key = (id, title, binding, run, extra = {}) => ctx.shortcuts.register({
-		id,
-		title,
-		binding,
-		run: timed(`key ${id}`, run),
-		when: timed("eligible", eligible),
-		order: order += 10,
-		...extra
-	});
-	key("down", "Next message / channel", { key: "j" }, () => step(1), { repeat: true });
-	key("up", "Previous message / channel", { key: "k" }, () => step(-1), { repeat: true });
-	key("top", "Go to top (press twice)", { key: "g" }, () => {
-		if (state.operator === "g") {
-			clearPending();
-			return jumpEdge(false);
-		}
-		set({ operator: "g" });
-		armPending();
-	});
-	key("bottom", "Go to latest", {
-		key: "G",
-		shift: true
-	}, () => jumpEdge(true));
-	key("half-down", "Scroll half a page down", ctrl("d"), () => halfPage(1), { repeat: true });
-	key("half-up", "Scroll half a page up", ctrl("u"), () => halfPage(-1), { repeat: true });
-	key("line-down", "Scroll one line down, the cursor stays", ctrl("e"), () => lineScroll(1), { repeat: true });
-	key("line-up", "Scroll one line up, the cursor stays", ctrl("y"), () => lineScroll(-1), { repeat: true });
-	key("left", "Focus the region to the left", { key: "h" }, () => shiftRegion(-1));
-	key("right", "Focus the region to the right (opens a channel)", { key: "l" }, () => shiftRegion(1));
-	key("next-channel", "Next channel", { key: "]" }, () => switchChannel(1));
-	key("previous-channel", "Previous channel", { key: "[" }, () => switchChannel(-1));
-	key("insert", "Insert: focus the message box", { key: "i" }, afterG("i", () => startInsert()));
-	key("insert-after", "Append: focus the message box, after the character under the caret", { key: "a" }, afterG("a", () => startInsert("after")));
-	key("append", "Insert at the end of the draft", {
-		key: "A",
-		shift: true
-	}, () => startInsert("end"));
-	key("reply", "Reply in a thread to the message under the cursor", { key: "r" }, afterG("r", () => void rowControl("Reply")));
-	key("message-menu", "Open the menu of the message under the cursor", { key: "m" }, afterG("m", () => void rowControl("More message actions")));
-	key("page-next", "After g: next page", { key: "t" }, () => state.operator === "g" && goPage("t"));
-	key("page-previous", "After g: previous page", {
-		key: "T",
-		shift: true
-	}, () => state.operator === "g" && goPage("T"));
-	key("page-workflows", "After g: Workflows", { key: "w" }, afterG("w", () => {}));
-	key("page-vim", "After g: the Vim mode page (its switches)", { key: "v" }, afterG("v", () => {}));
-	key("settings", "After g: open Settings (the host also has Cmd/Ctrl+,)", { key: "s" }, () => state.operator === "g" && goPage("s"));
-	key("plugins", "After g: open Settings on Manage plugins", { key: "p" }, () => state.operator === "g" && goPage("p"));
-	key("next-community", "Next community", {
-		key: "}",
-		shift: true
-	}, () => void switchCommunity(1));
-	key("previous-community", "Previous community", {
-		key: "{",
-		shift: true
-	}, () => void switchCommunity(-1));
-	key("communities", "Open the community switcher", {
-		key: "C",
-		shift: true
-	}, () => void openCommunityPicker());
-	key("open-thread", "Open the thread of the message under the cursor, at its end; in a thread, open or fold the replies to it (after z: show the thread pane)", { key: "o" }, afterG("o", () => state.operator === "z" ? showPane() : openOrFold()));
-	key("open-thread-enter", "Open the thread of the message under the cursor", { key: "Enter" }, () => void openThread(), { when: () => eligible() && enterOpens() });
-	key("close-thread", "Close the active thread", { key: "q" }, afterG("q", closeThread));
-	key("yank", "Yank prefix: yy copies the link of the message under the cursor, yY its text", { key: "y" }, afterG("y", () => {
-		if (state.operator === "y") return void yankMessage("link");
-		set({ operator: "y" });
-		armPending();
-	}));
-	key("yank-text", "After y: copy the text of the message under the cursor", {
-		key: "Y",
-		shift: true
-	}, () => state.operator === "y" && void yankMessage("text"));
-	key("fold", "Fold prefix: zc hides the thread pane, zo shows it", { key: "z" }, afterG("z", () => {
-		set({ operator: "z" });
-		armPending();
-	}));
-	key("close-pane", "After z: hide the thread pane", { key: "c" }, afterG("c", () => state.operator === "z" && hidePane()));
-	key("pane-wider", "Widen the thread pane", {
-		key: ">",
-		shift: true
-	}, () => void resizePane("wider"), { repeat: true });
-	key("pane-narrower", "Narrow the thread pane", {
-		key: "<",
-		shift: true
-	}, () => void resizePane("narrower"), { repeat: true });
-	key("pane-widest", "Make the thread pane as wide as it goes", {
-		key: "|",
-		shift: true
-	}, () => void resizePane("widest"));
-	key("pane-reset", "Reset the thread pane width", { key: "=" }, () => void resizePane("reset"));
-	key("search", "Search this conversation", { key: "/" }, () => {
-		if (!pressHostChord("f")) pressHostChord("k");
-	});
-	key("help", "Show the Vim keys over the page", {
-		key: "?",
-		shift: true
-	}, openHelp);
-	key("normal", "Normal mode: leave the message box", { key: "Escape" }, escape, {
-		allowInEditable: true,
-		when: () => state.enabled && !!timelineOf("main")
-	});
-	for (const digit of "1234567890") key(`count-${digit}`, `Count prefix ${digit}`, { key: digit }, afterG(digit, () => {
-		set({ count: Math.min(state.count * 10 + Number(digit), 999) });
-		armPending();
-	}), { when: () => eligible() && (digit !== "0" || state.count > 0) });
-	key("toggle", "Turn Vim keys on or off", {
-		key: "e",
-		mod: true,
-		shift: true
-	}, () => setting({ enabled: !state.enabled }), {
-		when: () => true,
-		allowInEditable: true
 	});
 };
 // src/index.ts

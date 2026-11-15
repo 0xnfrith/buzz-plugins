@@ -880,7 +880,7 @@ surface("box-mentions", "message box, NORMAL motions (30 mentions)", async ({ pa
   await rows(boxRows(60));
 }, "a.isContentEditable");
 
-// Reminders is reached by its number in the dock (g2): `gr` is one of the keys Buzz v1.0.2 reserves for itself (see HOST_RESERVES_KEYS in vim.spec.mjs).
+// Reminders is reached by its number in the dock (g2).
 for (const [id, letter, name] of [
   ["reminders", "2", "Reminders"],
   ["agents", "a", "Agents"],
