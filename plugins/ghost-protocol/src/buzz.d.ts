@@ -11,6 +11,10 @@ export type SpawnOptions = Readonly<{
 }>;
 
 export type HostProcess = Readonly<{
+  /** Writes to its stdin. */
+  write(data: string): Promise<void>;
+  /** Writes any final `data`, then closes its stdin. */
+  end(data?: string): Promise<void>;
   /** Asks it to stop, then kills it and its descendants. */
   kill(): Promise<void>;
   /** The exit code once it exits; null when a signal ended it. */

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { manifestProblems } from "../../../../.github/plugin-assets/check.mjs";
 import { COMMAND, PROCESS } from "../../src/docker";
+import { IMAGE } from "../../src/gp/constants";
 import { inject } from "../../src/index";
 import manifest from "../../manifest.json" with { type: "json" };
 
@@ -32,22 +33,48 @@ describe("manifest.json", () => {
 
   it("declares one process for each other docker verb the plugin uses, each the bare program `docker` with its leading words fixed, and none for any other verb", () => {
     expect(manifest.host.processes).toEqual([
+      { id: "pull", program: "docker", args: ["pull", IMAGE] },
+      { id: "run-init", program: "docker", args: ["run", "--rm", "-v"] },
+      { id: "run-agent", program: "docker", args: ["run", "-d", "--restart", "unless-stopped", "--name"] },
+      { id: "run-updater", program: "docker", args: ["run", "-d", "--restart", "unless-stopped", "-v", "/var/run/docker.sock:/var/run/docker.sock", "--name"] },
       { id: "exec", program: "docker", args: ["exec"] },
       { id: "inspect-state", program: "docker", args: ["inspect", "--format", "{{.State.Status}}"] },
       { id: "inspect-image", program: "docker", args: ["inspect", "--format", "{{.Config.Image}}"] },
       { id: "restart", program: "docker", args: ["restart"] },
       { id: "stop", program: "docker", args: ["stop"] },
+      { id: "rm", program: "docker", args: ["rm", "-f"] },
+      { id: "volume-rm", program: "docker", args: ["volume", "rm"] },
     ]);
     // The ids the code spawns are the ones declared, and the other way round.
     expect(manifest.host.processes.map(({ id }) => id).sort()).toEqual(Object.values(PROCESS).sort());
     expect(manifest.host.processes.map(({ id }) => id)).not.toContain(COMMAND.version);
-    // The verbs that would give the plugin more than it needs are not among them: starting a container, removing one or its data, copying
-    // files, building, or killing: none of these is a leading word of any entry.
+    // The verbs that would give the plugin more than it needs are not among them: copying files, building, killing, creating or starting a
+    // container by another way, or touching Docker's login, system, networks, images or compose.
     const verbs = [...manifest.host.commands, ...manifest.host.processes].map(({ args }) => args[0]);
-    for (const verb of ["run", "rm", "volume", "cp", "build", "kill", "create", "start", "pull", "push", "login", "system", "network", "compose", "image", "container"]) {
+    for (const verb of ["cp", "build", "kill", "create", "start", "push", "login", "system", "network", "compose", "image", "container"]) {
       expect(verbs, verb).not.toContain(verb);
     }
-    expect([...new Set(verbs)].sort()).toEqual(["exec", "inspect", "restart", "stop", "version"]);
+    expect([...new Set(verbs)].sort()).toEqual(["exec", "inspect", "pull", "restart", "rm", "run", "stop", "version", "volume"]);
+  });
+
+  it("fixes, in every `run` entry, the flags that keep it to what the interface needs, and mounts the Docker socket in one entry only", () => {
+    const runs = manifest.host.processes.filter(({ args }) => args[0] === "run");
+    expect(runs.map(({ id }) => id).sort()).toEqual(["run-agent", "run-init", "run-updater"]);
+    for (const { id, args } of runs) {
+      // None of the flags that would widen a container: privileges, host networking or processes, published ports, devices, capabilities,
+      // environment (a secret goes on stdin, never in a flag), or a bind mount of a path other than the socket.
+      for (const word of args) expect(word, id).not.toMatch(/^(--privileged|--network|--net|--pid|--ipc|--uts|-p|--publish|--device|--cap-add|--security-opt|-e|--env|--env-file|--mount|--user|-u)$/);
+    }
+    const mounts = manifest.host.processes.filter(({ args }) => args.some((word) => word.includes("docker.sock")));
+    expect(mounts.map(({ id }) => id)).toEqual(["run-updater"]);
+    // The one entry that is not a run of a container in the background restarts nothing and the only one that removes things is `rm -f`.
+    expect(manifest.host.processes.filter(({ args }) => args[0] === "rm" || args[0] === "volume").map(({ id }) => id).sort()).toEqual(["rm", "volume-rm"]);
+  });
+
+  it("names the one image the plugin may pull, the one the code runs", () => {
+    expect(IMAGE).toMatch(/^[a-z0-9.-]+(?::[0-9]+)?(?:\/[a-z0-9._-]+)*\/ghost-protocol:[A-Za-z0-9._-]+$/);
+    expect(IMAGE).not.toMatch(/:latest$/);
+    expect(manifest.host.processes.find(({ id }) => id === "pull")?.args).toEqual(["pull", IMAGE]);
   });
 
   it("is not a shell: nothing runs through `sh`, `bash`, `cmd` or an interpreter, and no argument is a script", () => {
@@ -75,7 +102,7 @@ describe("manifest.json", () => {
   });
 
   it("asks Buzz for the services it uses, and no more", () => {
-    expect([...inject].sort()).toEqual(["host", "pages", "react"]);
+    expect([...inject].sort()).toEqual(["agents", "host", "pages", "react", "relay"]);
   });
 });
 

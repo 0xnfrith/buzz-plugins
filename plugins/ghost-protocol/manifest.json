@@ -2,7 +2,7 @@
   "id": "megatech.ghost-protocol",
   "name": "GHOST Protocol",
   "apiVersion": 1,
-  "description": "Checks Docker and shows how a GHOST Protocol agent in Docker on your computer is doing: its state, version and relay, with Update, Roll back, Restart and Stop. Needs Docker Desktop.",
+  "description": "Makes a GHOST Protocol agent in Docker on your computer from New agent, and shows how it is doing: its state, version and relay, with Update, Roll back, Restart and Stop. Needs Docker Desktop.",
   "discovery": {
     "category": "agents",
     "tags": ["GHOST Protocol", "Docker", "Agents"]
@@ -10,11 +10,17 @@
   "host": {
     "commands": [{ "id": "version", "program": "docker", "args": ["version", "--format", "{{.Server.Version}}"] }],
     "processes": [
+      { "id": "pull", "program": "docker", "args": ["pull", "registry.invalid/ghost-protocol:0.0.0"] },
+      { "id": "run-init", "program": "docker", "args": ["run", "--rm", "-v"] },
+      { "id": "run-agent", "program": "docker", "args": ["run", "-d", "--restart", "unless-stopped", "--name"] },
+      { "id": "run-updater", "program": "docker", "args": ["run", "-d", "--restart", "unless-stopped", "-v", "/var/run/docker.sock:/var/run/docker.sock", "--name"] },
       { "id": "exec", "program": "docker", "args": ["exec"] },
       { "id": "inspect-state", "program": "docker", "args": ["inspect", "--format", "{{.State.Status}}"] },
       { "id": "inspect-image", "program": "docker", "args": ["inspect", "--format", "{{.Config.Image}}"] },
       { "id": "restart", "program": "docker", "args": ["restart"] },
-      { "id": "stop", "program": "docker", "args": ["stop"] }
+      { "id": "stop", "program": "docker", "args": ["stop"] },
+      { "id": "rm", "program": "docker", "args": ["rm", "-f"] },
+      { "id": "volume-rm", "program": "docker", "args": ["volume", "rm"] }
     ]
   }
 }

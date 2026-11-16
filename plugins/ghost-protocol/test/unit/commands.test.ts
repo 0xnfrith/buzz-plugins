@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { commands as create } from "../../src/gp/commands";
 import { containerOf, imageCall, restartCall, rollbackCall, stateCall, statusCall, stopCall, updateCall } from "../../src/commands";
 import { COMMAND, PROCESS } from "../../src/docker";
 import { SLUG_MAX, isSlug, slugOf } from "../../src/slug";
@@ -31,7 +32,12 @@ describe("the docker calls about an agent, to the letter (GHOST Protocol's inter
   });
 
   it("uses every process the manifest declares, and only those: no grant is left unused, and no call names another", () => {
-    const used = new Set<string>(BUILDERS.map((build) => build("maple").process));
+    const created = [
+      create.pull(), create.init("maple", "Maple", "wss://relay.example.com", "d".repeat(64)), create.state("gp-maple"), create.start("maple"),
+      create.startUpdater("maple"), create.restart("gp-maple"), create.authTagSet("maple"), create.claudeStatus("maple"), create.claudeLogin("maple"),
+      create.claudeToken("maple"), create.status("maple"), create.remove("maple"), create.removeData("maple"),
+    ];
+    const used = new Set<string>([...BUILDERS.map((build) => build("maple").process), ...created.map((call) => call.process)]);
     expect([...used].sort()).toEqual(manifest.host.processes.map(({ id }) => id).sort());
     expect([...used].sort()).toEqual(Object.values(PROCESS).sort());
   });

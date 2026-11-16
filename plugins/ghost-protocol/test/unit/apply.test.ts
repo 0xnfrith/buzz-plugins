@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as plugin from "../../src/index";
 import { PAGE_ICON } from "../../src/ui/icons";
+import manifest from "../../manifest.json" with { type: "json" };
 
 /** The parts of Buzz's context `apply` touches, recording what it does. */
 function setup() {
@@ -12,6 +13,8 @@ function setup() {
     react: {},
     host: { spawn: vi.fn() },
     pages: { register: vi.fn() },
+    agents: { register: vi.fn(), registerTab: vi.fn() },
+    relay: { snapshot: vi.fn(() => ({ status: "ready", session: { viewer: "a".repeat(64) } })) },
     effect: vi.fn((setup: () => void | (() => void)) => {
       const cleanup = setup();
       if (cleanup) cleanups.push(cleanup);
@@ -24,9 +27,23 @@ function setup() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("apply", () => {
-  it("registers one page in the page navigation, and nothing else", () => {
+  it("registers one page in the page navigation, and one Remote agent type", () => {
     const { ctx } = setup();
     expect(ctx.pages.register).toHaveBeenCalledTimes(1);
+    expect(ctx.agents.register).toHaveBeenCalledTimes(1);
+    expect(ctx.agents.register.mock.calls[0]?.[0]).toMatchObject({ id: "ghost-protocol", title: "GHOST Protocol" });
+    expect(Object.keys(ctx.agents.register.mock.calls[0]?.[0].remote).sort()).toEqual(["activate", "profile", "provision", "remove"]);
+  });
+
+  it("adds a tab for the agents of its own type, and for no other agent's", () => {
+    const { ctx } = setup();
+    expect(ctx.agents.registerTab).toHaveBeenCalledTimes(1);
+    const tab = ctx.agents.registerTab.mock.calls[0]?.[0];
+    expect(tab).toMatchObject({ id: "ghost-protocol", title: "GHOST Protocol" });
+    // Buzz keys a type `<plugin id>/<type id>`, and the plugin id is the manifest's.
+    expect(tab.when({ pubkey: "a".repeat(64), name: "Maple", type: `${manifest.id}/ghost-protocol` })).toBe(true);
+    expect(tab.when({ pubkey: "a".repeat(64), name: "Maple", type: "buzz.claude-code/claude-code" })).toBe(false);
+    expect(tab.when({ pubkey: "a".repeat(64), name: "Maple", type: "someone.else/ghost-protocol" })).toBe(false);
     expect(ctx.pages.register.mock.calls[0]?.[0]).toMatchObject({ id: "ghost-protocol", title: "GHOST Protocol", primary: true, layout: "workspace" });
   });
 
