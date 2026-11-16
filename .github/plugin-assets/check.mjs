@@ -10,7 +10,7 @@
 // `buzzodz plugin pack` would run Buzz's own validation, but the commit the tests are pinned to does not have it; when it does, the
 // mirror can go.
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { crc32, inflateSync } from "node:zlib";
 
 export const REPOSITORY = "https://github.com/0xnfrith/buzz-plugins";
@@ -211,6 +211,50 @@ const regular = (path) => {
 };
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 
+/**
+ * Where a Markdown file points its images, as it writes the paths: `![alt](path)` (with a title or `<...>` around the path allowed),
+ * `![alt][id]` with a `[id]: path` line, `<img src>` and the addresses in `<source srcset>`. A web address, a data URL and the rest of
+ * what has a scheme are not paths of this repository, and neither is anything in a fenced code block or a code span.
+ */
+export function imageTargets(markdown) {
+  const text = markdown.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[`~]*[ \t]*$/gm, "").replace(/(`+)[^`]*?\1/g, "");
+  const found = [];
+  for (const match of text.matchAll(/!\[(?:[^\]\\]|\\.)*\]\(\s*(?:<([^>]*)>|([^)\s]*))/g)) found.push(match[1] ?? match[2]);
+  const defined = new Map();
+  for (const match of text.matchAll(/^ {0,3}\[([^\]]+)\]:\s*(?:<([^>]*)>|(\S+))/gm)) defined.set(match[1].trim().toLowerCase(), match[2] ?? match[3]);
+  for (const match of text.matchAll(/!\[((?:[^\]\\]|\\.)*)\]\[([^\]]*)\]/g)) {
+    const target = defined.get((match[2] || match[1]).trim().toLowerCase());
+    if (target !== undefined) found.push(target);
+  }
+  for (const match of text.matchAll(/<img\b[^>]*?\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)) found.push(match[1] ?? match[2]);
+  for (const match of text.matchAll(/<source\b[^>]*?\ssrcset\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)) {
+    for (const candidate of (match[1] ?? match[2]).split(",")) found.push(candidate.trim().split(/\s+/)[0]);
+  }
+  return found.filter((target) => target !== "" && !/^([a-z][a-z0-9+.-]*:|\/\/|#)/i.test(target));
+}
+
+/**
+ * The problems with where the images of one Markdown file point: `path` is the file's, from `root`, and `markdown` its text. Each image
+ * has to be a regular file (not a link, not a folder) inside the repository, found the way GitHub finds it: a path from the file's own
+ * folder, or from the root of the repository when it starts with a slash, and with a `#` or `?` part and `%20`-style escapes ignored.
+ */
+export function imageProblems(root, path, markdown) {
+  const problems = [];
+  for (const target of imageTargets(markdown)) {
+    let decoded = target.replace(/[#?].*$/s, "");
+    try {
+      decoded = decodeURIComponent(decoded);
+    } catch {
+      // not an escape: the path is what it says
+    }
+    const full = decoded.startsWith("/") ? resolve(root, `.${decoded}`) : resolve(root, dirname(path), decoded);
+    const inside = relative(root, full);
+    if (inside.split(sep)[0] === "..") problems.push(`the image ${target} is outside the repository`);
+    else if (!regular(full)) problems.push(`the image ${target} is not a file in the repository (${inside.split("\\").join("/")} is missing, or is not a regular file)`);
+  }
+  return problems;
+}
+
 /** The plugin folders Buzz's importer lists: a folder of plugins/ that has a manifest.json and a plugin.js. Names, sorted. */
 export const installable = (root) =>
   readdirSync(join(root, "plugins"), { withFileTypes: true })
@@ -236,6 +280,7 @@ const walk = (dir, out = []) => {
  *  - README.md and docs/install.md: the code block with the repository address
  *  - no placeholder text for a missing screenshot in any .md or .svg, except where .github/plugin-assets/pending.json lists the file as
  *    still waiting, and a file listed there that no longer has a placeholder is a problem too, so the list shrinks to nothing
+ *  - every image any .md file points at (`![alt](path)`, `<img src>`, `<source srcset>`) is a regular file inside the repository
  */
 export function check(root) {
   const problems = [];
@@ -276,7 +321,9 @@ export function check(root) {
   for (const path of walk(root)) {
     const name = relative(root, path).split("\\").join("/");
     if (!/\.(md|svg)$/.test(name) || name.startsWith(".github/plugin-assets/")) continue;
-    if (PLACEHOLDER.test(readFileSync(path, "utf8"))) found.add(name);
+    const text = readFileSync(path, "utf8");
+    if (PLACEHOLDER.test(text)) found.add(name);
+    if (name.endsWith(".md")) add(name, imageProblems(root, name, text));
   }
   for (const name of found) if (!pending.includes(name)) problems.push(`${name}: still has the placeholder text of a screenshot that was never made`);
   for (const name of pending) if (!found.has(name)) problems.push(`.github/plugin-assets/pending.json: lists ${name}, which has no placeholder text any more: take it off the list`);
