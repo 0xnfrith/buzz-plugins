@@ -52,7 +52,7 @@ describe("readStatus", () => {
     expect(INTERFACE).toBe(1);
   });
 
-  it("reads every state, relay and Claude value the note lists, and no other", () => {
+  it("reads every state, relay and Claude value GHOST Protocol lists, and no other", () => {
     expect([...STATES]).toEqual(["needs-claude", "needs-auth-tag", "connecting", "running", "updating", "error"]);
     expect([...RELAYS]).toEqual(["connected", "refused-not-member", "unreachable"]);
     expect([...CLAUDES]).toEqual(["active", "not-active"]);

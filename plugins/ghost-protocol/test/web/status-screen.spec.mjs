@@ -185,7 +185,7 @@ test("shows an update on offer and the version to go back to", async ({ page, ap
 
 // ---- the relay -----------------------------------------------------------------------------------------------------------------------
 
-test("shows a refusal by the relay in the note's own words, with the agent's public key and a button that copies it", async ({ page, app }) => {
+test("shows a refusal by the relay in GHOST Protocol's own words, with the agent's public key and a button that copies it", async ({ page, app }) => {
   await page.setViewportSize({ width: 1300, height: 900 });
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: app.origin });
   const fake = await arrange(page, app, { scenario: "relay-refuses" });
