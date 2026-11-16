@@ -33,7 +33,7 @@ export const GUIDE = {
   plans: "See the plans",
   token: {
     title: "Option 1 (recommended): paste a setup token",
-    terminal: "Open a terminal on your own computer: Terminal on a Mac, PowerShell on Windows. Not a terminal inside Docker.",
+    terminal: "Open a terminal on your own computer: Terminal on a Mac or Linux, PowerShell on Windows, or your WSL window. Not a terminal inside Docker.",
     check: "Check whether Claude Code is installed:",
     checkOk: "If it prints a version number, go on to step 2.",
     install: "If the terminal says the command is not found, install Claude Code:",

@@ -38,6 +38,11 @@ describe("the guide", () => {
     expect(GUIDE.login.fails).toContain(CODES.login);
   });
 
+  it("carries no Markdown into a sentence: nothing renders it, so a backtick would show as typed", () => {
+    const sentences = (value: unknown): string[] => (typeof value === "string" ? [value] : typeof value === "object" && value !== null ? Object.values(value).flatMap(sentences) : []);
+    for (const sentence of [...sentences(GUIDE), ...sentences(CLAUDE_STATUS)]) expect(sentence).not.toContain("`");
+  });
+
   it("says GHOST Protocol's line and code, or the code alone when it had no line", () => {
     expect(GUIDE.said("claude-token-invalid", "The Claude token was not accepted.")).toBe("GHOST Protocol said: The Claude token was not accepted. (claude-token-invalid)");
     expect(GUIDE.said("claude-login-failed", "")).toBe("GHOST Protocol answered claude-login-failed.");

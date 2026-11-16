@@ -51,6 +51,8 @@ export function createClaudePanel(host: Host) {
           const answer = await isSignedIn({ start }, slug, abort.signal);
           if (abort.signal.aborted) return;
           setState(answer.ok ? { kind: "answer", active: answer.active } : { kind: "problem", message: answer.message });
+          // An agent that is active has no refusal to show: one from before, if it goes not active again, is not a sign-in just tried.
+          if (answer.ok && answer.active) setFailure(undefined);
           if (answer.ok && !answer.active) setAccepted(false);
         }
         timer = setTimeout(() => void look(), POLL_MS);

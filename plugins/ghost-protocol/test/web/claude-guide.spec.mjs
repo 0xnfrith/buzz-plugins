@@ -37,6 +37,9 @@ test("an agent that waits for Claude says Claude: not active and shows the guide
   await expect(guide).toContainText("GHOST Protocol uses your own Claude subscription to think");
   await expect(guide).toContainText("A Claude subscription is a paid Claude plan: Pro, Max, Ultra, Team or Enterprise.");
   await expect(guide).toContainText("The free plan does not include Claude Code");
+  // Where to run the commands, for each system the install line is for; and no Markdown shows as typed characters.
+  await expect(tokenWay).toContainText("Terminal on a Mac or Linux, PowerShell on Windows, or your WSL window.");
+  expect(await claude.evaluate((element) => element.innerText.includes("`"))).toBe(false);
 
   // The token's way leads, the address's way follows.
   await expect(tokenWay.getByRole("heading")).toHaveText("Option 1 (recommended): paste a setup token");
@@ -116,7 +119,7 @@ test("option 1: a refused token says so with GHOST Protocol's code and line, emp
   await tokenWay.getByRole("button", { name: "Send token" }).click();
 
   const problem = tokenWay.locator('[data-gp="claude-problem"]');
-  await expect(problem).toContainText("Claude did not accept that token. Make a new one with `claude setup-token` and paste it.");
+  await expect(problem).toContainText("Claude did not accept that token. Make a new one and paste it.");
   await expect(problem).toHaveAttribute("data-code", "claude-token-invalid");
   await expect(tokenWay.locator('[data-gp="claude-said"]')).toHaveText("GHOST Protocol said: The Claude token was not accepted. (claude-token-invalid)");
   await expect(field).toHaveValue("");
@@ -224,6 +227,28 @@ test("the tab picks up a sign-in made elsewhere on its next look, and stops look
   await page.getByRole("tab", { name: "GHOST Protocol" }).click();
   await expect(page.locator('[data-gp="claude"] [data-gp="claude-state"]')).toHaveText("Claude: active");
   expect(claudeStatusCalls(fake)).toBeGreaterThan(before);
+});
+
+test("a refusal from before does not come back when the agent goes not active again", async ({ page, app }) => {
+  const { fake, claude, state, tokenWay } = await waitingAgent(page, app, "token-rejected");
+  await tokenWay.getByLabel("Claude setup token").fill(TOKEN);
+  await tokenWay.getByRole("button", { name: "Send token" }).click();
+  await expect(tokenWay.locator('[data-gp="claude-problem"]')).toBeVisible();
+
+  // Someone signs the agent in from a terminal: the tab picks it up at its next look, and the guide and the refusal go.
+  fake.use("ok");
+  expect((await fake.run(["exec", "-i", "gp-maple", "gp", "claude", "token"], { input: `${TOKEN}\n` })).code).toBe(0);
+  await expect(state).toHaveText("Claude: active", { timeout: 30_000 });
+  await expect(claude.locator('[data-gp="guide"]')).toHaveCount(0);
+
+  // The agent signs out, and the next look finds it not active: the guide is back, with no refusal for a sign-in nobody tried.
+  fake.patchState((current) => {
+    for (const volume of Object.values(current.volumes)) volume.claude = "not-active";
+  });
+  await expect(state).toHaveText("Claude: not active", { timeout: 30_000 });
+  await expect(claude.locator('[data-gp="guide"]')).toBeVisible();
+  await expect(claude.locator('[data-gp="claude-problem"]')).toHaveCount(0);
+  await expect(claude.locator('[data-gp="claude-said"]')).toHaveCount(0);
 });
 
 test("the tab says so when the agent cannot be asked, and recovers when it can", async ({ page, app }) => {

@@ -47,14 +47,14 @@ export async function isSignedIn(claude: Claude, slug: string, signal: AbortSign
 /** Way B: the setup token goes to `gp claude token` on stdin. The caller forgets the token afterwards, whatever this says. */
 export async function signInWithToken(claude: Claude, slug: string, token: string, signal: AbortSignal): Promise<Result> {
   const text = token.trim();
-  if (text === "" || /\s/.test(text)) return fail("Paste a Claude setup token first (run `claude setup-token` in a terminal).");
+  if (text === "" || /\s/.test(text)) return fail("Paste a Claude setup token first (run claude setup-token in a terminal).");
   const outcome = await run(claude.start, commands.claudeToken(slug), { stdin: `${text}\n`, timeoutMs: LIMITS.quick, signal });
   if (outcome.kind === "aborted") return stopped;
   if (outcome.kind === "cannot-start") return fail(WORDS.docker);
   if (outcome.kind === "timeout") return fail("GHOST Protocol did not answer in time.");
   if (unknownInterface(outcome.gp)) return fail(WORDS.unknownInterface);
   if (outcome.code !== 0 || outcome.gp.error || outcome.gp.values.get("CLAUDE") !== "active") {
-    return fail("Claude did not accept that token. Make a new one with `claude setup-token` and paste it.", saidBy(outcome.gp, [text]));
+    return fail("Claude did not accept that token. Make a new one and paste it.", saidBy(outcome.gp, [text]));
   }
   return { ok: true };
 }

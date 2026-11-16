@@ -724,7 +724,7 @@ async function isSignedIn(claude, slug, signal) {
 /** Way B: the setup token goes to `gp claude token` on stdin. The caller forgets the token afterwards, whatever this says. */
 async function signInWithToken(claude, slug, token, signal) {
 	const text = token.trim();
-	if (text === "" || /\s/.test(text)) return fail("Paste a Claude setup token first (run `claude setup-token` in a terminal).");
+	if (text === "" || /\s/.test(text)) return fail("Paste a Claude setup token first (run claude setup-token in a terminal).");
 	const outcome = await run(claude.start, commands.claudeToken(slug), {
 		stdin: `${text}\n`,
 		timeoutMs: LIMITS.quick,
@@ -734,7 +734,7 @@ async function signInWithToken(claude, slug, token, signal) {
 	if (outcome.kind === "cannot-start") return fail(WORDS.docker);
 	if (outcome.kind === "timeout") return fail("GHOST Protocol did not answer in time.");
 	if (unknownInterface(outcome.gp)) return fail(WORDS.unknownInterface);
-	if (outcome.code !== 0 || outcome.gp.error || outcome.gp.values.get("CLAUDE") !== "active") return fail("Claude did not accept that token. Make a new one with `claude setup-token` and paste it.", saidBy(outcome.gp, [text]));
+	if (outcome.code !== 0 || outcome.gp.error || outcome.gp.values.get("CLAUDE") !== "active") return fail("Claude did not accept that token. Make a new one and paste it.", saidBy(outcome.gp, [text]));
 	return { ok: true };
 }
 var LOGIN_LINE = /^GP_CLAUDE_LOGIN_URL=(.*)$/;
@@ -920,7 +920,7 @@ async function signIn(d, slug, input) {
 	const held = d.token();
 	if (input.claudeWay === "token" && held.trim() !== "" && /\s/.test(held.trim())) {
 		d.clearToken();
-		return stop(d, "claude", "That is not a Claude setup token: it has a space in it. Make one with `claude setup-token`, paste it, and press Create again.");
+		return stop(d, "claude", "That is not a Claude setup token: it has a space in it. Make one with claude setup-token, paste it, and press Create again.");
 	}
 	if (input.claudeWay === "login" || held.trim() === "") {
 		d.clearToken();
@@ -1328,7 +1328,7 @@ var GUIDE = {
 	plans: "See the plans",
 	token: {
 		title: "Option 1 (recommended): paste a setup token",
-		terminal: "Open a terminal on your own computer: Terminal on a Mac, PowerShell on Windows. Not a terminal inside Docker.",
+		terminal: "Open a terminal on your own computer: Terminal on a Mac or Linux, PowerShell on Windows, or your WSL window. Not a terminal inside Docker.",
 		check: "Check whether Claude Code is installed:",
 		checkOk: "If it prints a version number, go on to step 2.",
 		install: "If the terminal says the command is not found, install Claude Code:",
@@ -1876,6 +1876,7 @@ function createClaudePanel(host) {
 						kind: "problem",
 						message: answer.message
 					});
+					if (answer.ok && answer.active) setFailure(void 0);
 					if (answer.ok && !answer.active) setAccepted(false);
 				}
 				timer = setTimeout(() => void look(), POLL_MS);

@@ -63,6 +63,8 @@ describe("signInWithToken", () => {
     for (const token of ["", "   ", "two words", "a\nb"]) {
       const result = await signInWithToken(claude, "maple", token, SIGNAL);
       expect(result.ok).toBe(false);
+      // A plain sentence: nothing renders Markdown, so a backtick would show as a typed character.
+      expect(result.ok === false && result.message).not.toContain("`");
     }
     expect(r.fake.calls().some((call) => call.argv.includes("token"))).toBe(false);
   });
@@ -80,7 +82,7 @@ describe("signInWithToken", () => {
     const { claude } = await waitingAgent("token-rejected");
     expect(await signInWithToken(claude, "maple", TOKEN, SIGNAL)).toEqual({
       ok: false,
-      message: "Claude did not accept that token. Make a new one with `claude setup-token` and paste it.",
+      message: "Claude did not accept that token. Make a new one and paste it.",
       said: { code: "claude-token-invalid", message: "The Claude token was not accepted." },
     });
   });
@@ -99,7 +101,7 @@ describe("signInWithToken", () => {
     const { claude } = await waitingAgent({ fail: { claudeToken: { code: "internal-error", message: "Something broke." } } });
     expect(await signInWithToken(claude, "maple", TOKEN, SIGNAL)).toEqual({
       ok: false,
-      message: "Claude did not accept that token. Make a new one with `claude setup-token` and paste it.",
+      message: "Claude did not accept that token. Make a new one and paste it.",
       said: { code: "internal-error", message: "Something broke." },
     });
   });
