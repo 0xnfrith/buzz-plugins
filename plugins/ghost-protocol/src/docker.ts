@@ -20,6 +20,18 @@ export const PROCESS = {
   restart: "restart",
   /** `stop`: the container's name follows. */
   stop: "stop",
+  /** `pull <image>`: the one image, named in the manifest, so the call has no words of its own. */
+  pull: "pull",
+  /** `run --rm -v`: makes the agent's key in its data volume. The volume, the image and `init ...` follow. */
+  runInit: "run-init",
+  /** `run -d --restart unless-stopped --name`: starts the agent. Its name, volume and image follow. */
+  runAgent: "run-agent",
+  /** `run -d --restart unless-stopped -v /var/run/docker.sock:/var/run/docker.sock --name`: starts the update helper, the one entry that mounts the Docker socket. */
+  runUpdater: "run-updater",
+  /** `rm -f`: the agent's container and its helper follow. */
+  rm: "rm",
+  /** `volume rm`: the agent's data volume follows. */
+  volumeRm: "volume-rm",
 } as const;
 
 export type ProcessId = (typeof PROCESS)[keyof typeof PROCESS];
@@ -153,4 +165,30 @@ export async function checkDocker(host: Host, signal?: AbortSignal): Promise<Che
   if (signal?.aborted) return undefined;
   const version = typeof output === "string" ? versionOf(output) : undefined;
   return version === undefined ? { state: "unavailable" } : { state: "ready", version };
+}
+
+/** What a process the host started gives the create flow: stdin to write and close, a way to stop it, and how it ended. */
+export type Proc = Readonly<{
+  write(data: string): Promise<void>;
+  /** Writes any final `data`, then closes stdin. */
+  end(data?: string): Promise<void>;
+  kill(): Promise<void>;
+  /** The exit code once it exits; null when a signal ended it. */
+  exited: Promise<number | null>;
+}>;
+
+export type Handlers = Readonly<{ onStdout(data: string): void; onStderr(data: string): void }>;
+
+/** Starts a call's declared process, with its arguments after the declared ones. Rejects when the program cannot start. */
+export type StartDocker = (call: Call, handlers: Handlers) => Promise<Proc>;
+
+/**
+ * `spawn` for the create flow, which needs a process it can write to and read from as it runs. Undefined in a Buzz with no `spawn` (the
+ * web build). This is, with `runDocker`, the only place the plugin starts a process.
+ */
+export function startOn(host: Host): StartDocker | undefined {
+  if (typeof host.spawn !== "function") return undefined;
+  // Called on `host`: the host's `spawn` is a method that reads the calling plugin from its receiver. The arguments follow the ones the
+  // manifest declares for the process.
+  return (call, handlers) => host.spawn!(call.process, { args: call.args, onStdout: handlers.onStdout, onStderr: handlers.onStderr });
 }

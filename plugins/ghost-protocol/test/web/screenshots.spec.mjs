@@ -187,17 +187,22 @@ test.describe("the installer", () => {
   });
 
   test("review plugin access: drawn by Buzz from this plugin's own manifest.json", async ({ page, app }) => {
-    // Tall enough for the whole review, which is its point.
+    // A window of an ordinary height: the review is a list that scrolls, and the picture is its top, the way it opens.
     await choosing(page, app, 760);
     await page.getByRole("button", { name: "Continue", exact: true }).click();
     const review = page.getByRole("dialog", { name: /^Review GHOST Protocol/ });
     await expect(review.getByRole("button", { name: "Install plugin", exact: true })).toBeVisible();
-    // The six entries the README says the review must show, and no other: the command, and the five processes.
-    await expect(review.getByRole("button", { name: /^Run docker/ })).toHaveCount(1);
-    await expect(review.getByRole("button", { name: /^Start docker/ })).toHaveCount(5);
+    // The entries the README says the review must show, and no other: Buzz draws one row for each command and each process of the
+    // manifest, "Run docker" and "Start docker" while every program is docker, beside the Computer access row every plugin gets.
+    const { host } = JSON.parse(readFileSync(join(PLUGIN_DIR, "manifest.json"), "utf8"));
+    expect([...host.commands, ...host.processes].map((entry) => entry.program)).toEqual(Array(host.commands.length + host.processes.length).fill("docker"));
+    await expect(review.getByRole("button", { name: /^Run docker/ })).toHaveCount(host.commands.length);
+    await expect(review.getByRole("button", { name: /^Start docker/ })).toHaveCount(host.processes.length);
     await expect(review.getByRole("button", { name: /^Computer access/ })).toHaveCount(1);
+    // Each row is a level 3 heading holding its button: these and no other.
+    await expect(review.getByRole("heading", { level: 3 })).toHaveCount(1 + host.commands.length + host.processes.length);
     await animationsSettled(review);
-    await expect(review.getByRole("button", { name: /^Start docker/ }).last()).toBeInViewport({ ratio: 1 });
+    await expect(review.getByRole("button", { name: /^Run docker/ }).first()).toBeInViewport({ ratio: 1 });
     await alone(review);
     await shot(review, "review-access", { omitBackground: true });
   });
