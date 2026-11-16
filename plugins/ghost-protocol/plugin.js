@@ -52,8 +52,21 @@ var CSS = `
   padding: 2px 6px; border: 1px solid var(--gp-line); border-radius: 4px; }
 `;
 // src/docker.ts
-/** The id of the process in manifest.json's `host.processes`. */
-var PROCESS_ID = "docker";
+/** The ids of the processes in manifest.json's `host.processes`, and the leading arguments each fixes there. */
+var PROCESS = {
+	/** `version --format {{.Server.Version}}` */
+	version: "version",
+	/** `exec`: the container's name and the command in it follow. */
+	exec: "exec",
+	/** `inspect --format {{.State.Status}}`: the container's name follows. */
+	inspectState: "inspect-state",
+	/** `inspect --format {{.Config.Image}}`: the container's name follows. */
+	inspectImage: "inspect-image",
+	/** `restart`: the container's name follows. */
+	restart: "restart",
+	/** `stop`: the container's name follows. */
+	stop: "stop"
+};
 /** How long Docker has to answer before a call gives up. A daemon that is starting can leave a command waiting. */
 var TIMEOUT_MS = 15e3;
 /** Characters of output kept from each stream: a version or a one-line error is a few, so anything longer is not one. */
@@ -61,24 +74,24 @@ var KEPT = 4096;
 /** Characters kept of what a GHOST Protocol call prints: a status is a few hundred, written over several lines. */
 var KEPT_OF_GP = 65536;
 /** A runner for one host, which stops its calls with `signal`. */
-var runnerFor = (host, signal) => (args, timeoutMs = TIMEOUT_MS) => runDocker(host, args, {
+var runnerFor = (host, signal) => (call, timeoutMs = TIMEOUT_MS) => runDocker(host, call, {
 	signal,
 	timeoutMs,
 	keep: KEPT_OF_GP
 });
 /**
-* Runs `docker` with `args` and waits for it to end. Resolves with `undefined` when `options.signal` aborts first: the process is then
-* stopped and the caller has gone. It never rejects.
+* Runs `call` and waits for it to end. Resolves with `undefined` when `options.signal` aborts first: the process is then stopped and the
+* caller has gone. It never rejects.
 */
-async function runDocker(host, args, options = {}) {
+async function runDocker(host, call, options = {}) {
 	const { signal, timeoutMs = TIMEOUT_MS, keep = KEPT } = options;
 	if (typeof host.spawn !== "function") return { kind: "unsupported" };
 	let stdout = "";
 	let stderr = "";
 	let process;
 	try {
-		process = await host.spawn(PROCESS_ID, {
-			args,
+		process = await host.spawn(call.process, {
+			args: call.args,
 			onStdout(text) {
 				if (stdout.length < keep) stdout += text;
 			},
@@ -127,18 +140,17 @@ function versionOf(output) {
 	const [line] = lines;
 	return lines.length === 1 && line !== void 0 && VERSION.test(line) ? line : void 0;
 }
-/** `docker version`, asking for the server's version alone. */
-var VERSION_ARGS = [
-	"version",
-	"--format",
-	"{{.Server.Version}}"
-];
+/** `docker version --format {{.Server.Version}}`: its words are all fixed in the manifest, so it has none of its own. */
+var VERSION_CALL = {
+	process: PROCESS.version,
+	args: []
+};
 /**
 * Asks Docker for its server's version. Resolves with `undefined` when `signal` aborts first: the process is then stopped and the caller
 * has gone. It never rejects.
 */
 async function checkDocker(host, signal, timeoutMs = TIMEOUT_MS) {
-	const ran = await runDocker(host, VERSION_ARGS, {
+	const ran = await runDocker(host, VERSION_CALL, {
 		signal,
 		timeoutMs
 	});
@@ -176,7 +188,7 @@ var CLAUDE_WORDS = {
 	active: "Signed in",
 	"not-active": "Not signed in"
 };
-/** The only thing shown when GHOST Protocol speaks an interface this plugin does not know (section 9). */
+/** The only thing shown when GHOST Protocol speaks an interface this plugin does not know (GHOST Protocol's interface). */
 var OTHER_INTERFACE = "Update this plugin, or update GHOST Protocol";
 var WORDS = {
 	slugLabel: "Agent name in Docker",
@@ -236,46 +248,56 @@ var containerOf = (slug) => {
 	if (!isSlug(slug)) throw new Error("not a slug");
 	return `gp-${slug}`;
 };
-/** The status, one JSON object (several lines when it is printed for people). */
-var statusArgs = (slug) => [
-	"exec",
-	containerOf(slug),
-	"gp",
-	"status",
-	"--json"
-];
-/** Asks GHOST Protocol to update itself once the agent has finished its task. */
-var updateArgs = (slug) => [
-	"exec",
-	containerOf(slug),
-	"gp",
-	"update",
-	"request"
-];
-/** Asks GHOST Protocol to go back to the version before the last update. */
-var rollbackArgs = (slug) => [
-	"exec",
-	containerOf(slug),
-	"gp",
-	"update",
-	"rollback"
-];
-var restartArgs = (slug) => ["restart", containerOf(slug)];
-var stopArgs = (slug) => ["stop", containerOf(slug)];
-/** What the container is doing: `running`, `exited` and so on. It fails when there is no such container. */
-var stateArgs = (slug) => [
-	"inspect",
-	"--format",
-	"{{.State.Status}}",
-	containerOf(slug)
-];
-/** The image the container was made from, with its tag. */
-var imageArgs = (slug) => [
-	"inspect",
-	"--format",
-	"{{.Config.Image}}",
-	containerOf(slug)
-];
+/** `docker exec gp-<slug> gp status --json`: the status, one JSON object (several lines when it is printed for people). */
+var statusCall = (slug) => ({
+	process: PROCESS.exec,
+	args: [
+		containerOf(slug),
+		"gp",
+		"status",
+		"--json"
+	]
+});
+/** `docker exec gp-<slug> gp update request`: asks GHOST Protocol to update itself once the agent has finished its task. */
+var updateCall = (slug) => ({
+	process: PROCESS.exec,
+	args: [
+		containerOf(slug),
+		"gp",
+		"update",
+		"request"
+	]
+});
+/** `docker exec gp-<slug> gp update rollback`: asks GHOST Protocol to go back to the version before the last update. */
+var rollbackCall = (slug) => ({
+	process: PROCESS.exec,
+	args: [
+		containerOf(slug),
+		"gp",
+		"update",
+		"rollback"
+	]
+});
+/** `docker restart gp-<slug>` */
+var restartCall = (slug) => ({
+	process: PROCESS.restart,
+	args: [containerOf(slug)]
+});
+/** `docker stop gp-<slug>` */
+var stopCall = (slug) => ({
+	process: PROCESS.stop,
+	args: [containerOf(slug)]
+});
+/** `docker inspect --format {{.State.Status}} gp-<slug>`: what the container is doing (`running`, `exited`…). It fails when there is no such container. */
+var stateCall = (slug) => ({
+	process: PROCESS.inspectState,
+	args: [containerOf(slug)]
+});
+/** `docker inspect --format {{.Config.Image}} gp-<slug>`: the image the container was made from, with its tag. */
+var imageCall = (slug) => ({
+	process: PROCESS.inspectImage,
+	args: [containerOf(slug)]
+});
 var STATES = [
 	"needs-claude",
 	"needs-auth-tag",
@@ -333,7 +355,7 @@ function readStatus(stdout) {
 		}
 	};
 }
-/** The `GP_<KEY>=<value>` lines of stdout (interface note, section 4), by key. A key printed twice keeps its last value. */
+/** The `GP_<KEY>=<value>` lines of stdout (GHOST Protocol's interface), by key. A key printed twice keeps its last value. */
 function gpLines(stdout) {
 	const lines = /* @__PURE__ */ new Map();
 	for (const line of stdout.split(/\r?\n/)) {
@@ -367,11 +389,11 @@ function notRun(ran) {
 }
 /**
 * `gp update request`, or `gp update rollback`. Resolves with `undefined` when the caller left first.
-* The answers are the interface note's (answer 4, and `no-updater`): `GP_UPDATE=requested` or `rollback-requested` on exit 0, and on a
+* The answers are GHOST Protocol's: `GP_UPDATE=requested` or `rollback-requested` on exit 0, and on a
 * failure a `GP_ERROR` that is `no-updater`, `no-update-available`, `update-in-progress` or `no-previous-version`, or another code.
 */
 async function askToUpdate(run, slug, which) {
-	const ran = await run(which === "update" ? updateArgs(slug) : rollbackArgs(slug), GP_MS);
+	const ran = await run(which === "update" ? updateCall(slug) : rollbackCall(slug), GP_MS);
 	if (ran === void 0) return void 0;
 	const failed = notRun(ran);
 	if (failed) return failed;
@@ -423,7 +445,7 @@ async function askToUpdate(run, slug, which) {
 /** `docker restart gp-<slug>` or `docker stop gp-<slug>`. Resolves with `undefined` when the caller left first. */
 async function askDocker(run, slug, which) {
 	const container = containerOf(slug);
-	const ran = await run(which === "restart" ? restartArgs(slug) : stopArgs(slug), DOCKER_MS);
+	const ran = await run(which === "restart" ? restartCall(slug) : stopCall(slug), DOCKER_MS);
 	if (ran === void 0) return void 0;
 	const failed = notRun(ran);
 	if (failed) return failed;
@@ -453,6 +475,16 @@ var askedFor = (before, version) => ({
 		sawUpdating: false
 	}
 });
+/**
+* What a button that Docker or GHOST Protocol accepted does to what the screen knows. An Update or a Roll back is under way from then on
+* (`version` is the one the agent was on). A Stop or a Restart is the user's own doing and ends any update that was under way: the next
+* look says what it finds, so a container that is stopped is shown as stopped, with its Restart, and not as being swapped.
+*/
+function afterButton(before, job, accepted, version) {
+	if (!accepted) return before;
+	if (job === "restart" || job === "stop") return NOTHING_YET;
+	return version === void 0 ? before : askedFor(before, version);
+}
 /** What a status does to an ask that is under way: the new version ends it, and so does an update that ended on the old one. */
 function afterStatus(asked, status) {
 	if (asked === void 0 || status.version !== asked.from) return void 0;
@@ -466,7 +498,7 @@ function afterStatus(asked, status) {
 var NOT_THERE = /No such (object|container)/i;
 /** Looks once. Resolves with `undefined` when the caller left first (the runner returns nothing). */
 async function observe(run, slug, before, now) {
-	const asked = await run(statusArgs(slug));
+	const asked = await run(statusCall(slug));
 	if (asked === void 0) return void 0;
 	if (asked.kind === "unsupported") return {
 		view: { kind: "unsupported" },
@@ -497,7 +529,7 @@ async function observe(run, slug, before, now) {
 			memory: before
 		};
 	}
-	const inspected = await run(stateArgs(slug));
+	const inspected = await run(stateCall(slug));
 	if (inspected === void 0) return void 0;
 	if (inspected.kind === "unsupported") return {
 		view: { kind: "unsupported" },
@@ -544,7 +576,7 @@ async function observe(run, slug, before, now) {
 * Resolves with `undefined` as well when the caller left first.
 */
 async function imageOf(run, slug) {
-	const ran = await run(imageArgs(slug));
+	const ran = await run(imageCall(slug));
 	if (ran === void 0 || ran.kind !== "exit" || ran.code !== 0) return void 0;
 	const image = ran.stdout.trim();
 	return image === "" ? void 0 : image;
@@ -703,7 +735,7 @@ function createStatusScreen(host) {
 			const image = byHandNow ? await imageOf(run, slug) : void 0;
 			if (signal.aborted) return;
 			if (byHandNow) setByHand({ image });
-			if (done.tone === "ok" && (job === "update" || job === "rollback") && status !== void 0) memory.current = askedFor(memory.current, status.version);
+			memory.current = afterButton(memory.current, job, done.tone === "ok", status?.version);
 			setWorking(void 0);
 			setOutcome(byHandNow ? void 0 : done);
 			setLooks((n) => n + 1);

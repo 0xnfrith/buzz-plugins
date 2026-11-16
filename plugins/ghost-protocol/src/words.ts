@@ -1,5 +1,5 @@
-// Every line the status screen says, in one place. The wording of the relay refusal and of the unknown interface is the interface
-// note's, to the letter.
+// Every line the status screen says, in one place. The wording of the relay refusal and of the unknown interface is the one GHOST
+// Protocol gave for them, to the letter.
 import { WORDS as DOCKER } from "./docker";
 import type { Claude, Relay, State } from "./status";
 
@@ -12,7 +12,7 @@ export const STATE_WORDS: Readonly<Record<State, string>> = {
   error: "Error",
 };
 
-/** `refused-not-member` is the note's text, to the letter (section 6). */
+/** `refused-not-member` is GHOST Protocol's text for it, to the letter. */
 export const REFUSED_NOT_MEMBER =
   "Your relay does not accept owner attestations. Ask its admin to turn them on, or to add this agent as a relay member.";
 
@@ -27,7 +27,7 @@ export const CLAUDE_WORDS: Readonly<Record<Claude, string>> = {
   "not-active": "Not signed in",
 };
 
-/** The only thing shown when GHOST Protocol speaks an interface this plugin does not know (section 9). */
+/** The only thing shown when GHOST Protocol speaks an interface this plugin does not know (GHOST Protocol's interface). */
 export const OTHER_INTERFACE = "Update this plugin, or update GHOST Protocol";
 
 export const WORDS = {

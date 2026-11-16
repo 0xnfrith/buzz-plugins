@@ -1,10 +1,10 @@
 // One look at an agent: ask `gp status --json`, and when that fails ask `docker inspect` why. The status screen repeats it about every ten
-// seconds while it is open. What one look shows can depend on the looks before it, in one case only (interface note, section 14, answer 7):
+// seconds while it is open. What one look shows can depend on the looks before it, in one case only:
 // while an update swaps the container, `gp-<slug>` is missing or stopped for a few seconds, and that is not an error yet. An update is
 // under way when the last status said `updating`, and also from the moment this screen asked for one (an Update or a Roll back that was
 // taken) until a status with another version arrives: a swap can be over in less than the ten seconds between two looks.
 import type { Runner } from "./docker";
-import { imageArgs, stateArgs, statusArgs } from "./commands";
+import { imageCall, stateCall, statusCall } from "./commands";
 import { gpLines, readStatus, type State, type Status } from "./status";
 
 /** About how often the screen looks, in milliseconds. */
@@ -47,6 +47,17 @@ export const NOTHING_YET: Memory = { lastState: undefined, gapSince: undefined, 
 /** The memory after the screen asked for an update or a roll back, while the agent was on `version`. */
 export const askedFor = (before: Memory, version: string): Memory => ({ ...before, asked: { from: version, sawUpdating: false } });
 
+/**
+ * What a button that Docker or GHOST Protocol accepted does to what the screen knows. An Update or a Roll back is under way from then on
+ * (`version` is the one the agent was on). A Stop or a Restart is the user's own doing and ends any update that was under way: the next
+ * look says what it finds, so a container that is stopped is shown as stopped, with its Restart, and not as being swapped.
+ */
+export function afterButton(before: Memory, job: "update" | "rollback" | "restart" | "stop", accepted: boolean, version: string | undefined): Memory {
+  if (!accepted) return before;
+  if (job === "restart" || job === "stop") return NOTHING_YET;
+  return version === undefined ? before : askedFor(before, version);
+}
+
 /** What a status does to an ask that is under way: the new version ends it, and so does an update that ended on the old one. */
 function afterStatus(asked: Memory["asked"], status: Status): Memory["asked"] {
   if (asked === undefined || status.version !== asked.from) return undefined;
@@ -61,7 +72,7 @@ const NOT_THERE = /No such (object|container)/i;
 
 /** Looks once. Resolves with `undefined` when the caller left first (the runner returns nothing). */
 export async function observe(run: Runner, slug: string, before: Memory, now: number): Promise<Seen | undefined> {
-  const asked = await run(statusArgs(slug));
+  const asked = await run(statusCall(slug));
   if (asked === undefined) return undefined;
   if (asked.kind === "unsupported") return { view: { kind: "unsupported" }, memory: before };
   if (asked.kind === "unavailable") return { view: { kind: "docker-unavailable" }, memory: before };
@@ -74,7 +85,7 @@ export async function observe(run: Runner, slug: string, before: Memory, now: nu
     return { view: { kind: read.kind }, memory: before };
   }
   // `docker exec` failed: the container is stopped or gone (or Docker is down, or `gp` itself failed). `docker inspect` tells which.
-  const inspected = await run(stateArgs(slug));
+  const inspected = await run(stateCall(slug));
   if (inspected === undefined) return undefined;
   if (inspected.kind === "unsupported") return { view: { kind: "unsupported" }, memory: before };
   if (inspected.kind === "unavailable") return { view: { kind: "docker-unavailable" }, memory: before };
@@ -103,7 +114,7 @@ export async function observe(run: Runner, slug: string, before: Memory, now: nu
  * Resolves with `undefined` as well when the caller left first.
  */
 export async function imageOf(run: Runner, slug: string): Promise<string | undefined> {
-  const ran = await run(imageArgs(slug));
+  const ran = await run(imageCall(slug));
   if (ran === undefined || ran.kind !== "exit" || ran.code !== 0) return undefined;
   const image = ran.stdout.trim();
   return image === "" ? undefined : image;

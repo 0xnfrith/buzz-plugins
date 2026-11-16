@@ -1,7 +1,7 @@
-// What `docker exec gp-<slug> gp status --json` prints (interface note, sections 8 and 14): one JSON object, alone on stdout, which may be
+// What `docker exec gp-<slug> gp status --json` prints (GHOST Protocol's interface): one JSON object, alone on stdout, which may be
 // written over several lines, so all of stdout is parsed. Its `interface` field carries the number of the interface it speaks; this
-// plugin knows one. A `GP_<KEY>=<value>` line before or after the object (section 4's first line, `GP_INTERFACE=1`, if GHOST Protocol
-// ever prints it here) is not part of it: no line of a JSON object begins that way.
+// plugin knows one. A `GP_<KEY>=<value>` line before or after the object (the first line, `GP_INTERFACE=1`, of GHOST Protocol's other
+// commands, if it ever prints it here) is not part of it: no line of a JSON object begins that way.
 
 /** The interface number this plugin was written for. */
 export const INTERFACE = 1;
@@ -75,7 +75,7 @@ export function readStatus(stdout: string): StatusRead {
   };
 }
 
-/** The `GP_<KEY>=<value>` lines of stdout (interface note, section 4), by key. A key printed twice keeps its last value. */
+/** The `GP_<KEY>=<value>` lines of stdout (GHOST Protocol's interface), by key. A key printed twice keeps its last value. */
 export function gpLines(stdout: string): ReadonlyMap<string, string> {
   const lines = new Map<string, string>();
   for (const line of stdout.split(/\r?\n/)) {

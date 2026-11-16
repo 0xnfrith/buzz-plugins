@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { manifestProblems } from "../../../../.github/plugin-assets/check.mjs";
-import { PROCESS_ID } from "../../src/docker";
+import { PROCESS } from "../../src/docker";
 import { inject } from "../../src/index";
 import manifest from "../../manifest.json" with { type: "json" };
 
@@ -21,22 +21,37 @@ const processProblems = (value: { host?: { processes?: { id: string; program: st
 };
 
 describe("manifest.json", () => {
-  it("declares exactly one process, the bare program `docker`, with no argument fixed: the plugin gives them when it asks (src/commands.ts)", () => {
-    expect(manifest.host.processes).toEqual([{ id: "docker", program: "docker" }]);
-    // The id the code spawns is the one declared.
-    expect(manifest.host.processes.map(({ id }) => id)).toEqual([PROCESS_ID]);
+  it("declares one process for each docker verb the plugin uses, each the bare program `docker` with its leading words fixed, and none for any other verb", () => {
+    expect(manifest.host.processes).toEqual([
+      { id: "version", program: "docker", args: ["version", "--format", "{{.Server.Version}}"] },
+      { id: "exec", program: "docker", args: ["exec"] },
+      { id: "inspect-state", program: "docker", args: ["inspect", "--format", "{{.State.Status}}"] },
+      { id: "inspect-image", program: "docker", args: ["inspect", "--format", "{{.Config.Image}}"] },
+      { id: "restart", program: "docker", args: ["restart"] },
+      { id: "stop", program: "docker", args: ["stop"] },
+    ]);
+    // The ids the code spawns are the ones declared, and the other way round.
+    expect(manifest.host.processes.map(({ id }) => id).sort()).toEqual(Object.values(PROCESS).sort());
+    // The verbs that would give the plugin more than it needs are not among them: starting a container, removing one or its data, copying
+    // files, building, or killing: none of these is a leading word of any entry.
+    const verbs = manifest.host.processes.map(({ args }) => args[0]);
+    for (const verb of ["run", "rm", "volume", "cp", "build", "kill", "create", "start", "pull", "push", "login", "system", "network", "compose", "image", "container"]) {
+      expect(verbs, verb).not.toContain(verb);
+    }
+    expect([...new Set(verbs)].sort()).toEqual(["exec", "inspect", "restart", "stop", "version"]);
   });
 
   it("is not a shell: nothing runs through `sh`, `bash`, `cmd` or an interpreter, and no argument is a script", () => {
-    const [process] = manifest.host.processes;
-    expect(process?.program).toBe("docker");
-    expect(process?.program).not.toMatch(/^(sh|bash|zsh|cmd|powershell|pwsh|python3?|node|env)$/);
-    for (const argument of process?.args ?? []) expect(argument).not.toMatch(/[;&|`$\n]|-c$/);
+    for (const process of manifest.host.processes) {
+      expect(process.program).toBe("docker");
+      expect(process.program).not.toMatch(/^(sh|bash|zsh|cmd|powershell|pwsh|python3?|node|env)$/);
+      for (const argument of process.args ?? []) expect(argument).not.toMatch(/[;&|`$\n]|-c$/);
+    }
   });
 
-  it("asks Buzz for a process and nothing else: no commands, network origins, files, bundled program or other grants", () => {
+  it("asks Buzz for processes and nothing else: no commands, network origins, files, bundled program or other grants", () => {
     expect(Object.keys(manifest.host)).toEqual(["processes"]);
-    expect(Object.keys(manifest.host.processes[0] ?? {}).sort()).toEqual(["id", "program"]);
+    for (const process of manifest.host.processes) expect(Object.keys(process).sort()).toEqual(["args", "id", "program"]);
     expect(Object.keys(manifest).sort()).toEqual(["apiVersion", "description", "discovery", "host", "id", "name"]);
   });
 

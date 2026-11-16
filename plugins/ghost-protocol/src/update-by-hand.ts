@@ -1,6 +1,6 @@
 // The steps for updating an agent by hand, shown instead of the Update button when `gp update request` answers `no-updater`: the agent
 // has no update helper, because its user said no to self-update at install. The wording is provisional: GHOST Protocol's side fixes the
-// final text, and this file is the one place it lives (interface note, answer to the `no-updater` question).
+// final text, and this file is the one place it lives.
 import { containerOf } from "./commands";
 
 /** Shown where the real value is not known. */

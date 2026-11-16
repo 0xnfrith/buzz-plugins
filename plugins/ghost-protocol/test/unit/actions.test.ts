@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { askDocker, askToUpdate, firstLine } from "../../src/actions";
 import { runnerFor, type Ran, type Runner } from "../../src/docker";
 import { WORDS } from "../../src/words";
-import { hostOver, makeFake, type FakeDocker } from "./support/fake-host";
+import { argvOf, hostOver, makeFake, type FakeDocker } from "./support/fake-host";
 
 const made: { fake: FakeDocker; stop: () => void }[] = [];
 afterEach(() => made.splice(0).forEach(({ fake, stop }) => (stop(), fake.cleanup())));
@@ -20,14 +20,15 @@ const statusOf = async (fake: FakeDocker) => JSON.parse((await fake.run(["exec",
 const exit = (code: number | null, stdout = "", stderr = ""): Ran => ({ kind: "exit", code, stdout, stderr });
 const scripted = (answer: Ran | undefined): { run: Runner; asked: (readonly string[])[] } => {
   const asked: (readonly string[])[] = [];
-  return { asked, run: async (args) => (asked.push(args), answer) };
+  return { asked, run: async (call) => (asked.push(argvOf(call)), answer) };
 };
 
 describe("Update: `gp update request`", () => {
   it("asks for the update inside the container, without -i, and says the agent finishes its task first", async () => {
     const { run, calls } = agent("update-available");
     expect(await askToUpdate(run, "maple", "update")).toEqual({ tone: "ok", text: WORDS.updateRequested });
-    expect(calls.map(({ args }) => args)).toEqual([["exec", "gp-maple", "gp", "update", "request"]]);
+    expect(calls.map(({ argv }) => argv)).toEqual([["exec", "gp-maple", "gp", "update", "request"]]);
+    expect(calls.map(({ id }) => id)).toEqual(["exec"]);
     expect(WORDS.updateRequested).toMatch(/finishes its task first/);
   });
 
@@ -118,7 +119,7 @@ describe("Roll back: `gp update rollback`", () => {
   it("asks for the way back inside the container, and walks the agent to the old version", async () => {
     const { fake, run, calls } = await updated();
     expect(await askToUpdate(run, "maple", "rollback")).toEqual({ tone: "ok", text: WORDS.rollbackRequested });
-    expect(calls.at(-1)?.args).toEqual(["exec", "gp-maple", "gp", "update", "rollback"]);
+    expect(calls.at(-1)?.argv).toEqual(["exec", "gp-maple", "gp", "update", "rollback"]);
     const seen = [];
     for (let at = 0; at < 4; at++) {
       const status = await statusOf(fake);
@@ -158,14 +159,16 @@ describe("Restart and Stop: `docker restart` and `docker stop`", () => {
   it("restarts the container, and the agent comes back", async () => {
     const { fake, run, calls } = agent({}, { condition: "stopped" });
     expect(await askDocker(run, "maple", "restart")).toEqual({ tone: "ok", text: "Restarted gp-maple." });
-    expect(calls.map(({ args }) => args)).toEqual([["restart", "gp-maple"]]);
+    expect(calls.map(({ argv }) => argv)).toEqual([["restart", "gp-maple"]]);
+    expect(calls.map(({ id }) => id)).toEqual(["restart"]);
     expect(fake.state().containers["gp-maple"].running).toBe(true);
   });
 
   it("stops the container", async () => {
     const { fake, run, calls } = agent({});
     expect(await askDocker(run, "maple", "stop")).toEqual({ tone: "ok", text: "Stopped gp-maple." });
-    expect(calls.map(({ args }) => args)).toEqual([["stop", "gp-maple"]]);
+    expect(calls.map(({ argv }) => argv)).toEqual([["stop", "gp-maple"]]);
+    expect(calls.map(({ id }) => id)).toEqual(["stop"]);
     expect(fake.state().containers["gp-maple"].running).toBe(false);
   });
 

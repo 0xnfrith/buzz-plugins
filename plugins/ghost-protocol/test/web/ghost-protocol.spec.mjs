@@ -48,10 +48,10 @@ test("asks the host for the declared process and nothing else: its id, the versi
   await arrange(page, app);
   await expect(root(page).locator("dd")).toHaveText("27.3.1");
   const { calls } = await gp(page);
-  // One call, for the page's check of Docker. Its process id is the manifest's, and only the arguments and the two output handlers were
-  // passed: no directory, no environment. The status screen asks nothing until an agent is named.
+  // One call, for the page's check of Docker, to the declared `version` process, whose words are all fixed in the manifest. Only the
+  // arguments and the two output handlers were passed: no directory, no environment. The status screen asks nothing until an agent is named.
   expect(calls).toEqual([
-    { id: "docker", options: ["args", "onStderr", "onStdout"], args: ["version", "--format", "{{.Server.Version}}"], onHost: true, declared: true },
+    { id: "version", options: ["args", "onStderr", "onStdout"], args: [], argv: ["version", "--format", "{{.Server.Version}}"], onHost: true, declared: true },
   ]);
 });
 

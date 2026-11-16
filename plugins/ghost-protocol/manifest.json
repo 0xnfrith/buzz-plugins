@@ -9,10 +9,12 @@
   },
   "host": {
     "processes": [
-      {
-        "id": "docker",
-        "program": "docker"
-      }
+      { "id": "version", "program": "docker", "args": ["version", "--format", "{{.Server.Version}}"] },
+      { "id": "exec", "program": "docker", "args": ["exec"] },
+      { "id": "inspect-state", "program": "docker", "args": ["inspect", "--format", "{{.State.Status}}"] },
+      { "id": "inspect-image", "program": "docker", "args": ["inspect", "--format", "{{.Config.Image}}"] },
+      { "id": "restart", "program": "docker", "args": ["restart"] },
+      { "id": "stop", "program": "docker", "args": ["stop"] }
     ]
   }
 }

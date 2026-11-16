@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Ran, Runner } from "../../src/docker";
 import { runnerFor } from "../../src/docker";
-import { NOTHING_YET, POLL_MS, SWAP_MS, askedFor, imageOf, observe, type Memory, type View } from "../../src/observe";
-import { hostOver, makeFake, type FakeDocker } from "./support/fake-host";
+import { NOTHING_YET, POLL_MS, SWAP_MS, afterButton, askedFor, imageOf, observe, type Memory, type View } from "../../src/observe";
+import { argvOf, hostOver, makeFake, type FakeDocker } from "./support/fake-host";
 
 const made: { fake: FakeDocker; stop: () => void }[] = [];
 afterEach(() => made.splice(0).forEach(({ fake, stop }) => (stop(), fake.cleanup())));
@@ -44,9 +44,9 @@ const UPDATING = GOOD.replace('"running"', '"updating"');
 /** A runner that answers each call from `answers` in order, and records what it was asked. */
 function scripted(...answers: (Ran | undefined)[]) {
   const asked: (readonly string[])[] = [];
-  const run: Runner = async (args) => {
-    asked.push(args);
-    if (answers.length === 0) throw new Error(`unexpected call: ${args.join(" ")}`);
+  const run: Runner = async (call) => {
+    asked.push(argvOf(call));
+    if (answers.length === 0) throw new Error(`unexpected call: ${argvOf(call).join(" ")}`);
     return answers.shift();
   };
   return { run, asked };
@@ -59,7 +59,8 @@ describe("a look at a running agent (against the fake docker)", () => {
     const { run, calls } = agent();
     const seen = await lookAt(run, NOTHING_YET, 0);
     expect(seen.view).toMatchObject({ kind: "status", status: { state: "running", version: "0.0.0", relay: "connected", claude: "active" } });
-    expect(calls.map(({ args }) => args)).toEqual([STATUS]);
+    expect(calls.map(({ argv }) => argv)).toEqual([STATUS]);
+    expect(calls.map(({ id }) => id)).toEqual(["exec"]);
   });
 
   it("shows needs-auth-tag, needs-claude, connecting and running, in the order a new agent goes through them", async () => {
@@ -115,7 +116,8 @@ describe("a look when `docker exec` fails (against the fake docker)", () => {
   it("says the container is stopped, with Docker's word for it, when `docker inspect` finds it not running", async () => {
     const { run, calls } = agent({}, { condition: "stopped" });
     expect((await lookAt(run, NOTHING_YET, 0)).view).toEqual({ kind: "stopped", dockerState: "exited" });
-    expect(calls.map(({ args }) => args)).toEqual([STATUS, INSPECT]);
+    expect(calls.map(({ argv }) => argv)).toEqual([STATUS, INSPECT]);
+    expect(calls.map(({ id }) => id)).toEqual(["exec", "inspect-state"]);
   });
 
   it("says the container is gone when `docker inspect` finds no such object", async () => {
@@ -455,6 +457,56 @@ describe("an update or a roll back that this screen asked for", () => {
     await fake.run(["exec", "gp-maple", "gp", "update", "request"]);
     seen = await lookAt(run, seen.memory, POLL_MS);
     expect(seen.view).toEqual({ kind: "gone" });
+  });
+});
+
+describe("what a button that was accepted does to what the screen knows", () => {
+  const STOPPED = () => [exit(1, "", "Error response from daemon: container abc is not running\n"), exit(0, "exited\n")];
+  const NOT_THERE = () => [exit(1, "", "Error response from daemon: No such container: gp-maple\n"), exit(1, "", "Error: No such object: gp-maple\n")];
+
+  it("starts an update under way for an Update or a Roll back, with the version the agent was on", () => {
+    for (const job of ["update", "rollback"] as const) {
+      expect(afterButton(NOTHING_YET, job, true, "0.0.0")).toEqual(askedFor(NOTHING_YET, "0.0.0"));
+    }
+  });
+
+  it("changes nothing for an Update or a Roll back that was not accepted, or when the version is not known", () => {
+    const before: Memory = { lastState: "running", gapSince: 5, asked: undefined };
+    for (const job of ["update", "rollback", "restart", "stop"] as const) expect(afterButton(before, job, false, "0.0.0"), job).toBe(before);
+    expect(afterButton(before, "update", true, undefined)).toBe(before);
+  });
+
+  it("ends any update under way for a Stop or a Restart that was accepted: the screen then says what it finds", () => {
+    const under: Memory = { lastState: "updating", gapSince: 30_000, asked: { from: "0.0.0", sawUpdating: true } };
+    for (const job of ["stop", "restart"] as const) expect(afterButton(under, job, true, "0.0.0"), job).toEqual(NOTHING_YET);
+  });
+
+  it("shows a container the user stopped as stopped at once, though an Update was asked for and has not started", async () => {
+    // The agent is finishing its task on the old version: no status said `updating`.
+    let memory = askedFor({ lastState: "running", gapSince: undefined, asked: undefined }, "0.0.0");
+    // Without the Stop, a container found stopped is swapping.
+    expect((await lookAt(scripted(...STOPPED()).run, memory, 10_000)).view).toEqual({ kind: "swapping" });
+    memory = afterButton(memory, "stop", true, "0.0.0");
+    const seen = await lookAt(scripted(...STOPPED()).run, memory, 10_000);
+    expect(seen.view).toEqual({ kind: "stopped", dockerState: "exited" });
+    expect(seen.memory.gapSince).toBeUndefined();
+  });
+
+  it("shows a container the user stopped as stopped at once, when the last status said `updating`", async () => {
+    let memory: Memory = { lastState: "updating", gapSince: undefined, asked: undefined };
+    expect((await lookAt(scripted(...STOPPED()).run, memory, 10_000)).view).toEqual({ kind: "swapping" });
+    memory = afterButton(memory, "stop", true, "0.0.0");
+    expect((await lookAt(scripted(...STOPPED()).run, memory, 10_000)).view).toEqual({ kind: "stopped", dockerState: "exited" });
+  });
+
+  it("shows a container the user restarted, and that is then missing, as gone at once, and not as being swapped", async () => {
+    const memory = afterButton({ lastState: "updating", gapSince: undefined, asked: undefined }, "restart", true, undefined);
+    expect((await lookAt(scripted(...NOT_THERE()).run, memory, 10_000)).view).toEqual({ kind: "gone" });
+  });
+
+  it("keeps an update under way when a Stop was not accepted: the container is still swapping", async () => {
+    const memory = afterButton(askedFor({ lastState: "running", gapSince: undefined, asked: undefined }, "0.0.0"), "stop", false, "0.0.0");
+    expect((await lookAt(scripted(...STOPPED()).run, memory, 10_000)).view).toEqual({ kind: "swapping" });
   });
 });
 

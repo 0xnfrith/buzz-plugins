@@ -4,13 +4,14 @@
 // wrapper keeps the host's own rule from src/features/host/service.ts: a plugin's processes end with the plugin.
 //   scripted  each call takes the next scripted behaviour: what `docker` prints, how it exits, whether the program is missing, or
 //             whether it waits to be released (the spec's `script` and `fallback`).
-//   fake      with `window.__gp.fake` set, each call is handed to `window.__gpDocker(args)`, which the spec exposes from Node and which
+//   fake      with `window.__gp.fake` set, each call is handed to `window.__gpDocker(argv)`, which the spec exposes from Node and which
 //             runs the fake `docker` (test/fake-docker) as a process there. What the plugin reads is what the fake printed.
 import * as plugin from "./plugin.js";
 import manifest from "./manifest.json";
 
 type Behaviour = { stdout?: string; stderr?: string; code?: number | null; reject?: string; hold?: boolean };
-type Call = { id: string; options: string[]; args: string[]; onHost: boolean; declared: boolean };
+/** `args` are the call's own; `argv` is the whole command line `docker` gets: the words the manifest fixes for the process, then `args`. */
+type Call = { id: string; options: string[]; args: string[]; argv: string[]; onHost: boolean; declared: boolean };
 type Ran = { stdout: string; stderr: string; code: number | null };
 
 declare global {
@@ -29,7 +30,7 @@ declare global {
       fake?: boolean;
     };
     /** Exposed by the spec: runs the fake `docker` with these arguments, in Node. */
-    __gpDocker?: (args: string[]) => Promise<Ran>;
+    __gpDocker?: (argv: string[]) => Promise<Ran>;
   }
 }
 
@@ -46,7 +47,9 @@ export const ghostProtocolFixture = {
       if (gp.mode !== "no-spawn") {
         host.spawn = function (this: unknown, id: string, options: Record<string, any> = {}) {
           const declared = manifest.host.processes.some((process) => process.id === id);
-          gp.calls.push({ id, options: Object.keys(options).sort(), args: [...(options.args ?? [])], onHost: this === host, declared });
+          const fixed: string[] = (manifest.host.processes.find((process) => process.id === id) as { args?: string[] } | undefined)?.args ?? [];
+          const argv = [...fixed, ...(options.args ?? [])];
+          gp.calls.push({ id, options: Object.keys(options).sort(), args: [...(options.args ?? [])], argv, onHost: this === host, declared });
           if (gp.mode === "missing") return Promise.reject(new Error("program not found"));
           const behaviour = gp.fake ? {} : (gp.script.shift() ?? gp.fallback);
           if (behaviour.reject) return Promise.reject(new Error(behaviour.reject));
@@ -62,7 +65,7 @@ export const ghostProtocolFixture = {
           };
           if (gp.fake) {
             // The fake runs in Node; its output is delivered when it ends, unless the plugin has stopped the process by then.
-            void window.__gpDocker!([...(options.args ?? [])]).then((ran) => {
+            void window.__gpDocker!(argv).then((ran) => {
               if (ended) return;
               ended = true;
               if (ran.stderr) options.onStderr?.(ran.stderr);

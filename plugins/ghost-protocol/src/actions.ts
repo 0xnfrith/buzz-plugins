@@ -1,7 +1,7 @@
-// The four buttons (interface note, section 10): Update and Roll back ask GHOST Protocol inside the container; Restart and Stop ask Docker.
+// The four buttons (GHOST Protocol's interface): Update and Roll back ask GHOST Protocol inside the container; Restart and Stop ask Docker.
 // Each runs one `docker` call and comes back as a line to show.
 import type { Runner } from "./docker";
-import { restartArgs, rollbackArgs, stopArgs, updateArgs, containerOf } from "./commands";
+import { restartCall, rollbackCall, stopCall, updateCall, containerOf } from "./commands";
 import { gpLines } from "./status";
 import { WORDS } from "./words";
 
@@ -38,11 +38,11 @@ function notRun(ran: Ran): Outcome | undefined {
 
 /**
  * `gp update request`, or `gp update rollback`. Resolves with `undefined` when the caller left first.
- * The answers are the interface note's (answer 4, and `no-updater`): `GP_UPDATE=requested` or `rollback-requested` on exit 0, and on a
+ * The answers are GHOST Protocol's: `GP_UPDATE=requested` or `rollback-requested` on exit 0, and on a
  * failure a `GP_ERROR` that is `no-updater`, `no-update-available`, `update-in-progress` or `no-previous-version`, or another code.
  */
 export async function askToUpdate(run: Runner, slug: string, which: "update" | "rollback"): Promise<Outcome | undefined> {
-  const ran = await run(which === "update" ? updateArgs(slug) : rollbackArgs(slug), GP_MS);
+  const ran = await run(which === "update" ? updateCall(slug) : rollbackCall(slug), GP_MS);
   if (ran === undefined) return undefined;
   const failed = notRun(ran);
   if (failed) return failed;
@@ -67,7 +67,7 @@ export async function askToUpdate(run: Runner, slug: string, which: "update" | "
 /** `docker restart gp-<slug>` or `docker stop gp-<slug>`. Resolves with `undefined` when the caller left first. */
 export async function askDocker(run: Runner, slug: string, which: "restart" | "stop"): Promise<Outcome | undefined> {
   const container = containerOf(slug);
-  const ran = await run(which === "restart" ? restartArgs(slug) : stopArgs(slug), DOCKER_MS);
+  const ran = await run(which === "restart" ? restartCall(slug) : stopCall(slug), DOCKER_MS);
   if (ran === undefined) return undefined;
   const failed = notRun(ran);
   if (failed) return failed;

@@ -52,8 +52,8 @@ async function arrange(page, app, { scenario = {}, seed = { condition: "running"
   const fake = createFakeDocker({ scenario });
   fakes.push(fake);
   if (seed) fake.seed({ slug: "maple", ...seed });
-  await page.exposeFunction("__gpDocker", async (args) => {
-    const { stdout, stderr, code } = await fake.run(args);
+  await page.exposeFunction("__gpDocker", async (argv) => {
+    const { stdout, stderr, code } = await fake.run(argv);
     return { stdout, stderr, code };
   });
   // `script`: scripted answers in the place of the fake, in order, for what the fake cannot be made to do.
@@ -109,7 +109,7 @@ test("asks nothing about an agent until it is named, then shows a running agent:
   await page.setViewportSize({ width: 1300, height: 900 });
   const fake = await arrange(page, app);
   await expect(agent(page)).toHaveCount(0);
-  expect((await gp(page)).calls.map(({ args }) => args.join(" "))).toEqual(["version --format {{.Server.Version}}"]);
+  expect((await gp(page)).calls.map(({ argv }) => argv.join(" "))).toEqual(["version --format {{.Server.Version}}"]);
   await show(page);
   await expect(headline(page)).toHaveText("Running");
   await expect(agent(page).getByRole("heading", { name: "gp-maple", level: 2 })).toBeVisible();
@@ -321,7 +321,7 @@ test("says the container runs but GHOST Protocol did not answer, with its code a
   await expect(headline(page)).toHaveAttribute("role", "alert");
   await expect(agent(page).getByText("The database is locked. (db-locked)")).toBeVisible();
   await expect(agent(page).getByRole("button")).toHaveText(["Restart", "Stop"]);
-  expect((await gp(page)).calls.map(({ args }) => args.join(" ")).slice(1)).toEqual([STATUS, "inspect --format {{.State.Status}} gp-maple"]);
+  expect((await gp(page)).calls.map(({ argv }) => argv.join(" ")).slice(1)).toEqual([STATUS, "inspect --format {{.State.Status}} gp-maple"]);
 });
 
 // ---- the update's gap ------------------------------------------------------------------------------------------------------------------
@@ -652,30 +652,76 @@ test("asks the host for the declared process only, with these arguments only, ca
     // After Stop there is only Restart; the others need a running agent.
     if (name === "Stop") break;
   }
+  // The look that follows Stop finds the container stopped: it asks `docker inspect` why.
+  await expect(headline(page)).toHaveText("gp-maple is stopped (exited).");
   const { calls } = await gp(page);
-  const allowed = [
-    /^version --format \{\{\.Server\.Version\}\}$/,
-    /^exec gp-maple gp status --json$/,
-    /^exec gp-maple gp update request$/,
-    /^exec gp-maple gp update rollback$/,
-    /^restart gp-maple$/,
-    /^stop gp-maple$/,
-    /^inspect --format \{\{\.State\.Status\}\} gp-maple$/,
-    /^inspect --format \{\{\.Config\.Image\}\} gp-maple$/,
-  ];
+  // Each process the manifest declares fixes its leading words, and the plugin names one for each call: the whole command line has to be
+  // one of these, started as the process of its verb.
+  const allowed = {
+    version: /^version --format \{\{\.Server\.Version\}\}$/,
+    exec: /^exec gp-maple gp (status --json|update request|update rollback)$/,
+    "inspect-state": /^inspect --format \{\{\.State\.Status\}\} gp-maple$/,
+    "inspect-image": /^inspect --format \{\{\.Config\.Image\}\} gp-maple$/,
+    restart: /^restart gp-maple$/,
+    stop: /^stop gp-maple$/,
+  };
   expect(calls.length).toBeGreaterThan(5);
   for (const call of calls) {
-    expect(call.id).toBe("docker");
+    expect(Object.keys(allowed), call.argv.join(" ")).toContain(call.id);
+    expect(call.argv.join(" "), call.id).toMatch(allowed[call.id]);
     expect(call.declared).toBe(true);
     expect(call.onHost).toBe(true);
     // Arguments and the two output handlers: no working directory, no environment.
     expect(call.options).toEqual(["args", "onStderr", "onStdout"]);
-    expect(allowed.some((pattern) => pattern.test(call.args.join(" "))), call.args.join(" ")).toBe(true);
   }
+  // The tour used each verb but the image: the version check, the status, both answers of a button, and the look at a stopped container.
+  expect([...new Set(calls.map((call) => call.id))].sort()).toEqual(["exec", "inspect-state", "restart", "stop", "version"]);
   // The same calls, seen by the fake: every one a form it answers.
   expect(fake.calls().every((call) => !call.refused)).toBe(true);
   // None of them writes to a process.
-  expect(calls.flatMap((call) => call.args)).not.toContain("-i");
+  expect(calls.flatMap((call) => call.argv)).not.toContain("-i");
+});
+
+test("asks for the container's image, through its own declared process, when the agent has no update helper", async ({ page, app }) => {
+  await arrange(page, app, { scenario: { selfUpdate: "no", update: { available: true, version: "0.1.1" } } });
+  await show(page);
+  await button(page, "Update").click();
+  await expect(agent(page).locator(".gp-steps")).toBeVisible();
+  const { calls } = await gp(page);
+  const image = calls.filter((call) => call.id === "inspect-image");
+  expect(image.map((call) => call.argv.join(" "))).toEqual(["inspect --format {{.Config.Image}} gp-maple"]);
+  expect(image[0].args).toEqual(["gp-maple"]);
+});
+
+// ---- a stop or a restart ends an update under way ---------------------------------------------------------------------------------------
+
+test("shows a container the user stopped as stopped, with Restart, though an Update was asked for and has not started", async ({ page, app }) => {
+  // The update is accepted, and the agent goes on finishing its task on the old version for a long time.
+  await arrange(page, app, { scenario: { update: { available: true, version: "0.1.1" }, updateStartPolls: 50 } });
+  await show(page);
+  await expect(headline(page)).toHaveText("Running");
+  await button(page, "Update").click();
+  await expect(agent(page).getByText("Update requested.")).toBeVisible();
+  await expect(headline(page)).toHaveText("Running");
+  await button(page, "Stop").click();
+  await expect(agent(page).getByText("Stopped gp-maple.", { exact: true })).toBeVisible();
+  // At once: not "Updating", and with its Restart.
+  await expect(headline(page)).toHaveText("gp-maple is stopped (exited).");
+  await expect(button(page, "Restart")).toBeEnabled();
+});
+
+test("shows a container the user stopped as stopped, with Restart, while the status said Updating", async ({ page, app }) => {
+  const fake = await arrange(page, app, { scenario: "update-available" });
+  await fake.run(["exec", "gp-maple", "gp", "update", "request"]);
+  await show(page);
+  await expect(headline(page)).toHaveText("Updating");
+  await button(page, "Stop").click();
+  await expect(headline(page)).toHaveText("gp-maple is stopped (exited).");
+  await expect(button(page, "Restart")).toBeEnabled();
+  // Restart brings it back, and the screen says what it finds.
+  await button(page, "Restart").click();
+  await expect(agent(page).getByText("Restarted gp-maple.", { exact: true })).toBeVisible();
+  await expect(headline(page)).not.toHaveText(/^Updating\. The agent is being swapped/);
 });
 
 // ---- the look ---------------------------------------------------------------------------------------------------------------------------

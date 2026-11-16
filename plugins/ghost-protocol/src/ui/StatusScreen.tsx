@@ -2,7 +2,7 @@ import type { Host } from "../buzz";
 import { askDocker, askToUpdate, type Outcome } from "../actions";
 import { containerOf } from "../commands";
 import { runnerFor } from "../docker";
-import { NOTHING_YET, POLL_MS, askedFor, imageOf, observe, type Memory, type View } from "../observe";
+import { NOTHING_YET, POLL_MS, afterButton, imageOf, observe, type Memory, type View } from "../observe";
 import { React } from "../react";
 import type { Status } from "../status";
 import { updateByHand } from "../update-by-hand";
@@ -135,8 +135,9 @@ export function createStatusScreen(host: Host) {
       const image = byHandNow ? await imageOf(run, slug) : undefined;
       if (signal.aborted) return;
       if (byHandNow) setByHand({ image });
-      // An update or a roll back that was taken is under way, until a status with another version says it is over.
-      if (done.tone === "ok" && (job === "update" || job === "rollback") && status !== undefined) memory.current = askedFor(memory.current, status.version);
+      // An update or a roll back that was taken is under way, until a status with another version says it is over; a stop or a restart
+      // that was taken ends any update, so the next look says what it finds.
+      memory.current = afterButton(memory.current, job, done.tone === "ok", status?.version);
       setWorking(undefined);
       // The steps say it all when the agent has no update helper.
       setOutcome(byHandNow ? undefined : done);
