@@ -12,10 +12,10 @@
 // be met by an empty handler. BUDGET_VSYNC=1 turns the tick back on.
 //
 // THE BUDGET. p95 <= 16 ms (one frame) is the target: it is reported, and a row over it is flagged. p99 > 50 ms fails the
-// test. The p99 of 100 presses is their second largest (nearest rank), so one garbage collection on a shared CI machine
-// could fail a row by itself; a row is therefore measured again (up to BUDGET_ATTEMPTS = 3 times, the heap collected first)
-// and fails only when its p99 is over the limit in every attempt. A real regression repeats, a stall does not.
-// BUDGET_ATTEMPTS=1 makes the gate strict.
+// test (a known row, below, is read at p95 instead). The p99 of 100 presses is their second largest (nearest rank), so one garbage
+// collection on a shared CI machine could fail a row by itself; a row is therefore measured again (up to BUDGET_ATTEMPTS = 3 times,
+// the heap collected first) and fails only when the figure it is read at is over the limit in every attempt. A real regression
+// repeats, a stall does not. BUDGET_ATTEMPTS=1 makes the gate strict.
 //
 // CONTROLS. A row marked "control" is a reference and never fails: a key nothing is bound to, the host's own scrolling by
 // the arrow keys, and, for each plugin key whose cost is mostly the app's, the same work done by the page itself from
@@ -23,13 +23,17 @@
 // settings section. What a control costs, the plugin key next to it cannot avoid.
 //
 // KNOWN EXCEEDANCES. A row whose control is over 50 ms too is the app's. budget.baseline.json lists such rows, each with its
-// control row and the reason. A listed row that is over 50 ms in an attempt is measured against its control in that same
-// attempt, the control pressed as often as the key (100 presses, so its p99 is not one stall): p99 <= max(50, control p99 + 30)
-// and p50 <= control p50 + 25. The median is what a stall in the control cannot hide, and the rooms are added, not multiplied. On
-// a machine where the control is under 20 ms the p99 limit stays 50, so the file does not let a fast machine hide a regression;
-// on a slow machine it moves with the machine. No fixed limits. The table says "known". BUDGET_BASELINE=0 ignores the file (the
-// strict gate). Every entry is checked against the rows of its surface before anything is measured. Fix a row, or a new app
-// version, and delete its line.
+// control row and the reason. A listed row is read at p95, not p99: the sixth largest of 100 presses (the third largest of 40).
+// The p99 of a row and the p99 of its control are the second largest press of two separate samples, and the gap between them
+// swings by tens of milliseconds with one or two stalled presses on either side, where the p50 gap does not. A listed row that is
+// over 50 ms at p95 in an attempt is measured against its control in that same attempt, the control pressed as often as the key
+// (100 presses): p95 <= max(50, control p95 + 30) and p50 <= control p50 + 25. A listed row at or under 50 ms at p95 passes with no
+// control measured. The median is what a stall in the control cannot hide, and the rooms are added, not multiplied. On a machine
+// where the control is under 20 ms the p95 limit stays 50, so the file does not let a fast machine hide a regression; on a slow
+// machine it moves with the machine. No fixed limits. What a p95 cannot see is a slowdown of fewer than 5 presses in 100 of a
+// listed row (the median sees one of every press); the other rows are read at p99 and see it. The table says "known".
+// BUDGET_BASELINE=0 ignores the file (the strict gate, every row at p99). Every entry is checked against the rows of its surface
+// before anything is measured. Fix a row, or a new app version, and delete its line.
 //
 // INVALID ROWS. A row whose presses did not move anything (under 90%), or did not have the focus on the row's surface (under 90%;
 // rows that `cross` panes are only checked for moving), measures nothing: the test fails it, and the table says INVALID.
@@ -60,13 +64,13 @@ const REPS = Number(process.env.BUDGET_REPS ?? 100);
 const WARM = Number(process.env.BUDGET_WARM ?? 15);
 // Rows whose every press costs 100 ms or more and sets the page back after it (a thread closing and opening, a long thread landing) take
 // minutes at 100 presses, on every attempt and again for their controls: the whole job went from about 20 to about 46 minutes with them,
-// close to the 60 minutes it is allowed. They name this many presses instead (a row may name fewer than REPS, never more). The p99 of
-// 40 presses is the largest, not the second largest; the rows are known rows read against a control that is pressed as often, and
-// their median is checked too, which one stalled press does not move.
+// close to the 60 minutes it is allowed. They name this many presses instead (a row may name fewer than REPS, never more). The rows are
+// known rows, read at p95 (the third largest of 40 presses) against a control that is pressed as often, and their median is checked
+// too, which one stalled press does not move.
 const SLOW_REPS = 40;
 const ATTEMPTS = Number(process.env.BUDGET_ATTEMPTS ?? 3);
 const P95_TARGET = 16;
-const P99_LIMIT = 50;
+const LIMIT = 50; // ms: the gate, at p99 (at p95 for a known row)
 const VALID = 0.9; // a row is valid when at least this share of its presses moved something, and of those on its surface
 const VSYNC = process.env.BUDGET_VSYNC === "1";
 // BUDGET_TRACE=full turns the plugin's own trace on (a setting of the plugin, off by default): each row then also says how long
@@ -308,14 +312,35 @@ const attemptRow = async (page, cdp, surface, id, row, checked) => {
     layout: (spent[index][2] * 1000) / reps,
   }));
 };
-// A row of the baseline may go over 50 ms by what its control costs. The control is pressed in the same attempt, on the same
-// machine, and as often as the key (a p99 of 100 presses is the second largest, not one stall that becomes room for the key):
-//   p99 <= max(50, control p99 + P99_ROOM), and
+// A row of the baseline is read at p95, not p99, and may go over 50 ms by what its control costs. The control is pressed in the same
+// attempt, on the same machine, and as often as the key:
+//   p95 <= max(50, control p95 + ROOM), and
 //   p50 <= control p50 + P50_ROOM.
 // The median is what a stall in the control cannot hide: a plugin regression moves every press, a stall moves one. The rooms are
-// added, not multiplied: a stall of 60 ms in a control gives the key 30 ms, not 85.
-const P99_ROOM = 30;
+// added, not multiplied: a stall of 60 ms in a control gives the key 30 ms, not 85. (The p95 of 100 presses is their sixth largest,
+// the p99 their second: the gap between the p99 of a row and of its control, two samples taken apart, swung by tens of milliseconds
+// with one or two stalled presses on either side.)
+const ROOM = 30;
 const P50_ROOM = 25;
+// The figure a row is read at: p99, and p95 for a known row.
+const readAt = (known) => (known ? "p95" : "p99");
+// Whether one attempt of a row is over 50 ms at the figure it is read at: for a known row, the cue to measure its control.
+const overLine = (row, known) => row[readAt(known)] > LIMIT;
+// One attempt of a known row that is over 50 ms at p95, read against its control (both as `stats` gives them): the limit, and whether
+// the attempt is over it.
+const knownVerdict = (row, control) => {
+  const limit = Math.max(LIMIT, control.p95 + ROOM);
+  return { limit, past: row.p95 > limit || row.p50 > control.p50 + P50_ROOM };
+};
+// The verdict on one attempt of a row that is not a control: its limit (`max`), whether it is over it (`past`) and the control it was read
+// against. Only a known row over the line has one: `measureControl` presses it, in this attempt, and is not called for any other.
+const judge = async (row, known, measureControl) => {
+  if (!overLine(row, known)) return { max: LIMIT, past: false, reference: null };
+  if (!known) return { max: LIMIT, past: true, reference: null };
+  const reference = await measureControl();
+  const { limit, past } = knownVerdict(row, reference);
+  return { max: limit, past, reference };
+};
 // Every row of the baseline is checked before anything is measured: a wrong name would be noticed only when that row went over 50 ms.
 const checkBaseline = (id, list) => {
   const parts = list.flatMap((row) => row.pair ?? [row]);
@@ -346,24 +371,21 @@ const measureRow = async (page, cdp, surface, row, rowsOfSurface, id, defined, c
       expect(await page.evaluate(() => window.__controlsOf), `attempt ${attempt} of "${names}" runs with the F9 and F10 of its own before`).toBe(ownControls);
     }
     last = await attemptRow(page, cdp, surface, id, row, checked);
-    attempts.push(last.map((entry) => entry.p99));
+    attempts.push(last.map((entry, index) => entry[readAt(!!known(parts[index]))]));
     const limit = [];
     const control = [];
     const over = [];
     for (const [index, part] of parts.entries()) {
-      let max = part.control ? Infinity : P99_LIMIT;
-      let reference = null;
-      let past = !part.control && last[index].p99 > P99_LIMIT;
-      if (known(part) && past) {
-        const name = known(part).control;
-        const def = defined.find((candidate) => (candidate.pair ?? [candidate]).some((one) => one.key === name));
-        await def.before?.(page);
-        const entries = await attemptRow(page, cdp, surface, id, { ...def, reps: row.reps }, false);
-        const one = entries[(def.pair ?? [def]).findIndex((candidate) => candidate.key === name)];
-        reference = { p50: one.p50, p99: one.p99 };
-        max = Math.max(P99_LIMIT, reference.p99 + P99_ROOM);
-        past = last[index].p99 > max || last[index].p50 > reference.p50 + P50_ROOM;
-      }
+      const { max, past, reference } = part.control
+        ? { max: Infinity, past: false, reference: null }
+        : await judge(last[index], !!known(part), async () => {
+            const name = known(part).control;
+            const def = defined.find((candidate) => (candidate.pair ?? [candidate]).some((one) => one.key === name));
+            await def.before?.(page);
+            const entries = await attemptRow(page, cdp, surface, id, { ...def, reps: row.reps }, false);
+            const one = entries[(def.pair ?? [def]).findIndex((candidate) => candidate.key === name)];
+            return { p50: one.p50, p95: one.p95, p99: one.p99 };
+          });
       limit.push(max);
       control.push(reference);
       over.push(past);
@@ -381,13 +403,15 @@ const measureRow = async (page, cdp, surface, row, rowsOfSurface, id, defined, c
     entry.known = !!known(parts[index]);
     entry.why = known(parts[index])?.why;
     entry.controlRow = known(parts[index])?.control;
-    entry.attempts = attempts.map((p99s) => p99s[index]);
+    entry.readAt = readAt(entry.known);
+    entry.attempts = attempts.map((figures) => figures[index]);
     entry.limits = limits.map((one) => (one[index] === Infinity ? null : one[index]));
+    entry.controlP95 = controls.map((one) => one[index]?.p95 ?? null);
     entry.controlP99 = controls.map((one) => one[index]?.p99 ?? null);
     entry.controlP50 = controls.map((one) => one[index]?.p50 ?? null);
     entry.limit = entry.limits.at(-1);
     entry.overTarget = entry.p95 > P95_TARGET;
-    entry.over50 = entry.attempts.every((p99) => p99 > P99_LIMIT);
+    entry.over50 = entry.attempts.every((figure) => figure > LIMIT);
     entry.failed = entry.attempts.length === ATTEMPTS && overs.every((one) => one[index]);
     // A row that does not move anything, or whose keys are not on its surface, measures nothing: that is not a pass.
     entry.invalid = !entry.control && (entry.moved < VALID || (entry.on !== null && entry.on < VALID));
@@ -430,8 +454,8 @@ const surface = (id, title, body, on) =>
       `rows that measure nothing (under ${pct(VALID)} of their presses moved something, or had the focus on the surface)`,
     ).toEqual([]);
     expect(
-      measured.filter((entry) => entry.failed).map((entry) => `${entry.surface} ${entry.key}: p99 ${entry.attempts.map((p99) => p99.toFixed(1)).join(", ")} ms, over ${entry.limits.map((limit) => (limit ?? 0).toFixed(0)).join(", ")}`),
-      `p99 over its limit in all ${ATTEMPTS} attempts`,
+      measured.filter((entry) => entry.failed).map((entry) => `${entry.surface} ${entry.key}: ${entry.readAt} ${entry.attempts.map((figure) => figure.toFixed(1)).join(", ")} ms, over ${entry.limits.map((limit) => (limit ?? 0).toFixed(0)).join(", ")}`),
+      `over its limit in all ${ATTEMPTS} attempts (at p99, and at p95 for a known row)`,
     ).toEqual([]);
   });
 
@@ -973,21 +997,68 @@ surface("settings", "Settings dialog", async ({ page, rows }) => {
   ]);
 }, `a.closest('[role="dialog"]')`);
 
+// ---- The limits, on fixed samples ---------------------------------------------------------------------------------
+// No page here: the rule that reads a row, and a known row against its control, on presses made up so that every figure is known.
+// `presses` takes runs of [count, ms]; `stats` sorts them, so their order does not matter. Of 100 presses the p50 is the 50th, the
+// p95 the 95th (the sixth largest) and the p99 the 99th (the second largest).
+const presses = (...runs) => stats(runs.flatMap(([count, ms]) => Array(count).fill(ms)));
+test("budget: the limits, on fixed samples", async () => {
+  expect(presses([50, 10], [45, 20], [4, 30], [1, 40]), "the figures of 100 presses").toEqual({ n: 100, p50: 10, p95: 20, p99: 30, max: 40 });
+  expect(presses([20, 10], [19, 30], [1, 40]).p95, "of 40 presses the p95 is the third largest").toBe(30);
+
+  // What a row is read at, and when it is over the line: two stalled presses move the p99 of 100 and not their p95.
+  const stalled = presses([98, 30], [2, 300]);
+  expect([readAt(false), readAt(true)], "p99 for a row not in the baseline, p95 for a known one").toEqual(["p99", "p95"]);
+  expect(overLine(stalled, false), "two stalled presses put a row not in the baseline over 50 ms").toBe(true);
+  expect(overLine(stalled, true), "and leave a known row under it").toBe(false);
+  expect(overLine(presses([94, 30], [6, 60]), true), "six slow presses put a known row over it").toBe(true);
+  expect(overLine(presses([100, 50]), true), "at 50 ms it is not over").toBe(false);
+
+  // The control is pressed for a known row over the line and for no other row.
+  const control = presses([50, 20], [45, 30], [4, 40], [1, 45]);
+  let pressed = 0;
+  const measureControl = async () => {
+    pressed++;
+    return control;
+  };
+  expect(await judge(stalled, true, measureControl), "a known row under the line").toEqual({ max: 50, past: false, reference: null });
+  expect(await judge(stalled, false, measureControl), "a row not in the baseline over the line").toEqual({ max: 50, past: true, reference: null });
+  expect(await judge(presses([100, 20]), false, measureControl), "a row not in the baseline under the line").toEqual({ max: 50, past: false, reference: null });
+  expect(pressed, "the control was pressed for none of them").toBe(0);
+  const over = presses([50, 40], [44, 55], [6, 61]);
+  expect(await judge(over, true, measureControl), "a known row over the line is read against the control it measures").toEqual({ max: 60, past: true, reference: control });
+  expect(pressed, "and that is pressed once").toBe(1);
+
+  // A known row over the line, against its control (p50 20, p95 30, p99 40): the limit is max(50, control p95 + 30) = 60, and the median 45.
+  const verdict = (row, against = control) => knownVerdict(row, against);
+  expect(verdict(presses([50, 40], [44, 55], [6, 60])), "p95 at the limit, median inside its room").toEqual({ limit: 60, past: false });
+  expect(verdict(presses([50, 40], [44, 55], [6, 61])).past, "p95 a millisecond over the limit").toBe(true);
+  expect(verdict(presses([50, 45], [50, 55])).past, "median at its room (control p50 + 25), p95 inside the limit").toBe(false);
+  expect(verdict(presses([50, 46], [50, 55])).past, "median a millisecond over its room, p95 inside the limit").toBe(true);
+  expect(verdict(presses([50, 40], [42, 55], [8, 90])).past, "a slowdown of 8 presses in 100 is seen at p95").toBe(true);
+
+  // The control moves the limit, from the p95 of the control and never below 50.
+  expect(verdict(presses([50, 30], [44, 50], [6, 51]), presses([100, 10])), "a fast control leaves the limit at 50 ms").toEqual({ limit: 50, past: true });
+  expect(verdict(presses([50, 30], [45, 50], [5, 60]), presses([100, 10])).past, "and a row at 50 ms is inside it").toBe(false);
+  expect(verdict(presses([50, 40], [45, 100], [5, 110]), presses([50, 40], [45, 80], [5, 90])), "a slow control raises it").toEqual({ limit: 110, past: false });
+  expect(verdict(presses([50, 30], [45, 40], [5, 45]), presses([97, 20], [3, 300])).limit, "two stalls in the control (its p99 is 300 ms) give no room: its p95 is 20").toBe(50);
+});
+
 // ---- The table ----------------------------------------------------------------------------------------------------
 test("budget: the table", async () => {
   const rows = results.all();
   test.skip(rows.length === 0, "nothing was measured");
   const f = (x) => x.toFixed(1);
   const lines = [
-    `Key to next paint, ms (keydown on the window to the frame after it). Target p95 <= ${P95_TARGET}, gate p99 <= ${P99_LIMIT} (fails when over in all ${ATTEMPTS} attempts). ${REPS} presses a row after ${WARM} warm-up, ${VSYNC ? "60 Hz tick on" : "frame-rate limit off"}.`,
+    `Key to next paint, ms (keydown on the window to the frame after it). Target p95 <= ${P95_TARGET}, gate p99 <= ${LIMIT}, p95 for a known row (fails when over in all ${ATTEMPTS} attempts). ${REPS} presses a row after ${WARM} warm-up, ${VSYNC ? "60 Hz tick on" : "frame-rate limit off"}.`,
     "",
-    "| Surface | Key | n | p50 | p95 | p99 | max | script | style | layout | moved | p95 target | p99 gate |",
+    "| Surface | Key | n | p50 | p95 | p99 | max | script | style | layout | moved | p95 target | gate |",
     "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
     ...rows.map((r) => {
       const pct = (x) => `${Math.round(x * 100)}%`;
-      const control = r.controlP99?.filter((x) => x !== null).at(-1);
+      const control = r.controlP95?.filter((x) => x !== null).at(-1);
       const median = r.controlP50?.filter((x) => x !== null).at(-1);
-      const why = r.known && control !== undefined ? ` (control \`${r.controlRow.replace(/^control: /, "")}\` p99 ${f(control)}, p50 ${f(median)}: limit p99 ${f(r.limit)}, p50 ${f(median + P50_ROOM)})` : "";
+      const why = r.known && control !== undefined ? ` (control \`${r.controlRow.replace(/^control: /, "")}\` p95 ${f(control)}, p50 ${f(median)}: limit p95 ${f(r.limit)}, p50 ${f(median + P50_ROOM)})` : "";
       const gate = r.control
         ? "control"
         : r.invalid
@@ -995,21 +1066,21 @@ test("budget: the table", async () => {
           : r.failed
             ? `**FAIL**${why}`
             : r.known && r.over50
-              ? `known (over ${P99_LIMIT})${why}`
+              ? `known (p95 over ${LIMIT})${why}`
               : "ok";
-      return `| ${r.surface} | \`${r.key}\` | ${r.n} | ${f(r.p50)} | ${f(r.p95)} | ${f(r.p99)} | ${f(r.max)} | ${f(r.script)} | ${f(r.style)} | ${f(r.layout)} | ${pct(r.moved)} | ${r.overTarget ? "**over**" : "ok"} | ${gate}${r.attempts.length > 1 ? ` (p99 ${r.attempts.map(f).join(" -> ")})` : ""} |`;
+      return `| ${r.surface} | \`${r.key}\` | ${r.n} | ${f(r.p50)} | ${f(r.p95)} | ${f(r.p99)} | ${f(r.max)} | ${f(r.script)} | ${f(r.style)} | ${f(r.layout)} | ${pct(r.moved)} | ${r.overTarget ? "**over**" : "ok"} | ${gate}${r.attempts.length > 1 ? ` (${r.readAt} ${r.attempts.map(f).join(" -> ")})` : ""} |`;
     }),
     "",
-    "script, style, layout: mean milliseconds of the page's main thread per repetition (a count and its key are one), from the engine's counters, in the last attempt. moved: the share of the repetitions after which anything on the page had changed (focus, cursor, scroll position, caret, label). A row is INVALID, and fails the test, when under 90% of its presses moved something or had the focus on its surface: it measures nothing. The control rows show what an event and a frame cost with no plugin work, or what the page costs when it does the plugin's work itself; a known row (budget.baseline.json) may go over 50 ms by what its control costs, the control pressed as often as the key in the same attempt: p99 <= max(50, control p99 + 30) and p50 <= control p50 + 25.",
+    "script, style, layout: mean milliseconds of the page's main thread per repetition (a count and its key are one), from the engine's counters, in the last attempt. moved: the share of the repetitions after which anything on the page had changed (focus, cursor, scroll position, caret, label). A row is INVALID, and fails the test, when under 90% of its presses moved something or had the focus on its surface: it measures nothing. The control rows show what an event and a frame cost with no plugin work, or what the page costs when it does the plugin's work itself; a known row (budget.baseline.json) may go over 50 ms by what its control costs, the control pressed as often as the key in the same attempt, and is read at p95, not p99: p95 <= max(50, control p95 + 30) and p50 <= control p50 + 25.",
     "",
     ...(rows.some((r) => r.control && / \(nothing to move on this page\)$/.test(r.key))
       ? ["On the Reminders, Agents and Workflows pages `j k 5j 5k G gg` find nothing to move (a page has no message list): they are control rows.", ""]
       : []),
-    `${rows.filter((r) => !r.control && r.overTarget).length} of ${rows.filter((r) => !r.control).length} rows are over the p95 target; ${rows.filter((r) => r.known && r.over50).length} are over ${P99_LIMIT} ms at p99 and known; ${rows.filter((r) => r.failed).length} fail the gate; ${rows.filter((r) => r.invalid).length} are invalid.`,
+    `${rows.filter((r) => !r.control && r.overTarget).length} of ${rows.filter((r) => !r.control).length} rows are over the p95 target; ${rows.filter((r) => r.known && r.over50).length} are known and over ${LIMIT} ms at the figure they are read at; ${rows.filter((r) => r.failed).length} fail the gate; ${rows.filter((r) => r.invalid).length} are invalid.`,
   ];
   const table = lines.join("\n");
   console.log(`\n${table}\n`);
   fs.writeFileSync(`${OUT}.md`, `${table}\n`);
-  fs.writeFileSync(`${OUT}.json`, JSON.stringify({ reps: REPS, warm: WARM, attempts: ATTEMPTS, vsync: VSYNC, p95Target: P95_TARGET, p99Limit: P99_LIMIT, rows }, null, 2));
+  fs.writeFileSync(`${OUT}.json`, JSON.stringify({ reps: REPS, warm: WARM, attempts: ATTEMPTS, vsync: VSYNC, p95Target: P95_TARGET, limit: LIMIT, knownReadAt: readAt(true), rows }, null, 2));
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Vim mode key latency\n\n${table}\n`);
 });
