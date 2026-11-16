@@ -370,6 +370,37 @@ test("the tab can also send a token, and says when it is refused, without repeat
   expect(await leaks(page, fake)).not.toContain(TOKEN);
 });
 
+// The plugin deletes the agent's data volume when Buzz removes the agent (`remote.remove`), which is covered against the fake in the unit
+// tests. The whole Delete cannot be driven here: in the web build Buzz archives the agent first, and the harness's fixture relay answers
+// that request with a 500. What this test holds is the reason it is acceptable to delete the volume: Buzz's own confirmation, which says
+// the key goes and that it can't be undone, comes first, and until the person presses Delete the plugin has removed nothing.
+test("Buzz's own Delete warns before anything is removed, and Cancel removes nothing", async ({ page, app }) => {
+  const fake = await arrange(page, app);
+  const dialog = await openForm(page);
+  await fill(dialog);
+  await create(page, dialog);
+  await expect(page.getByText("On this computer")).toBeVisible({ timeout: 60_000 });
+  // The plugin wrote down which container is this agent's.
+  expect(await page.evaluate(() => localStorage.getItem("megatech.ghost-protocol.agents"))).toContain("maple");
+  expect(Object.keys(fake.state().volumes)).toEqual(["gp-maple-data"]);
+
+  await page.getByRole("tab", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Delete agent" }).click();
+  const confirm = page.getByRole("dialog", { name: "Delete Maple?" });
+  await expect(confirm).toContainText("Its provider deletes it and its key");
+  await expect(confirm).toContainText("It can't be undone.");
+  await shot(page, "delete-1-warning");
+  const noneRemoved = () => {
+    expect(calls(fake).some((line) => line.startsWith("rm ") || line.startsWith("volume rm"))).toBe(false);
+    expect(Object.keys(fake.state().containers).sort()).toEqual(["gp-maple", "gp-maple.updater"]);
+    expect(Object.keys(fake.state().volumes)).toEqual(["gp-maple-data"]);
+  };
+  noneRemoved();
+  await confirm.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(confirm).toHaveCount(0);
+  noneRemoved();
+});
+
 test("the tab is only on its own agents: another type's agent has none", async ({ page, app }) => {
   await arrange(page, app);
   await page.getByText("Local tester", { exact: true }).first().click();
