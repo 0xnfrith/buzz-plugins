@@ -1303,7 +1303,7 @@ var CLAUDE_STATUS = {
 	active: "Claude: active",
 	notActive: "Claude: not active",
 	/** After a sign-in the agent accepted, until the person does something else. */
-	accepted: "Claude accepted the sign-in. The agent connects to your relay next."
+	accepted: "Claude accepted the sign-in."
 };
 /** The commands of the guide, each shown in a copy block. */
 var COMMANDS = {

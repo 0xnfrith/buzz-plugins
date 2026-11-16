@@ -95,7 +95,7 @@ test("option 1: a token takes the agent from not active to active, and nothing k
   expect(await leaks(page, fake)).not.toContain(TOKEN);
 
   await expect(state).toHaveText("Claude: active", { timeout: 30_000 });
-  await expect(claude.locator('[data-gp="claude-accepted"]')).toHaveText("Claude accepted the sign-in. The agent connects to your relay next.");
+  await expect(claude.locator('[data-gp="claude-accepted"]')).toHaveText("Claude accepted the sign-in.");
   await expect(claude.locator('[data-gp="guide"]')).toHaveCount(0);
   await expect(claude.getByLabel("Claude setup token")).toHaveCount(0);
   await expect(claude.getByRole("button", { name: "Check again" })).toHaveCount(0);
