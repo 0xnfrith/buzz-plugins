@@ -3,123 +3,22 @@
 // tab. The web build cannot start a process, so the stub behind `ctx.host.spawn` (test/web/fixture.tsx) hands each call to test/web/pipe.mjs,
 // which runs the fake `docker` (test/fake-docker) in Node with the plugin's stdin, and sends what it prints back as it prints it: what the
 // plugin reads is what the fake printed. Run with plugins/ghost-protocol/test/run.sh.
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { test, expect } from "./fixture.mjs";
-import { chooseColorMode, closeSettings, openPage, openSettings, selectSettingsSection } from "./navigation.mjs";
-
-const dir = process.env.GHOST_PROTOCOL_DIR;
-const { createFakeDocker } = await import(pathToFileURL(join(dir, "test/fake-docker/index.mjs")).href);
-const { exposeDocker } = await import(pathToFileURL(join(dir, "test/web/pipe.mjs")).href);
-
-const SHOTS = process.env.SHOTS;
-if (SHOTS) mkdirSync(SHOTS, { recursive: true });
-const shot = (page, name) => SHOTS && page.screenshot({ path: join(SHOTS, `${name}.png`) });
+import { chooseColorMode, closeSettings, openSettings, selectSettingsSection } from "./navigation.mjs";
+import {
+  CODE, TOKEN, arrange, calls, cleanupFakes, create, dialogOf, fill, form, gp, introOf, leaks, openForm, progress, shot, step,
+} from "./ghost-protocol-agents-page.mjs";
 
 // The Agents page is off in the plain web build: the app's own stub for a native agent store turns it on.
 test.use({ pluginFixtures: true, productionBroker: true, localAgentActivity: true });
 test.describe.configure({ timeout: 180_000 });
 
-const TOKEN = "sk-ant-oat01-MADE-UP-TOKEN-1234567890";
-const CODE = "MADE-UP-LOGIN-CODE-9876";
 const QUESTION = "Let GHOST Protocol update itself? It needs control of Docker to swap in new versions. You can say no and update by hand.";
 const DOCKER_TEXT = "Docker didn't answer. Install or start Docker Desktop, then retry.";
 const OTHER_INTERFACE = "Update this plugin, or update GHOST Protocol";
 const REFUSED = "Your relay does not accept owner attestations. Ask its admin to turn them on, or to add this agent as a relay member.";
 
-const fakes = [];
-test.afterEach(async () => {
-  // The fake refuses a command it does not know (exit 64, `refused` in its log): a plugin that drifts from the interface fails here.
-  const refused = fakes.flatMap((fake) => fake.calls().filter((call) => call.refused).map((call) => call.argv.join(" ")));
-  for (const fake of fakes.splice(0)) {
-    // A command of the page may still be running and writing to the fake's folder: try again until it has ended.
-    for (let attempt = 0; ; attempt++) {
-      try {
-        fake.cleanup();
-        break;
-      } catch (error) {
-        if (attempt >= 20) throw error;
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-    }
-  }
-  expect(refused, "commands the fake refused").toEqual([]);
-});
-
-/** The Agents page with `docker` being the fake. `scenario` is the fake's; `mode: "no-spawn"` is a host that cannot start a process. */
-async function arrange(page, app, { scenario = {}, mode } = {}) {
-  page.setDefaultTimeout(30_000);
-  const fake = createFakeDocker({ scenario });
-  fakes.push(fake);
-  await exposeDocker(page, fake, dir);
-  // The plugin's one check of Docker is a closed command, `version`: the stub hands it to the fake too, through `__gpDocker`.
-  await page.exposeFunction("__gpDocker", async (argv) => {
-    const { stdout, stderr, code } = await fake.run(argv);
-    return { stdout, stderr, code };
-  });
-  await page.addInitScript(
-    (hostMode) => {
-      window.__gp = { script: [], fallback: { stdout: "27.3.1\n", code: 0 }, calls: [], kills: 0, release() {}, mode: hostMode, stream: true, fake: true };
-    },
-    mode,
-  );
-  // The avatar picker loads a video: answer it with nothing, so the harness does not fail on a blocked request.
-  await page.route("https://dwwgwmfqqjotj.cloudfront.net/**", (route) => route.fulfill({ status: 200, contentType: "video/webm", body: "" }));
-  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: app.origin }).catch(() => undefined);
-  await page.setViewportSize({ width: 1280, height: 1150 });
-  await page.goto(app.origin, { timeout: 90_000, waitUntil: "domcontentloaded" });
-  await openPage(page, "Agents");
-  return fake;
-}
-
-const dialogOf = (page) => page.getByRole("dialog", { name: "Create agent" });
-const introOf = (page) => page.getByRole("dialog", { name: "Meet your remote agent" });
-const form = (page) => page.locator('[data-gp="configuration"]');
-const progress = (page) => page.locator('[data-gp="progress"]');
-const step = (page, id) => progress(page).locator(`[data-step="${id}"]`);
-const calls = (fake) => fake.calls().map((call) => call.argv.join(" "));
-const gp = (page) => page.evaluate(() => ({ calls: window.__gp.calls, kills: window.__gp.kills }));
-
-/** New agent, Create a new agent, and the GHOST Protocol harness. */
-async function openForm(page) {
-  await page.getByRole("button", { name: "New agent" }).click();
-  await page.getByRole("menuitem", { name: /Create a new agent/ }).click();
-  const dialog = dialogOf(page);
-  await expect(dialog).toBeVisible();
-  await dialog.getByRole("combobox", { name: "Harness" }).click();
-  await page.getByRole("option", { name: "GHOST Protocol" }).click();
-  await expect(form(page)).toBeVisible();
-  return dialog;
-}
-
-/** Fills the form: the name, the answer to the update question, and, for the token's way, the token. */
-async function fill(dialog, { name = "Maple", update = "Yes", way = "token", token = TOKEN } = {}) {
-  await dialog.getByPlaceholder("Name").fill(name);
-  if (update) await dialog.getByRole("radio", { name: update, exact: true }).check();
-  if (way === "login") await dialog.getByRole("radio", { name: "Sign in with an address" }).check();
-  else if (token !== undefined) await dialog.getByLabel("Claude setup token").fill(token);
-}
-
-const create = async (page, dialog) => {
-  await dialog.getByRole("button", { name: "Create agent" }).click();
-  await expect(introOf(page)).toBeVisible();
-  await introOf(page).getByRole("button", { name: "Let’s go" }).click();
-};
-
-/** Everything a secret could be left in: the page's text, its fields, its storage, and every call the fake saw. */
-const leaks = (page, fake) =>
-  page
-    .evaluate(() =>
-      JSON.stringify({
-        text: document.body.innerText,
-        fields: [...document.querySelectorAll("input, textarea")].map((field) => field.value),
-        local: { ...localStorage },
-        session: { ...sessionStorage },
-        gp: window.__gp.calls,
-      }),
-    )
-    .then((found) => found + JSON.stringify([fake.calls(), fake.state()]));
+test.afterEach(cleanupFakes);
 
 test("the type is in the Harness list, and its form asks the three things and holds Create back until they are answered", async ({ page, app }) => {
   const fake = await arrange(page, app);
@@ -318,58 +217,6 @@ test("a Buzz that cannot start a program says so, and runs nothing", async ({ pa
   await expect(introOf(page).getByRole("alert")).toHaveText("This Buzz cannot start programs. Use the Buzz desktop app.", { timeout: 60_000 });
 });
 
-test("the sign-in by address is done from the agent's own tab: Create stops where the agent waits for Claude", async ({ page, app }) => {
-  const fake = await arrange(page, app);
-  const dialog = await openForm(page);
-  await fill(dialog, { way: "login" });
-  await create(page, dialog);
-  await expect(page.getByText("On this computer")).toBeVisible({ timeout: 60_000 });
-  // Nothing signed it in: it waits.
-  expect(calls(fake).some((line) => line.includes(" claude login") || line.includes(" claude token"))).toBe(false);
-  const waiting = JSON.parse((await fake.run(["exec", "gp-maple", "gp", "status", "--json"])).stdout);
-  expect(waiting.state).toBe("needs-claude");
-
-  await page.getByRole("tab", { name: "GHOST Protocol" }).click();
-  const claude = page.locator('[data-gp="claude"]');
-  await expect(claude.locator('[data-gp="claude-state"]')).toHaveText("Not signed in to Claude yet.");
-  await claude.getByRole("button", { name: "Sign in with an address" }).click();
-  const login = page.locator('[data-gp="login"]');
-  const address = login.getByRole("link");
-  await expect(address).toHaveAttribute("href", /^https:\/\/claude\.example\/login\?state=[0-9a-f]{16}$/);
-  await expect(address).toHaveAttribute("target", "_blank");
-  await expect(address).toHaveAttribute("rel", /noopener/);
-  await shot(page, "signin-1-address");
-  await login.getByLabel("Code from Claude").fill(CODE);
-  await login.getByRole("button", { name: "Continue" }).click();
-  await expect(claude.locator('[data-gp="claude-state"]')).toHaveText("Signed in to Claude.", { timeout: 30_000 });
-  const loginCall = fake.calls().find((call) => call.argv.includes("login"));
-  expect(loginCall.argv).toEqual(["exec", "-i", "gp-maple", "gp", "claude", "login"]);
-  expect(loginCall.stdin.attached).toBe(true);
-  expect(await leaks(page, fake)).not.toContain(CODE);
-  // The agent now runs.
-  await expect.poll(async () => JSON.parse((await fake.run(["exec", "gp-maple", "gp", "status", "--json"])).stdout).state).toBe("running");
-});
-
-test("the tab can also send a token, and says when it is refused, without repeating it", async ({ page, app }) => {
-  const fake = await arrange(page, app, { scenario: "token-rejected" });
-  const dialog = await openForm(page);
-  await fill(dialog, { way: "login" });
-  await create(page, dialog);
-  await expect(page.getByText("On this computer")).toBeVisible({ timeout: 60_000 });
-  await page.getByRole("tab", { name: "GHOST Protocol" }).click();
-  const claude = page.locator('[data-gp="claude"]');
-  await claude.getByLabel("Claude setup token").fill(TOKEN);
-  await claude.getByRole("button", { name: "Send token" }).click();
-  await expect(claude.locator('[data-gp="claude-problem"]')).toContainText("Claude did not accept that token");
-  await expect(claude.getByLabel("Claude setup token")).toHaveValue("");
-  expect(await leaks(page, fake)).not.toContain(TOKEN);
-  fake.use("ok");
-  await claude.getByLabel("Claude setup token").fill(TOKEN);
-  await claude.getByRole("button", { name: "Send token" }).click();
-  await expect(claude.locator('[data-gp="claude-state"]')).toHaveText("Signed in to Claude.", { timeout: 30_000 });
-  expect(await leaks(page, fake)).not.toContain(TOKEN);
-});
-
 // The plugin deletes the agent's data volume when Buzz removes the agent (`remote.remove`), which is covered against the fake in the unit
 // tests. The whole Delete cannot be driven here: in the web build Buzz archives the agent first, and the harness's fixture relay answers
 // that request with a 500. What this test holds is the reason it is acceptable to delete the volume: Buzz's own confirmation, which says
@@ -421,7 +268,7 @@ test("Buzz's Finish setup, with the token way and no form, leaves the agent wait
   const waiting = JSON.parse((await fake.run(["exec", "gp-maple", "gp", "status", "--json"])).stdout);
   expect(waiting.state).toBe("needs-claude");
   await page.getByRole("tab", { name: "GHOST Protocol" }).click();
-  await expect(page.locator('[data-gp="claude"] [data-gp="claude-state"]')).toHaveText("Not signed in to Claude yet.");
+  await expect(page.locator('[data-gp="claude"] [data-gp="claude-state"]')).toHaveText("Claude: not active");
   expect(Object.keys(fake.state().containers).sort()).toEqual(["gp-maple", "gp-maple.updater"]);
 });
 

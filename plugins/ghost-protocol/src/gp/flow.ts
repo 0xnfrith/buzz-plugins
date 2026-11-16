@@ -212,7 +212,7 @@ async function signIn(d: Deps, slug: string, input: ActivateInput): Promise<bool
   // A token with a space in it is no token: it is refused, not put off.
   if (input.claudeWay === "token" && held.trim() !== "" && /\s/.test(held.trim())) {
     d.clearToken();
-    return stop(d, "claude", "That is not a Claude setup token: it has a space in it. Make one with `claude setup-token`, paste it, and press Create again.");
+    return stop(d, "claude", "That is not a Claude setup token: it has a space in it. Make one with claude setup-token, paste it, and press Create again.");
   }
   if (input.claudeWay === "login" || held.trim() === "") {
     // The address's way needs the person to act while it runs, which Buzz's Create dialog does not allow: it runs from the agent's panel.

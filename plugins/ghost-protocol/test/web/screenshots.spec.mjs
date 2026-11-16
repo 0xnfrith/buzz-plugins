@@ -16,6 +16,8 @@
 //                                    the Messages sidebar.
 //   docker-is-running, docker-did-not-answer
 //                                    the plugin's page with what `docker version` prints scripted (the web build cannot run a program).
+// The three pictures of the Claude guide in the agent's tab are made by claude-guide-screenshots.spec.mjs, which needs the Agents page and
+// so its own test options; this spec only knows their names, so that screenshots/ is held to exactly the pictures that both make.
 // The install steps before the list (Manage plugins, Add, the address) are pictures of the desktop app that the other plugins' READMEs use
 // too: assets/install/. Not made here.
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -37,6 +39,8 @@ const COMMITTED = PLUGIN_DIR && join(PLUGIN_DIR, "screenshots");
 // The repository's rule for a README's PNG (.github/plugin-assets/check.mjs), and the sides a picture of one dialog stays within.
 const MAX_BYTES = 100 * 1024;
 const MAX_SIDE = 1000;
+
+const GUIDE_PICTURES = ["claude-guide-active.png", "claude-guide-not-active.png", "claude-guide-token-refused.png"];
 
 const made = [];
 test.use({ pluginFixtures: true });
@@ -290,7 +294,7 @@ test("the pictures made are the ones committed in screenshots/", async () => {
   if (COMMITTED) {
     // Each committed picture is a PNG of the same sane size, and nothing is committed that this spec does not make. (Not the same pixels:
     // fonts and anti-aliasing differ from one machine to the next.)
-    expect(readdirSync(COMMITTED).sort(), "screenshots/ holds exactly the pictures this spec makes").toEqual(made);
-    for (const name of made) sizeOf(join(COMMITTED, name));
+    expect(readdirSync(COMMITTED).sort(), "screenshots/ holds exactly the pictures this spec and the Claude guide's make").toEqual([...made, ...GUIDE_PICTURES].sort());
+    for (const name of [...made, ...GUIDE_PICTURES]) sizeOf(join(COMMITTED, name));
   }
 });

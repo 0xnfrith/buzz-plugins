@@ -1,18 +1,29 @@
-// An agent's Claude sign-in, in its GHOST Protocol tab: whether it has one, and the two ways to give it one. The token's way is also in the
-// Create form; the address's way is only here, because Buzz's Create dialog cannot ask the person for a code while it runs (src/gp/claude.ts).
-// What the person pastes is kept in memory for the one command that takes it, and goes when the command ends or the tab does.
+// An agent's Claude sign-in, in its GHOST Protocol tab: "Claude: active" or "Claude: not active", kept up to date while the tab is open,
+// and, when it is not active, the guide to connecting it (src/ui/ClaudeGuide.tsx) with the two ways to give it a sign-in. The token's way
+// is also in the Create form; the address's way is only here, because Buzz's Create dialog cannot ask the person for a code while it runs
+// (src/gp/claude.ts). What the person pastes is kept in memory for the one command that takes it, and goes when the command ends, whatever
+// it says, or when the tab does.
 import type { Host } from "../buzz";
-import { isSignedIn, signInByAddress, signInWithToken } from "../gp/claude";
+import { CLAUDE_STATUS } from "../claude-words";
 import { startOn } from "../docker";
+import { isSignedIn, signInByAddress, signInWithToken, type Result } from "../gp/claude";
 import { createProgress, createSecrets } from "../gp/progress";
+import { POLL_MS } from "../observe";
 import { React } from "../react";
 import { tokenFit } from "./CreateForm";
+import { ClaudeGuide, type Failure } from "./ClaudeGuide";
 import { Login } from "./Login";
 
 type State = Readonly<{ kind: "checking" }> | Readonly<{ kind: "answer"; active: boolean }> | Readonly<{ kind: "problem"; message: string }>;
 
+type Props = {
+  slug: string;
+  /** Called when the agent has accepted a sign-in, so the rest of the tab can look again at once. */
+  onSignedIn?: () => void;
+};
+
 export function createClaudePanel(host: Host) {
-  return function ClaudePanel({ slug }: { slug: string }) {
+  return function ClaudePanel({ slug, onSignedIn }: Props) {
     const start = React.useMemo(() => startOn(host), []);
     const secrets = React.useMemo(createSecrets, []);
     const progress = React.useMemo(createProgress, []);
@@ -21,19 +32,36 @@ export function createClaudePanel(host: Host) {
     const [state, setState] = React.useState<State>({ kind: "checking" });
     const [round, setRound] = React.useState(0);
     const [busy, setBusy] = React.useState(false);
-    const [message, setMessage] = React.useState("");
+    const [failure, setFailure] = React.useState<Failure>();
+    const [accepted, setAccepted] = React.useState(false);
     const work = React.useRef<AbortController | undefined>(undefined);
+    // Read by the looks that repeat, which must not run beside a sign-in: the two would talk to the agent at once.
+    const signingIn = React.useRef(false);
 
-    // Looks at the sign-in when the tab opens and when the person asks again; leaving the tab ends the look and any sign-in under way.
+    // Looks at the sign-in when the tab opens, when the person asks again and after a sign-in, then again about every ten seconds, so a
+    // sign-in done elsewhere (in a terminal) shows up. A look that repeats leaves what is shown until its answer arrives. Leaving the
+    // tab ends the look and any sign-in under way.
     React.useEffect(() => {
       if (!start) return;
       const abort = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
       setState({ kind: "checking" });
-      void isSignedIn({ start }, slug, abort.signal).then((answer) => {
-        if (abort.signal.aborted) return;
-        setState(answer.ok ? { kind: "answer", active: answer.active } : { kind: "problem", message: answer.message });
-      });
-      return () => abort.abort();
+      const look = async () => {
+        if (!signingIn.current) {
+          const answer = await isSignedIn({ start }, slug, abort.signal);
+          if (abort.signal.aborted) return;
+          setState(answer.ok ? { kind: "answer", active: answer.active } : { kind: "problem", message: answer.message });
+          // An agent that is active has no refusal to show: one from before, if it goes not active again, is not a sign-in just tried.
+          if (answer.ok && answer.active) setFailure(undefined);
+          if (answer.ok && !answer.active) setAccepted(false);
+        }
+        timer = setTimeout(() => void look(), POLL_MS);
+      };
+      void look();
+      return () => {
+        abort.abort();
+        clearTimeout(timer);
+      };
     }, [slug, round, start]);
     React.useEffect(
       () => () => {
@@ -54,79 +82,69 @@ export function createClaudePanel(host: Host) {
       );
     }
 
-    const finish = (result: { ok: true } | { ok: false; message: string; stopped?: true }) => {
-      work.current = undefined;
-      setBusy(false);
-      secrets.clear();
-      if (result.ok) {
-        setMessage("");
-        setRound((n) => n + 1);
-      } else if (!result.stopped) setMessage(result.message);
-    };
-    const run = (job: (signal: AbortSignal) => Promise<{ ok: true } | { ok: false; message: string; stopped?: true }>) => {
+    const run = (way: Failure["way"], job: (signal: AbortSignal) => Promise<Result>) => {
       const abort = new AbortController();
       work.current = abort;
+      signingIn.current = true;
       setBusy(true);
-      setMessage("");
-      void job(abort.signal).then(finish);
+      setFailure(undefined);
+      setAccepted(false);
+      void job(abort.signal).then((result) => {
+        work.current = undefined;
+        signingIn.current = false;
+        setBusy(false);
+        // Nothing the person typed outlives the command.
+        secrets.clear();
+        if (result.ok) {
+          setAccepted(true);
+          setRound((n) => n + 1);
+          onSignedIn?.();
+        } else if (!result.stopped) {
+          setFailure({ way, message: result.message, ...(result.said === undefined ? {} : { said: result.said }) });
+        }
+      });
     };
 
     const active = state.kind === "answer" && state.active;
+    const notActive = state.kind === "answer" && !state.active;
     const headline =
-      state.kind === "checking" ? "Checking…" : state.kind === "problem" ? state.message : active ? "Signed in to Claude." : "Not signed in to Claude yet.";
+      state.kind === "checking" ? CLAUDE_STATUS.checking : state.kind === "problem" ? state.message : active ? CLAUDE_STATUS.active : CLAUDE_STATUS.notActive;
     return (
       <section className="gp-create" aria-labelledby="gp-claude-title" data-gp="claude">
         <h3 id="gp-claude-title">Claude</h3>
         <p className="gp-question" role={state.kind === "problem" ? "alert" : "status"} data-gp="claude-state">
           {headline}
         </p>
-        {state.kind === "answer" && !active && !view.login && (
-          <>
-            <div className="gp-create-fields">
-              <p className="gp-hint">
-                Run <code>claude setup-token</code> in a terminal and paste the token here. It goes to the agent and nowhere else: this plugin does not store it.
-              </p>
-              <input
-                className="gp-input"
-                type="password"
-                autoComplete="off"
-                spellCheck={false}
-                aria-label="Claude setup token"
-                value={token}
-                disabled={busy}
-                onChange={(event) => secrets.setToken(event.target.value)}
-              />
-              <div className="gp-row">
-                <button type="button" className="gp-button" disabled={busy || !tokenFit(token)} onClick={() => run((signal) => signInWithToken({ start }, slug, token, signal))}>
-                  Send token
-                </button>
-              </div>
-            </div>
-            <div className="gp-create-fields">
-              <p className="gp-hint">Or sign in at an address, and paste back the code you get.</p>
-              <div className="gp-row">
-                <button type="button" className="gp-button" disabled={busy} onClick={() => run((signal) => signInByAddress({ start }, slug, progress.askCode, signal))}>
-                  Sign in with an address
-                </button>
-              </div>
-            </div>
-          </>
-        )}
-        {view.login && <Login key={view.login.url} progress={progress} url={view.login.url} />}
-        {message !== "" && (
-          <p className="gp-hint" role="alert" data-gp="claude-problem">
-            {message}
+        {accepted && active && (
+          <p className="gp-hint" role="status" data-gp="claude-accepted">
+            {CLAUDE_STATUS.accepted}
           </p>
         )}
-        {(state.kind === "problem" || (state.kind === "answer" && !active)) && !busy && (
+        {(state.kind === "problem" || notActive) && !busy && (
           <div className="gp-row">
             <button type="button" className="gp-button" onClick={() => setRound((n) => n + 1)}>
               Check again
             </button>
           </div>
         )}
+        {notActive && (
+          <ClaudeGuide
+            busy={busy}
+            token={token}
+            onToken={secrets.setToken}
+            canSend={tokenFit(token)}
+            onSend={() => {
+              // The field empties as the token leaves it: the command has the only copy, and it is gone with the command.
+              const sent = token;
+              secrets.clear();
+              run("token", (signal) => signInWithToken({ start }, slug, sent, signal));
+            }}
+            onStartLogin={() => run("login", (signal) => signInByAddress({ start }, slug, progress.askCode, signal))}
+            login={view.login && <Login key={view.login.url} progress={progress} url={view.login.url} />}
+            failure={failure}
+          />
+        )}
       </section>
     );
   };
 }
-

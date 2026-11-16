@@ -23,8 +23,8 @@ export const RELAY_WORDS: Readonly<Record<Relay, string>> = {
 };
 
 export const CLAUDE_WORDS: Readonly<Record<Claude, string>> = {
-  active: "Signed in",
-  "not-active": "Not signed in",
+  active: "Active",
+  "not-active": "Not active",
 };
 
 /** The only thing shown when GHOST Protocol speaks an interface this plugin does not know (GHOST Protocol's interface). */
