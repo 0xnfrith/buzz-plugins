@@ -70,7 +70,7 @@ describe("checkDocker", () => {
   });
 
   it("shows the Docker Desktop text when exit 0 comes with nothing that is a version", async () => {
-    for (const printed of ["", "\n", "<no value>\n", "Cannot connect to the Docker daemon at unix:///var/run/docker.sock\n", "27.3.1\n28.0.0\n", "27 3 1", "x".repeat(65), "\u0000"]) {
+    for (const printed of ["", "\n", "<no value>\n", "Cannot connect to the Docker daemon at unix:///var/run/docker.sock\n", "27.3.1\n28.0.0\n", "27 3 1", "null", "error", "unknown", "undefined", "true", "v27.3.1", "-27.3.1", ".1", "x".repeat(65), "\u0000"]) {
       expect(await checkDocker(prints(printed).host), JSON.stringify(printed)).toEqual({ state: "unavailable" });
     }
   });

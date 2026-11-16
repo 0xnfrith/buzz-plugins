@@ -58,7 +58,7 @@ The plugin has not been run in the Buzz desktop app yet; a run on a real Mac is 
 | **Not covered** | **Starting a process is desktop only, so the browser suite replaces the host's `spawn` with a stub that scripts what `docker version` prints and how it exits. Nothing in CI runs `docker`, runs the plugin in the Buzz desktop app or imports it through the Git importer.** A run in the desktop app is not built yet. |
 | Platforms | **macOS:** not run yet. **Linux:** should work, not run. **Windows:** not checked; whether Buzz can start `docker` there has not been tried. |
 
-The pipeline, for a change to this folder: `.github/workflows/ghost-protocol-tests.yml` runs the type check, the unit tests, a check that the committed `plugin.js` is the build of `src/`, the tests of the fake `docker` (`test/fake-docker`, when it exists) on Linux and on macOS, and the browser suite. `all-tests` waits for it.
+The pipeline, for a change to this folder: `.github/workflows/ghost-protocol-tests.yml` runs the type check, the unit tests, a check that the committed `plugin.js` is the build of `src/`, the tests of the fake `docker` (`test/fake-docker`, when it exists) on Linux and on macOS through `test/fake-docker-tests.sh`, which fails when that folder has no test file or a test fails or is skipped, and the browser suite. `all-tests` waits for it.
 
 ## Tests
 

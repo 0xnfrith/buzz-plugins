@@ -54,15 +54,11 @@ jobs:
           jq -e '.numTotalTests > 0 and .numPassedTests == .numTotalTests and .numFailedTests == 0 and .numPendingTests == 0' "$RUNNER_TEMP/unit.json"
           jq '{tests: .numTotalTests, passed: .numPassedTests, failed: .numFailedTests, skipped: .numPendingTests}' "$RUNNER_TEMP/unit.json"
       - name: Fake docker tests
-        # The fake `docker` the plugin's later tests put first on the PATH has node:test files and needs no install. They run once the
-        # folder exists; from then on a folder without a test file fails (the glob matches nothing), so they cannot stop running quietly.
+        # The fake `docker` the plugin's later tests put first on the PATH has node:test files and needs no install. The script runs them
+        # once the folder exists. From then on it fails when the folder has no *.test.mjs file (`node --test` with a glob that matches
+        # nothing exits 0), and when a test fails or is skipped, so they cannot stop running quietly. Its own tests are in the unit tests.
         working-directory: .
-        run: |
-          if [ -d plugins/ghost-protocol/test/fake-docker ]; then
-            node --test plugins/ghost-protocol/test/fake-docker/*.test.mjs
-          else
-            echo "plugins/ghost-protocol/test/fake-docker is not there yet: nothing to run."
-          fi
+        run: plugins/ghost-protocol/test/fake-docker-tests.sh
       - name: plugin.js is the build of the source
         # Buzz loads the committed plugin.js and never runs a build: it has to be what this source builds to. The file is removed
         # first, so a build that does not write it (a changed output name, a build script that does nothing) leaves it missing, and
@@ -81,7 +77,7 @@ jobs:
 
   fake-docker-macos:
     # The fake `docker` runs on Linux and on macOS CI (it is a node script). This is the repository's only macOS job; it runs the same
-    # node:test files as the step above, on a Mac, and has nothing to run until plugins/ghost-protocol/test/fake-docker exists.
+    # node:test files as the step above (the same script), on a Mac, and has nothing to run until plugins/ghost-protocol/test/fake-docker exists.
     name: GHOST Protocol fake docker tests (macOS)
     runs-on: macos-15
     timeout-minutes: 10
@@ -93,12 +89,8 @@ jobs:
         with:
           node-version: 24
       - name: Fake docker tests
-        run: |
-          if [ -d plugins/ghost-protocol/test/fake-docker ]; then
-            node --test plugins/ghost-protocol/test/fake-docker/*.test.mjs
-          else
-            echo "plugins/ghost-protocol/test/fake-docker is not there yet: nothing to run."
-          fi
+        # The same script as the Linux job runs, and the same guards.
+        run: plugins/ghost-protocol/test/fake-docker-tests.sh
 
   browser:
     # plugins/ghost-protocol/test/web/ghost-protocol.spec.mjs in headless Chromium against block/buzz-app's own production web build, at

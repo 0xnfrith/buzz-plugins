@@ -26,9 +26,9 @@ export const WORDS = {
 
 export const textOf = (state: Check["state"] | "checking"): string => WORDS[state];
 
-// What `docker version` prints for a server: 27.3.1, 28.0.0-rc.1, 24.0.7-ce, 20.10.24+dfsg1. One line, no spaces: an error message, a
-// banner or a template's "<no value>" is not a version, even if the command exited with 0.
-const VERSION = /^[0-9A-Za-z][0-9A-Za-z._+~-]{0,63}$/;
+// What `docker version` prints for a server: 27.3.1, 28.0.0-rc.1, 24.0.7-ce, 20.10.24+dfsg1. One line, no spaces, and it starts with a
+// digit: an error message, a banner, a template's "<no value>" or a word such as "null" is not a version, even if the command exited with 0.
+const VERSION = /^[0-9][0-9A-Za-z._+~-]{0,63}$/;
 
 export function versionOf(output: string): string | undefined {
   const lines = output.trim().split(/\r?\n/);

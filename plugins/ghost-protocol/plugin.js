@@ -48,7 +48,7 @@ var WORDS = {
 	unsupported: "This Buzz cannot start programs. Use the Buzz desktop app."
 };
 var textOf = (state) => WORDS[state];
-var VERSION = /^[0-9A-Za-z][0-9A-Za-z._+~-]{0,63}$/;
+var VERSION = /^[0-9][0-9A-Za-z._+~-]{0,63}$/;
 function versionOf(output) {
 	const lines = output.trim().split(/\r?\n/);
 	const [line] = lines;
