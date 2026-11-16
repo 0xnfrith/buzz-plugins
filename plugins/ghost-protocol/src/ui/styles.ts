@@ -1,7 +1,19 @@
 // One stylesheet, added to <head> inside ctx.effect and removed by its cleanup. Surfaces, text, borders and the focus ring come from the
 // host's theme tokens, so light and dark follow Settings -> Appearance with no listener, and every var() has a fallback in case a later
 // host drops a token. The plugin adds no colour of its own.
+import { PAGE_ICON } from "./icons";
+
 export const CSS = /* css */ `
+/* [DOM] The page's entry in navigation and search. The host draws its icon as an <img> of PAGE_ICON, which cannot follow the theme, so
+   paint the same shape in the entry's text colour (a mask) and move the image's own pixels out of its box. It matches only an <img>
+   whose src is exactly PAGE_ICON, so no other icon is touched. If a later host draws the icon some other way this stops matching and the
+   icon is simply the plain black one. */
+img[src="${PAGE_ICON}"] {
+  background-color: currentColor;
+  -webkit-mask: url("${PAGE_ICON}") center / contain no-repeat;
+  mask: url("${PAGE_ICON}") center / contain no-repeat;
+  object-position: 999px 0;
+}
 .gp-root {
   --gp-ink: var(--text-standard, #e9eef4);
   --gp-muted: var(--text-metadata, #8290a0);
@@ -30,4 +42,21 @@ export const CSS = /* css */ `
   background: transparent; color: var(--gp-ink); font: inherit; font-weight: 500; cursor: pointer; }
 .gp-button:hover:not(:disabled) { background: var(--gp-hover); }
 .gp-button:disabled { opacity: 0.5; cursor: default; }
+.gp-form { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; }
+.gp-input { width: 100%; max-width: 320px; height: 28px; padding: 0 8px; border: 1px solid var(--gp-line); border-radius: 4px;
+  background: transparent; color: var(--gp-ink); font: inherit; font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; }
+.gp-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.gp-problem { color: var(--text-danger, var(--gp-ink)); overflow-wrap: anywhere; }
+.gp-agent p { margin: 0; overflow-wrap: anywhere; }
+.gp-agent h2 { text-transform: none; letter-spacing: 0.02em; }
+.gp-agent .gp-facts dd { font-family: inherit; }
+.gp-agent .gp-facts dd.gp-mono { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; }
+.gp-refused { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px 12px; border: 1px solid var(--gp-line);
+  border-radius: 4px; width: 100%; }
+.gp-label { color: var(--gp-muted); }
+.gp-steps { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; }
+.gp-steps ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.gp-copy { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.gp-code { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; user-select: all;
+  padding: 2px 6px; border: 1px solid var(--gp-line); border-radius: 4px; }
 `;

@@ -2,18 +2,19 @@
   "id": "megatech.ghost-protocol",
   "name": "GHOST Protocol",
   "apiVersion": 1,
-  "description": "A first step towards running a GHOST Protocol agent in Docker on your computer. For now it only checks that Docker is installed and running, and shows its version. Needs Docker Desktop.",
+  "description": "Checks Docker and shows how a GHOST Protocol agent in Docker on your computer is doing: its state, version and relay, with Update, Roll back, Restart and Stop. Needs Docker Desktop.",
   "discovery": {
     "category": "agents",
     "tags": ["GHOST Protocol", "Docker", "Agents"]
   },
   "host": {
+    "commands": [{ "id": "version", "program": "docker", "args": ["version", "--format", "{{.Server.Version}}"] }],
     "processes": [
-      {
-        "id": "docker-version",
-        "program": "docker",
-        "args": ["version", "--format", "{{.Server.Version}}"]
-      }
+      { "id": "exec", "program": "docker", "args": ["exec"] },
+      { "id": "inspect-state", "program": "docker", "args": ["inspect", "--format", "{{.State.Status}}"] },
+      { "id": "inspect-image", "program": "docker", "args": ["inspect", "--format", "{{.Config.Image}}"] },
+      { "id": "restart", "program": "docker", "args": ["restart"] },
+      { "id": "stop", "program": "docker", "args": ["stop"] }
     ]
   }
 }

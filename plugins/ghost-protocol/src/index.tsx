@@ -1,5 +1,6 @@
 import type { Context } from "./buzz";
 import { provideReact } from "./react";
+import { PAGE_ICON } from "./ui/icons";
 import { CSS } from "./ui/styles";
 import { createPage } from "./ui/Page";
 
@@ -20,6 +21,7 @@ export function apply(ctx: Context): void {
   ctx.pages.register({
     id: "ghost-protocol",
     title: "GHOST Protocol",
+    icon: PAGE_ICON,
     primary: true,
     layout: "workspace",
     component: createPage(ctx.host),

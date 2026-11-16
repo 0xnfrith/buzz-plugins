@@ -1,17 +1,18 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { manifestProblems } from "../../../../.github/plugin-assets/check.mjs";
-import { PROCESS_ID } from "../../src/docker";
+import { COMMAND, PROCESS } from "../../src/docker";
 import { inject } from "../../src/index";
 import manifest from "../../manifest.json" with { type: "json" };
 
 const bytes = (text: string) => new TextEncoder().encode(text).length;
 // Buzz's rules for a declared process (crates/plugin-manager/src/lib.rs valid_program in block/buzz-app): a bare program name of at most
 // 80 bytes, at most 16 processes and, for each, at most 16 arguments of at most 1024 bytes without a NUL.
-const processProblems = (value: { host?: { processes?: { id: string; program: string; args?: string[] }[] } }) => {
+const processProblems = (value: { host?: { commands?: { id: string; program: string; args?: string[] }[]; processes?: { id: string; program: string; args?: string[] }[] } }) => {
   const problems: string[] = [];
-  const processes = value.host?.processes ?? [];
-  if (processes.length > 16) problems.push("more than 16 processes");
+  const processes = [...(value.host?.commands ?? []), ...(value.host?.processes ?? [])];
+  if ((value.host?.processes ?? []).length > 16) problems.push("more than 16 processes");
+  if ((value.host?.commands ?? []).length > 16) problems.push("more than 16 commands");
   for (const { id, program, args = [] } of processes) {
     if (!program || bytes(program) > 80 || !/^[A-Za-z0-9._-]+$/.test(program)) problems.push(`process ${id}: program must be a bare name`);
     if (args.length > 16) problems.push(`process ${id}: more than 16 arguments`);
@@ -21,22 +22,45 @@ const processProblems = (value: { host?: { processes?: { id: string; program: st
 };
 
 describe("manifest.json", () => {
-  it("declares exactly one process, the bare program `docker`, with its arguments fixed: `version --format {{.Server.Version}}`", () => {
-    expect(manifest.host.processes).toEqual([{ id: "docker-version", program: "docker", args: ["version", "--format", "{{.Server.Version}}"] }]);
-    // The id the code spawns is the one declared.
-    expect(manifest.host.processes.map(({ id }) => id)).toEqual([PROCESS_ID]);
+  it("declares the version check as a command, closed: `docker version --format {{.Server.Version}}`, no input, nothing for the caller to add", () => {
+    expect(manifest.host.commands).toEqual([{ id: "version", program: "docker", args: ["version", "--format", "{{.Server.Version}}"] }]);
+    // A command takes no argument of the caller's and takes input only when it declares `maxInputBytes`: this one declares neither a
+    // limit on input nor a different one on output, so Buzz's review shows "Input: none" and the default output limit.
+    expect(Object.keys(manifest.host.commands[0] ?? {}).sort()).toEqual(["args", "id", "program"]);
+    expect(manifest.host.commands.map(({ id }) => id)).toEqual([COMMAND.version]);
+  });
+
+  it("declares one process for each other docker verb the plugin uses, each the bare program `docker` with its leading words fixed, and none for any other verb", () => {
+    expect(manifest.host.processes).toEqual([
+      { id: "exec", program: "docker", args: ["exec"] },
+      { id: "inspect-state", program: "docker", args: ["inspect", "--format", "{{.State.Status}}"] },
+      { id: "inspect-image", program: "docker", args: ["inspect", "--format", "{{.Config.Image}}"] },
+      { id: "restart", program: "docker", args: ["restart"] },
+      { id: "stop", program: "docker", args: ["stop"] },
+    ]);
+    // The ids the code spawns are the ones declared, and the other way round.
+    expect(manifest.host.processes.map(({ id }) => id).sort()).toEqual(Object.values(PROCESS).sort());
+    expect(manifest.host.processes.map(({ id }) => id)).not.toContain(COMMAND.version);
+    // The verbs that would give the plugin more than it needs are not among them: starting a container, removing one or its data, copying
+    // files, building, or killing: none of these is a leading word of any entry.
+    const verbs = [...manifest.host.commands, ...manifest.host.processes].map(({ args }) => args[0]);
+    for (const verb of ["run", "rm", "volume", "cp", "build", "kill", "create", "start", "pull", "push", "login", "system", "network", "compose", "image", "container"]) {
+      expect(verbs, verb).not.toContain(verb);
+    }
+    expect([...new Set(verbs)].sort()).toEqual(["exec", "inspect", "restart", "stop", "version"]);
   });
 
   it("is not a shell: nothing runs through `sh`, `bash`, `cmd` or an interpreter, and no argument is a script", () => {
-    const [process] = manifest.host.processes;
-    expect(process?.program).toBe("docker");
-    expect(process?.program).not.toMatch(/^(sh|bash|zsh|cmd|powershell|pwsh|python3?|node|env)$/);
-    for (const argument of process?.args ?? []) expect(argument).not.toMatch(/[;&|`$\n]|-c$/);
+    for (const process of [...manifest.host.commands, ...manifest.host.processes]) {
+      expect(process.program).toBe("docker");
+      expect(process.program).not.toMatch(/^(sh|bash|zsh|cmd|powershell|pwsh|python3?|node|env)$/);
+      for (const argument of process.args ?? []) expect(argument).not.toMatch(/[;&|`$\n]|-c$/);
+    }
   });
 
-  it("asks Buzz for a process and nothing else: no commands, network origins, files, bundled program or other grants", () => {
-    expect(Object.keys(manifest.host)).toEqual(["processes"]);
-    expect(Object.keys(manifest.host.processes[0] ?? {}).sort()).toEqual(["args", "id", "program"]);
+  it("asks Buzz for the one command and the processes and nothing else: no network origins, files, bundled program or other grants", () => {
+    expect(Object.keys(manifest.host)).toEqual(["commands", "processes"]);
+    for (const process of manifest.host.processes) expect(Object.keys(process).sort()).toEqual(["args", "id", "program"]);
     expect(Object.keys(manifest).sort()).toEqual(["apiVersion", "description", "discovery", "host", "id", "name"]);
   });
 

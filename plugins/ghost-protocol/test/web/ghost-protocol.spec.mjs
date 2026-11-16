@@ -1,11 +1,11 @@
-// Drives the GHOST Protocol plugin in the real Buzz web build (headless Chromium, fixture relay) with a stub behind `ctx.host.spawn`
-// (test/web/fixture.tsx): the page, the one screen it draws for each way `docker version` can end, and what the plugin asked the host
-// for. The web build cannot start a process, so what `docker` itself prints is scripted here, and nothing in this file runs docker.
+// Drives the GHOST Protocol plugin in the real Buzz web build (headless Chromium, fixture relay) with a stub behind `ctx.host.runCommand`
+// (test/web/fixture.tsx): the page, the one screen it draws for each way `docker version` can end, its icon, and what the plugin asked the
+// host for. The web build cannot run a command, so what `docker` itself prints is scripted here, and nothing in this file runs docker.
 // Run with plugins/ghost-protocol/test/run.sh.
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect } from "./fixture.mjs";
-import { chooseColorMode, closeSettings, openPage, openSettings, selectSettingsSection } from "./navigation.mjs";
+import { chooseColorMode, closeSettings, openPage, openSettings, pageChoices, selectSettingsSection } from "./navigation.mjs";
 
 const SHOTS = process.env.SHOTS;
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
@@ -15,7 +15,7 @@ test.use({ pluginFixtures: true });
 // The first page of a run waits for the harness to warm its caches, and a shared runner is slow: give each test and each wait room.
 test.describe.configure({ timeout: 120_000 });
 
-const DOCKER_TEXT = "Install or start Docker Desktop";
+const DOCKER_TEXT = "Docker didn't answer. Install or start Docker Desktop, then retry.";
 
 /** The page, with `docker` scripted: `script` are the next spawns in order, `fallback` every one after. Opens the plugin's page. */
 async function arrange(page, app, { script = [], fallback = { stdout: "27.3.1\n", code: 0 }, mode } = {}) {
@@ -44,15 +44,18 @@ test("shows the Docker server's version when `docker version` exits 0 and prints
   await shot(page, "01-version");
 });
 
-test("asks the host for the declared process and nothing else: its id, no arguments, called on the host", async ({ page, app }) => {
+test("asks the host for the declared `version` command and nothing else: its id, nothing of its own, called on the host", async ({ page, app }) => {
   await arrange(page, app);
   await expect(root(page).locator("dd")).toHaveText("27.3.1");
   const { calls } = await gp(page);
-  // One call. Its process id is the manifest's, and only the two output handlers were passed: no arguments, no directory, no environment.
-  expect(calls).toEqual([{ id: "docker-version", options: ["onStderr", "onStdout"], onHost: true, declared: true }]);
+  // One call, for the page's check of Docker, to the declared `version` command, whose every word is fixed in the manifest. It was given
+  // no input. The status screen asks nothing until an agent is named.
+  expect(calls).toEqual([
+    { kind: "command", id: "version", options: [], args: [], argv: ["version", "--format", "{{.Server.Version}}"], onHost: true, declared: true },
+  ]);
 });
 
-test("shows the Docker Desktop text when `docker version` exits non-zero", async ({ page, app }) => {
+test("shows the failure text when `docker version` exits non-zero", async ({ page, app }) => {
   await page.setViewportSize({ width: 1300, height: 860 });
   await arrange(page, app, { fallback: { stderr: "Cannot connect to the Docker daemon\n", code: 1 } });
   await expect(root(page).getByRole("alert")).toHaveText(DOCKER_TEXT);
@@ -61,13 +64,13 @@ test("shows the Docker Desktop text when `docker version` exits non-zero", async
   await shot(page, "02-not-running");
 });
 
-test("shows the Docker Desktop text when there is no docker on the PATH (the host cannot start it)", async ({ page, app }) => {
+test("shows the same failure text when there is no docker on the PATH (the host cannot run it)", async ({ page, app }) => {
   await arrange(page, app, { fallback: { reject: "program not found" } });
   await expect(root(page).getByRole("alert")).toHaveText(DOCKER_TEXT);
   await expect(root(page).locator("dd")).toHaveCount(0);
 });
 
-test("shows the Docker Desktop text when it exits 0 with nothing that is a version, or killed by a signal", async ({ page, app }) => {
+test("shows the same failure text when it exits 0 with nothing that is a version, or is killed by a signal", async ({ page, app }) => {
   await arrange(page, app, { script: [{ stdout: "", code: 0 }, { stdout: "27.3.1\n", code: null }] });
   await expect(root(page).getByRole("alert")).toHaveText(DOCKER_TEXT);
   await root(page).getByRole("button", { name: "Check again" }).click();
@@ -75,7 +78,7 @@ test("shows the Docker Desktop text when it exits 0 with nothing that is a versi
   await expect(root(page).locator("dd")).toHaveCount(0);
 });
 
-test("says so when this Buzz has no way to start a process", async ({ page, app }) => {
+test("says so when this Buzz has no way to run a command", async ({ page, app }) => {
   await arrange(page, app, { mode: "no-spawn" });
   await expect(root(page).getByRole("alert")).toHaveText("This Buzz cannot start programs. Use the Buzz desktop app.");
   const { calls } = await gp(page);
@@ -91,7 +94,7 @@ test("says it is checking while docker has not answered, and Check again waits f
   await expect(root(page).getByRole("button", { name: "Check again" })).toBeEnabled();
 });
 
-test("Check again asks again, and moves from the Docker Desktop text to the version once Docker is up", async ({ page, app }) => {
+test("Check again asks again, and moves from the failure text to the version once Docker is up", async ({ page, app }) => {
   await arrange(page, app, { script: [{ stderr: "Cannot connect to the Docker daemon\n", code: 1 }], fallback: { stdout: "28.0.0-rc.1\r\n", code: 0 } });
   await expect(root(page).getByRole("alert")).toHaveText(DOCKER_TEXT);
   await root(page).getByRole("button", { name: "Check again" }).click();
@@ -101,13 +104,16 @@ test("Check again asks again, and moves from the Docker Desktop text to the vers
   expect((await gp(page)).calls).toHaveLength(2);
 });
 
-test("leaving the page while docker has not answered stops the process, and nothing is shown late", async ({ page, app }) => {
+test("leaving the page while docker has not answered shows nothing late", async ({ page, app }) => {
   await arrange(page, app, { script: [{ stdout: "27.3.1\n", code: 0, hold: true }] });
   await expect(root(page).getByRole("status")).toHaveText("Checking Docker…");
-  expect((await gp(page)).kills).toBe(0);
   await openPage(page, "Messages");
   await expect(root(page)).toHaveCount(0);
-  await expect.poll(async () => (await gp(page)).kills).toBe(1);
+  // The command cannot be stopped; its answer, when it comes, goes nowhere.
+  await page.evaluate(() => window.__gp.release());
+  await page.waitForTimeout(300);
+  await expect(root(page)).toHaveCount(0);
+  expect((await gp(page)).calls).toHaveLength(1);
 });
 
 test("the page follows the light and the dark theme, with text that reads in both", async ({ page, app }) => {
@@ -156,6 +162,54 @@ test("the page follows the light and the dark theme, with text that reads in bot
   }
   expect(grounds[0]).not.toBe(grounds[1]);
 });
+
+for (const mode of ["Dark", "Light"]) {
+  test(`${mode} mode: the page has its own icon, in navigation and in search, painted in the entry's own text colour`, async ({ page, app }) => {
+    await page.setViewportSize({ width: 1300, height: 860 });
+    await arrange(page, app);
+    await expect(root(page).locator("dd")).toHaveText("27.3.1");
+    await openSettings(page);
+    await selectSettingsSection(page, "Appearance");
+    await chooseColorMode(page, mode);
+    await closeSettings(page);
+    // The host draws the icon as an <img> of the data URL, which cannot follow the theme by itself: a mask rule does.
+    const look = (img) =>
+      img.evaluate((node) => {
+        const style = getComputedStyle(node);
+        return {
+          mask: style.maskImage !== "none" ? style.maskImage : style.webkitMaskImage,
+          paint: style.backgroundColor,
+          ink: style.color,
+          src: node.getAttribute("src"),
+          box: node.getBoundingClientRect().width,
+          mode: document.documentElement.getAttribute("data-color-mode"),
+        };
+      });
+    // In search: the row for GHOST Protocol among the pages.
+    const choices = await pageChoices(page, "GHOST");
+    const found = choices.locator('img[src^="data:image/svg+xml,"]').first();
+    await expect(found).toBeVisible();
+    const inSearch = await look(found);
+    expect(inSearch.mode).toBe(mode.toLowerCase());
+    expect(inSearch.src).toContain("data:image/svg+xml,");
+    expect(inSearch.mask).toContain(inSearch.src);
+    expect(inSearch.paint).toBe(inSearch.ink);
+    expect(inSearch.paint).not.toBe("rgba(0, 0, 0, 0)");
+    expect(inSearch.box).toBeGreaterThan(8);
+    await page.keyboard.press("Escape");
+    // In navigation: the row in the Messages sidebar, the same image.
+    const row = page.getByRole("navigation", { name: "Pages", exact: true }).getByRole("button", { name: "GHOST Protocol", exact: true });
+    await expect(row).toBeVisible();
+    const inNavigation = await look(row.locator("img").first());
+    expect(inNavigation.src).toBe(inSearch.src);
+    expect(inNavigation.paint).toBe(inNavigation.ink);
+    expect(inNavigation.mask).toContain(inNavigation.src);
+    // No other page's icon was painted: the rule matches this image only.
+    const others = await page.getByRole("navigation", { name: "Pages", exact: true }).locator("img").evaluateAll((images, src) => images.filter((img) => img.getAttribute("src") !== src).map((img) => getComputedStyle(img).maskImage), inSearch.src);
+    for (const mask of others) expect(mask).toBe("none");
+    await shot(page, `04-icon-${mode.toLowerCase()}`);
+  });
+}
 
 test("disabling the plugin removes its styles", async ({ page, app }) => {
   await arrange(page, app);
