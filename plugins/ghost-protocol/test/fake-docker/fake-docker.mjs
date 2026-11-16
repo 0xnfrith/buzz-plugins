@@ -79,7 +79,7 @@ function parseFlags(args, { bool = [], value = [], stop = false } = {}) {
         if (given !== undefined) throw new Refused(`the flag ${name} takes no value`);
         flags[name] = [true];
       } else if (value.includes(name)) take(name, given);
-      else throw new Refused(`the flag ${name} is not part of the interface`);
+      else throw new Refused(`${shownFlag(name)} is not part of the interface`);
     } else if (arg.startsWith("-") && arg.length > 1) {
       for (let i = 1; i < arg.length; i++) {
         const name = `-${arg[i]}`;
@@ -87,7 +87,7 @@ function parseFlags(args, { bool = [], value = [], stop = false } = {}) {
         else if (value.includes(name)) {
           take(name, arg.length > i + 1 ? arg.slice(i + 1) : undefined);
           break;
-        } else throw new Refused(`the flag ${name} is not part of the interface`);
+        } else throw new Refused(`${shownFlag(name)} is not part of the interface`);
       }
     } else if (stop) {
       rest.push(arg, ...args.slice(next));
@@ -96,6 +96,12 @@ function parseFlags(args, { bool = [], value = [], stop = false } = {}) {
   }
   return { flags, rest };
 }
+
+/** A flag the interface does not list, for a message: shown when it looks like a flag, else not (it may be a secret given in its place). */
+const shownFlag = (name) => (/^--?[a-z][a-z0-9-]{0,20}$/.test(name) ? `the flag ${name}` : "an argument that looks like a flag");
+
+/** A word for a message: shown when it looks like a plain word, else not (it may be a secret given in its place). */
+const plainWord = (text) => (/^[a-z][a-z0-9-]{0,15}$/.test(text ?? "") ? `"${text}"` : "that");
 
 const flag = (flags, ...names) => names.some((name) => flags[name]);
 function single(flags, label, ...names) {
@@ -107,7 +113,8 @@ const oneLine = (text) => !/[\r\n\0]/.test(text);
 
 function parseImage(reference) {
   const match = IMAGE.exec(reference ?? "");
-  if (!match) throw new Refused(`"${reference}" is not <registry>/ghost-protocol:<exact version> (the interface pins an exact version tag)`);
+  // The reference is not shown: a secret given in an image's place would be printed.
+  if (!match) throw new Refused("that is not <registry>/ghost-protocol:<exact version> (the interface pins an exact version tag)");
   if (match.groups.tag === "latest") throw new Refused("the image must carry an exact version, not latest");
   return { reference, name: "ghost-protocol", ...match.groups };
 }
@@ -121,7 +128,8 @@ function parseVolume(text) {
 /** An agent's container, gp-<slug>, or the update helper's, gp-<slug>.updater. */
 function parseContainerName(text) {
   const match = /^gp-(?<slug>[a-z0-9-]+)(?<helper>\.updater)?$/.exec(text ?? "");
-  if (!match) throw new Refused(`"${text}" is not a container name of the interface (gp-<slug>, or gp-<slug>.updater for the update helper)`);
+  // The name is not shown: in `docker exec` it may be a secret given in the wrong place.
+  if (!match) throw new Refused("that is not a container name of the interface (gp-<slug>, or gp-<slug>.updater for the update helper)");
   return { slug: match.groups.slug, name: text, helper: Boolean(match.groups.helper) };
 }
 
@@ -372,10 +380,11 @@ async function dockerRun(ctx) {
     stop: true,
   });
   const detached = flag(flags, "-d", "--detach");
-  // The update helper is told by its name, which no agent can have, or by its shape: the Docker socket mounted, or no data volume.
+  // The update helper is told by its name, which no agent can have, or by its mount: the Docker socket. An agent's start that forgets its
+  // data volume is not taken for it, so its refusal says what is wrong.
   const mountsGiven = ["-v", "--volume"].flatMap((flagName) => flags[flagName] ?? []);
-  const shaped = mountsGiven.some((mount) => mount.startsWith("/var/run/docker.sock")) || !mountsGiven.some((mount) => /^gp-[a-z0-9-]+-data:\/data$/.test(mount));
-  if (detached && (shaped || (single(flags, "--name", "--name") ?? "").endsWith(HELPER_SUFFIX))) return startHelper(ctx, { flags, rest });
+  const socketMounted = mountsGiven.some((mount) => mount.startsWith("/var/run/docker.sock"));
+  if (detached && (socketMounted || (single(flags, "--name", "--name") ?? "").endsWith(HELPER_SUFFIX))) return startHelper(ctx, { flags, rest });
   const image = parseImage(rest[0]);
   const command = rest.slice(1);
   const volume = parseVolume(single(flags, "-v", "-v", "--volume"));
@@ -440,7 +449,7 @@ function helperArgsProblem(args, slug) {
 async function startHelper(ctx, { flags, rest }) {
   const name = single(flags, "--name", "--name");
   const named = HELPER_NAME.exec(name ?? "");
-  if (!named) throw new Refused(`the update helper is named gp-<slug>${HELPER_SUFFIX}, not "${name}"`);
+  if (!named) throw new Refused(`the update helper is named gp-<slug>${HELPER_SUFFIX}`);
   const slug = named.groups.slug;
   if (flag(flags, "--rm")) throw new Refused("the update helper is long-lived: it is not started with --rm");
   if (single(flags, "--restart", "--restart") !== "unless-stopped") throw new Refused("the update helper is started with --restart unless-stopped");
@@ -570,7 +579,7 @@ async function init(ctx, { flags, image, volume, command, detached }) {
   if (detached || !flag(flags, "--rm") || flags["--name"] || flags["--restart"]) {
     throw new Refused("`init` runs as `docker run --rm -v gp-<slug>-data:/data <IMAGE> init ...`, without -d, --name or --restart");
   }
-  if (command[0] !== "init") throw new Refused(`"${command[0]}" is not a command of the image the interface lists (init, gp)`);
+  if (command[0] !== "init") throw new Refused(`${plainWord(command[0])} is not a command of the image the interface lists (init)`);
   const { flags: given, rest } = parseFlags(command.slice(1), { value: ["--name", "--relay", "--owner"] });
   if (rest.length) throw new Refused("`init` takes only --name, --relay and --owner");
   const name = single(given, "--name", "--name");
@@ -787,25 +796,29 @@ function describeGp(command) {
   return `\`gp ${shown.join(" ")}\`${hidden > 0 ? ` with ${hidden} more argument${hidden > 1 ? "s" : ""} (not shown: an argument may be a secret)` : ""}`;
 }
 
-/** argv as the call log keeps it: after `gp`, only the words of the interface. */
+/**
+ * argv as the call log keeps it. For `docker exec` only what the interface has is logged: `-i`, a container name, `gp` and its words. An
+ * environment flag, a container position or any other word could be a token given by mistake, and is `<not logged>`.
+ */
 function loggedArgv(argv) {
-  if (argv[0] !== "exec") return argv;
-  const known = new Set([...Object.keys(GP_WORDS), ...Object.values(GP_WORDS).flat()]);
-  const shown = ["exec"];
-  let at = 1;
-  while (at < argv.length && argv[at].startsWith("-")) shown.push(argv[at++]); // -i
-  if (at < argv.length) shown.push(argv[at++]); // the container
-  if (at < argv.length) shown.push(/^[a-z][a-z0-9-]{0,15}$/.test(argv[at]) ? argv[at] : "<not logged>"); // the program
-  at++;
-  for (; at < argv.length; at++) shown.push(known.has(argv[at]) ? argv[at] : "<not logged>");
-  return shown;
+  if (argv[0] === "exec") {
+    const known = new Set(["exec", "-i", "--interactive", "gp", ...Object.keys(GP_WORDS), ...Object.values(GP_WORDS).flat()]);
+    return argv.map((word) => (known.has(word) || /^gp-[a-z0-9-]+(\.updater)?$/.test(word) ? word : "<not logged>"));
+  }
+  // The commands that take a container, a volume or an image in a position a secret could be put in by mistake: only a name of the
+  // interface, a flag of the command, or a template is kept.
+  if (["restart", "stop", "rm", "inspect", "volume", "pull"].includes(argv[0])) {
+    const kept = /^(gp-[a-z0-9-]+(\.updater|-data)?|-f|--force|--format|rm|\{\{[A-Za-z0-9_. ]*\}\})$/;
+    return argv.map((word, at) => (at === 0 || kept.test(word) || IMAGE.test(word) ? word : "<not logged>"));
+  }
+  return argv;
 }
 
 async function dockerExec(ctx) {
   const { flags, rest } = parseFlags(ctx.args, { bool: ["-i", "--interactive"], stop: true });
   const name = parseContainerName(rest[0]).name;
   const [program, ...command] = rest.slice(1);
-  if (program !== "gp") throw new Refused(`${/^[a-z][a-z0-9-]{0,15}$/.test(program ?? "") ? `"${program}"` : "that"} is not a program of the interface (gp)`);
+  if (program !== "gp") throw new Refused(`${plainWord(program)} is not a program of the interface (gp)`);
   ctx.interactive = flag(flags, "-i", "--interactive");
   if (readState(ctx.dir).containers[name]?.helper) throw new Refused(`${name} is the update helper: the interface runs no gp command in it`);
   const [group, action, ...extra] = command;
@@ -879,7 +892,7 @@ export async function main(argv, io) {
   let code;
   try {
     const run = COMMANDS[argv[0]];
-    if (!run) throw new Refused(`"${argv[0] ?? ""}" is not a command of the interface`);
+    if (!run) throw new Refused(`${plainWord(argv[0])} is not a command of the interface`);
     checkDocker(scenario, argv);
     code = await run(ctx);
   } catch (error) {

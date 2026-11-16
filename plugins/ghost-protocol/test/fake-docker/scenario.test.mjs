@@ -187,7 +187,17 @@ describe("a secret given as an argument by mistake", () => {
       gpInput("maple", "claude", SECRET),
       gpInput("maple", "reset", SECRET),
       gpInput("maple", SECRET),
-      ["exec", "-i", "gp-maple", SECRET, "claude", "token"],
+      ["exec", "-i", "gp-maple", SECRET, "claude", "token"], // in the program's place
+      ["exec", "-i", SECRET, "gp", "claude", "token"], // in the container's place
+      ["exec", "-e", `CLAUDE_CODE_OAUTH_TOKEN=${SECRET}`, "gp-maple", "gp", "claude", "token"], // as an environment variable
+      ["exec", `--env=CLAUDE_CODE_OAUTH_TOKEN=${SECRET}`, "gp-maple", "gp", "claude", "token"],
+      ["exec", "--env", `CLAUDE_CODE_OAUTH_TOKEN=${SECRET}`, "gp-maple", "gp", "claude", "token"],
+      ["exec", "-i", "-e", `X=${SECRET}`, "gp-maple", "gp", "claude", "token"],
+      ["exec", "-i", `--${SECRET}`, "gp-maple", "gp", "status", "--json"], // as a flag that is not one
+      ["restart", SECRET],
+      ["pull", SECRET],
+      ["inspect", "--format", "{{.State.Status}}", SECRET],
+      ["rm", "-f", SECRET],
     ];
     for (const argv of mistakes) {
       const result = await fake.run(argv);

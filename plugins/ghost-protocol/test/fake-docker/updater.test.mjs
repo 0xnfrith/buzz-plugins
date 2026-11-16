@@ -132,17 +132,26 @@ describe("the helper's name can never be an agent's", () => {
     assert.equal(fake.state().containers["gp-maple-updater.updater"].target, "gp-maple-updater");
   });
 
-  test("it is told by its shape too: the socket mounted, or no data volume, is the helper's start whatever the name", async () => {
+  test("it is told by its mount too: the socket mounted is the helper's start whatever the name, and so is the helper's name with no mount", async () => {
     fake = withFake();
     await createAgent(fake);
     for (const argv of [
-      startHelperArgs().map((arg) => (arg === "gp-maple.updater" ? "gp-maple" : arg)), // the agent's own name, but a helper's mounts
-      startHelperArgs().filter((arg, i, all) => arg !== "-v" && all[i - 1] !== "-v"), // no mounts at all
+      startHelperArgs().map((arg) => (arg === "gp-maple.updater" ? "gp-maple" : arg)), // the agent's own name, but the helper's mount
+      startHelperArgs().filter((arg, i, all) => arg !== "-v" && all[i - 1] !== "-v"), // the helper's name, no mount at all
     ]) {
       const result = await fake.run(argv);
       assert.equal(result.code, 64, argv.join(" "));
       assert.match(result.stderr, /update helper/);
     }
+  });
+
+  test("an agent's start that forgets its data volume is told so, and is not taken for the helper", async () => {
+    fake = withFake();
+    await createAgent(fake, { slug: "zed" });
+    const result = await fake.run(startArgs("zed").filter((arg, i, all) => arg !== "-v" && all[i - 1] !== "-v"));
+    assert.equal(result.code, 64);
+    assert.match(result.stderr, /^fake-docker: -v must be gp-<slug>-data:\/data/);
+    assert.ok(!/update helper/.test(result.stderr));
   });
 });
 

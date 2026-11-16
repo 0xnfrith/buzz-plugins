@@ -30,7 +30,7 @@ fake.cleanup();
 | `fake.use(scenario)` / `fake.tweak(changes)` | Replace the scenario, or change some keys. A preset name (several joined with commas), or an object. A name or key the fake does not know throws at once. |
 | `fake.run(argv, { input?, env? })` | Runs the fake once and resolves `{ code, signal, stdout, stderr }`. `input` goes to stdin, which is then closed. |
 | `fake.start(argv, { env?, timeoutMs? })` | The same, but gives a handle to write to stdin later and to kill it. For `gp claude login`, which prints an address and then waits for a code. A process still there after `timeoutMs` (30 s) is killed and ends with `timedOut: true`, and `cleanup()` kills any that are left, so a test that fails half way cannot hang the run. |
-| `fake.calls()` | `[{ n, argv, exit, stdin: { attached, bytes, sha256, terminated }, refused?, tag? }]`. Only a digest of stdin is kept (except for the attestation tag, which is public), and after `gp` only the words of the interface are logged: an argument that is not one of them (a token given by mistake) is `<not logged>`. |
+| `fake.calls()` | `[{ n, argv, exit, stdin: { attached, bytes, sha256, terminated }, refused?, tag? }]`. Only a digest of stdin is kept (except for the attestation tag, which is public). `argv` is kept for what the interface has: for `docker exec`, `-i`, a container name, `gp` and its words; for `restart`, `stop`, `rm`, `inspect`, `volume` and `pull`, a name or image of the interface, a flag of the command and a template. Any other word, such as a token put in an environment flag or in a container's place by mistake, is `<not logged>`. |
 | `fake.state()` / `fake.patchState(change)` | What docker would know now: `{ images, volumes, containers }`. |
 | `fake.seed({ condition, slug, name, version, previousVersion })` | Puts an agent in place without running its commands: `needs-auth-tag`, `needs-claude`, `running` or `stopped`. |
 | `ownerKey(label?)`, `attestationTag(owner?, conditions?)` | A made-up owner public key, and a well-formed owner attestation for it. |
@@ -102,7 +102,7 @@ Presets, for `FAKE_DOCKER_SCENARIO` and `fake.use`: `ok`, `docker-missing`, `dae
 
 A Claude token and a login code come in on stdin and go nowhere: not printed, not in a message, not in `state.json`, `calls.jsonl` or `scenario.json`. The call log keeps only a SHA-256 of what was read, so a test can still check what was sent. The attestation tag is the one input kept as text: it is public (the owner signs it and the relay sees it).
 
-The same holds for a secret given as an argument by mistake (`gp claude token <token>`): the command is refused, the refusal says that an argument was left out and does not show it, and the call log keeps only the words of the interface after `gp`.
+The same holds for a secret given as an argument by mistake: after `gp` (`gp claude token <token>`), in an environment flag (`docker exec -e TOKEN=<token> ...`), or in the place of a container, an image, a program or a flag. The command is refused, the refusal does not show the value (it says that an argument was left out, or names no value at all), and the call log keeps the word as `<not logged>`. The state folder, stdout and stderr are checked for it in the tests.
 
 ## Where the fake follows the interface, and where it assumes
 
