@@ -18,7 +18,8 @@ const declaration = (id: string) => (manifest.host.processes as Declared[]).find
 /** The whole command line `docker` gets for a call: the arguments the manifest fixes for its process, then the call's own. */
 export const argvOf = (call: PluginCall): string[] => [...(declaration(call.process)?.args ?? []), ...call.args];
 
-export type Call = { id: string; args: readonly string[]; argv: string[]; optionKeys: string[] };
+/** `kind` says whether the plugin started a declared process or ran a declared command. */
+export type Call = { kind: "process" | "command"; id: string; args: readonly string[]; argv: string[]; optionKeys: string[] };
 
 /**
  * `missing`: there is no `docker` to start (the host's `spawn` rejects, as when a program is not on the PATH).
@@ -28,12 +29,27 @@ export function hostOver(fake: FakeDocker, { missing = false }: { missing?: bool
   const calls: Call[] = [];
   const running = new Set<ReturnType<typeof spawn>>();
   const host: Host = {
+    /** What the real host does: the declared command, run with its fixed arguments, and its stdout if it ended with 0, and null otherwise. */
+    async runCommand(this: unknown, id: string, input?: string): Promise<string | null> {
+      if (this !== host) throw new Error("runCommand must be called on the host");
+      const declared = (manifest.host.commands as Declared[]).find((command) => command.id === id);
+      if (declared === undefined) throw new Error(`command ${id} is not declared`);
+      calls.push({ kind: "command", id, args: [], argv: [...(declared.args ?? [])], optionKeys: input === undefined ? [] : ["input"] });
+      if (missing) return null;
+      const child = spawn(join(fake.binDir, declared.program), declared.args ?? [], { env: fake.env(), stdio: ["ignore", "pipe", "pipe"] });
+      running.add(child);
+      let stdout = "";
+      child.stdout.setEncoding("utf8").on("data", (text: string) => (stdout += text));
+      const code = await new Promise<number | null>((resolve) => child.on("close", resolve));
+      running.delete(child);
+      return code === 0 ? stdout : null;
+    },
     async spawn(this: unknown, id: string, options: SpawnOptions = {}): Promise<HostProcess> {
       if (this !== host) throw new Error("spawn must be called on the host");
       const declared = declaration(id);
       if (declared === undefined) throw new Error(`process ${id} is not declared`);
       const argv = [...(declared.args ?? []), ...(options.args ?? [])];
-      calls.push({ id, args: [...(options.args ?? [])], argv, optionKeys: Object.keys(options).sort() });
+      calls.push({ kind: "process", id, args: [...(options.args ?? [])], argv, optionKeys: Object.keys(options).sort() });
       if (missing) throw new Error("program not found: docker");
       const child = spawn(join(fake.binDir, declared.program), argv, { env: fake.env(), stdio: ["ignore", "pipe", "pipe"] });
       running.add(child);

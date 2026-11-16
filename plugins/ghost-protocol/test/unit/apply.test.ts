@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as plugin from "../../src/index";
+import { PAGE_ICON } from "../../src/ui/icons";
 
 /** The parts of Buzz's context `apply` touches, recording what it does. */
 function setup() {
@@ -27,6 +28,11 @@ describe("apply", () => {
     const { ctx } = setup();
     expect(ctx.pages.register).toHaveBeenCalledTimes(1);
     expect(ctx.pages.register.mock.calls[0]?.[0]).toMatchObject({ id: "ghost-protocol", title: "GHOST Protocol", primary: true, layout: "workspace" });
+  });
+
+  it("gives the page its ghost icon, so it can be told from the other pages in navigation and search", () => {
+    const { ctx } = setup();
+    expect(ctx.pages.register.mock.calls[0]?.[0]).toMatchObject({ icon: PAGE_ICON });
   });
 
   it("starts no process until the page is shown", () => {

@@ -8,8 +8,8 @@
     "tags": ["GHOST Protocol", "Docker", "Agents"]
   },
   "host": {
+    "commands": [{ "id": "version", "program": "docker", "args": ["version", "--format", "{{.Server.Version}}"] }],
     "processes": [
-      { "id": "version", "program": "docker", "args": ["version", "--format", "{{.Server.Version}}"] },
       { "id": "exec", "program": "docker", "args": ["exec"] },
       { "id": "inspect-state", "program": "docker", "args": ["inspect", "--format", "{{.State.Status}}"] },
       { "id": "inspect-image", "program": "docker", "args": ["inspect", "--format", "{{.Config.Image}}"] },

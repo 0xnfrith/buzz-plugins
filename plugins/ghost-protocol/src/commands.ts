@@ -1,7 +1,7 @@
 // Every `docker` call this plugin makes about an agent, as the process it names and the arguments that follow that process's fixed ones
 // (GHOST Protocol's interface: the status, the update and the way back, restart and stop). They are the only calls the status screen
 // makes, each built from a fixed list and the agent's checked slug. None takes a `-i` or `-t` (nothing is written to a process), and
-// none has an argument that begins with `-`: the flags are fixed in the manifest, ahead of them.
+// none has an argument that begins with `-` but `gp`'s own `--json`: the flags of `docker` itself are fixed in the manifest, ahead of them.
 import { PROCESS, type Call } from "./docker";
 import { isSlug } from "./slug";
 

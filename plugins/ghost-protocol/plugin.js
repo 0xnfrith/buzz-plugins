@@ -3,8 +3,25 @@ var React;
 function provideReact(react) {
 	React = react;
 }
+// src/ui/icons.ts
+/**
+* The page's entry in navigation and search: a ghost. It is one shape in one colour on purpose: Buzz draws a page's icon as an `<img>`,
+* which cannot take the theme's colour, so `CSS` (ui/styles) paints this shape in the entry's own text colour instead and uses this
+* image only as the mask. The eyes are holes in the shape (even-odd), so they show the entry's background.
+*/
+var PAGE_ICON = "data:image/svg+xml," + encodeURIComponent("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\"><path fill-rule=\"evenodd\" d=\"M12 3a7 7 0 0 0-7 7v10.5l2.33-1.75L9.67 20.5 12 18.75l2.33 1.75 2.34-1.75L19 20.5V10a7 7 0 0 0-7-7zM9.5 9.3a1.2 1.2 0 1 0 0 2.4 1.2 1.2 0 0 0 0-2.4zm5 0a1.2 1.2 0 1 0 0 2.4 1.2 1.2 0 0 0 0-2.4z\"/></svg>");
 // src/ui/styles.ts
 var CSS = `
+/* [DOM] The page's entry in navigation and search. The host draws its icon as an <img> of PAGE_ICON, which cannot follow the theme, so
+   paint the same shape in the entry's text colour (a mask) and move the image's own pixels out of its box. It matches only an <img>
+   whose src is exactly PAGE_ICON, so no other icon is touched. If a later host draws the icon some other way this stops matching and the
+   icon is simply the plain black one. */
+img[src="${PAGE_ICON}"] {
+  background-color: currentColor;
+  -webkit-mask: url("${PAGE_ICON}") center / contain no-repeat;
+  mask: url("${PAGE_ICON}") center / contain no-repeat;
+  object-position: 999px 0;
+}
 .gp-root {
   --gp-ink: var(--text-standard, #e9eef4);
   --gp-muted: var(--text-metadata, #8290a0);
@@ -52,10 +69,10 @@ var CSS = `
   padding: 2px 6px; border: 1px solid var(--gp-line); border-radius: 4px; }
 `;
 // src/docker.ts
+/** The id of the command in manifest.json's `host.commands`: `docker version --format {{.Server.Version}}`, all of it fixed there. */
+var COMMAND = { version: "version" };
 /** The ids of the processes in manifest.json's `host.processes`, and the leading arguments each fixes there. */
 var PROCESS = {
-	/** `version --format {{.Server.Version}}` */
-	version: "version",
 	/** `exec`: the container's name and the command in it follow. */
 	exec: "exec",
 	/** `inspect --format {{.State.Status}}`: the container's name follows. */
@@ -130,7 +147,7 @@ async function runDocker(host, call, options = {}) {
 var WORDS$1 = {
 	checking: "Checking Docker…",
 	ready: "Docker is running",
-	unavailable: "Install or start Docker Desktop",
+	unavailable: "Docker didn't answer. Install or start Docker Desktop, then retry.",
 	unsupported: "This Buzz cannot start programs. Use the Buzz desktop app."
 };
 var textOf = (state) => WORDS$1[state];
@@ -140,24 +157,21 @@ function versionOf(output) {
 	const [line] = lines;
 	return lines.length === 1 && line !== void 0 && VERSION.test(line) ? line : void 0;
 }
-/** `docker version --format {{.Server.Version}}`: its words are all fixed in the manifest, so it has none of its own. */
-var VERSION_CALL = {
-	process: PROCESS.version,
-	args: []
-};
 /**
-* Asks Docker for its server's version. Resolves with `undefined` when `signal` aborts first: the process is then stopped and the caller
-* has gone. It never rejects.
+* Asks Docker for its server's version, through the declared `version` command. The host gives it 5 seconds and says nothing of why it
+* failed. Resolves with `undefined` when `signal` aborts first, and the answer is then ignored: a command cannot be stopped. It never
+* rejects.
 */
-async function checkDocker(host, signal, timeoutMs = TIMEOUT_MS) {
-	const ran = await runDocker(host, VERSION_CALL, {
-		signal,
-		timeoutMs
-	});
-	if (ran === void 0) return void 0;
-	if (ran.kind === "unsupported") return { state: "unsupported" };
-	if (ran.kind === "unavailable" || ran.code !== 0) return { state: "unavailable" };
-	const version = versionOf(ran.stdout);
+async function checkDocker(host, signal) {
+	if (typeof host.runCommand !== "function") return { state: "unsupported" };
+	let output;
+	try {
+		output = await host.runCommand(COMMAND.version);
+	} catch {
+		output = null;
+	}
+	if (signal?.aborted) return void 0;
+	const version = typeof output === "string" ? versionOf(output) : void 0;
 	return version === void 0 ? { state: "unavailable" } : {
 		state: "ready",
 		version
@@ -858,6 +872,7 @@ function apply(ctx) {
 	ctx.pages.register({
 		id: "ghost-protocol",
 		title: "GHOST Protocol",
+		icon: PAGE_ICON,
 		primary: true,
 		layout: "workspace",
 		component: createPage(ctx.host)

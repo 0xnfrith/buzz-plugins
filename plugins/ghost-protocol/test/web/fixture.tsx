@@ -1,6 +1,7 @@
 // Registers the built plugin the way Buzz registers an installed one, with one change, because the web build lacks what the desktop app
-// has: `ctx.host.spawn` throws there ("Processes require an installed desktop plugin"). This wrapper points `spawn` at a stub that
-// the spec drives through `window.__gp`, in one of two ways, and records each call. Nothing in the plugin knows the difference. The
+// has: `ctx.host.spawn` throws there ("Processes require an installed desktop plugin"), and `ctx.host.runCommand` resolves with null
+// (it needs the desktop app). This wrapper points both at stubs that the spec drives through `window.__gp`, in one of two ways, and
+// records each call. Nothing in the plugin knows the difference. The
 // wrapper keeps the host's own rule from src/features/host/service.ts: a plugin's processes end with the plugin.
 //   scripted  each call takes the next scripted behaviour: what `docker` prints, how it exits, whether the program is missing, or
 //             whether it waits to be released (the spec's `script` and `fallback`).
@@ -11,7 +12,7 @@ import manifest from "./manifest.json";
 
 type Behaviour = { stdout?: string; stderr?: string; code?: number | null; reject?: string; hold?: boolean };
 /** `args` are the call's own; `argv` is the whole command line `docker` gets: the words the manifest fixes for the process, then `args`. */
-type Call = { id: string; options: string[]; args: string[]; argv: string[]; onHost: boolean; declared: boolean };
+type Call = { kind: "process" | "command"; id: string; options: string[]; args: string[]; argv: string[]; onHost: boolean; declared: boolean };
 type Ran = { stdout: string; stderr: string; code: number | null };
 
 declare global {
@@ -24,7 +25,10 @@ declare global {
       kills: number;
       /** Lets a held process print and exit. */
       release(): void;
-      /** "no-spawn": a host that has no `spawn` at all. "missing": a host whose `spawn` fails, as when there is no `docker` to start. */
+      /**
+       * "no-spawn": a host that has neither `spawn` nor `runCommand`. "missing": a host whose `spawn` fails and whose `runCommand` says null,
+       * as when there is no `docker` to start.
+       */
       mode?: string;
       /** Hand each call to `window.__gpDocker` instead of the script. */
       fake?: boolean;
@@ -43,13 +47,31 @@ export const ghostProtocolFixture = {
       if (!gp) throw new Error("fixture: window.__gp is not set");
       // The plugin is given one stable stand-in for `host`, with only what it uses of it, so that a call can be checked to be a method call
       // on the very object the plugin was given (Buzz hands out a new object for each `ctx.host`, so the real one cannot be compared).
-      const host: { spawn?: (...args: any[]) => Promise<unknown> } = {};
+      const host: { spawn?: (...args: any[]) => Promise<unknown>; runCommand?: (...args: any[]) => Promise<string | null> } = {};
       if (gp.mode !== "no-spawn") {
+        // A command, as the host runs it: its arguments are all the manifest's, and what it prints comes back if it ended with 0, and
+        // null if anything went wrong. Like the host's, it cannot be stopped.
+        host.runCommand = function (this: unknown, id: string, input?: string) {
+          const command = (manifest.host.commands ?? []).find((one) => one.id === id) as { args?: string[] } | undefined;
+          const argv = [...(command?.args ?? [])];
+          gp.calls.push({ kind: "command", id, options: input === undefined ? [] : ["input"], args: [], argv, onHost: this === host, declared: command !== undefined });
+          if (gp.mode === "missing") return Promise.resolve(null);
+          if (gp.fake) return window.__gpDocker!(argv).then((ran) => (ran.code === 0 ? ran.stdout : null));
+          const behaviour = gp.script.shift() ?? gp.fallback;
+          if (behaviour.reject) return Promise.resolve(null);
+          const answer = () => (behaviour.code === undefined || behaviour.code === 0 ? (behaviour.stdout ?? "") : null);
+          if (behaviour.hold) {
+            return new Promise((resolve) => {
+              gp.release = () => resolve(answer());
+            });
+          }
+          return new Promise((resolve) => setTimeout(() => resolve(answer()), 0));
+        };
         host.spawn = function (this: unknown, id: string, options: Record<string, any> = {}) {
           const declared = manifest.host.processes.some((process) => process.id === id);
           const fixed: string[] = (manifest.host.processes.find((process) => process.id === id) as { args?: string[] } | undefined)?.args ?? [];
           const argv = [...fixed, ...(options.args ?? [])];
-          gp.calls.push({ id, options: Object.keys(options).sort(), args: [...(options.args ?? [])], argv, onHost: this === host, declared });
+          gp.calls.push({ kind: "process", id, options: Object.keys(options).sort(), args: [...(options.args ?? [])], argv, onHost: this === host, declared });
           if (gp.mode === "missing") return Promise.reject(new Error("program not found"));
           const behaviour = gp.fake ? {} : (gp.script.shift() ?? gp.fallback);
           if (behaviour.reject) return Promise.reject(new Error(behaviour.reject));

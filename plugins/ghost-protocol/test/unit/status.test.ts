@@ -5,7 +5,7 @@ import { makeFake, type FakeDocker } from "./support/fake-host";
 import { attestationTag } from "../fake-docker/index.mjs";
 
 const KEY = "a".repeat(64);
-// The shape of the interface note's example (section 8), whole.
+// The shape of GHOST Protocol's own example of a status, whole.
 const NOTE_EXAMPLE = {
   interface: 1,
   version: "0.0.0",
@@ -31,7 +31,7 @@ const fakeWith = (scenario: unknown) => {
 const statusFrom = async (fake: FakeDocker) => (await fake.run(["exec", "gp-maple", "gp", "status", "--json"])).stdout;
 
 describe("readStatus", () => {
-  it("reads the interface note's example, to the last field", () => {
+  it("reads GHOST Protocol's own example of a status, to the last field", () => {
     expect(read(json())).toEqual({
       kind: "status",
       status: {

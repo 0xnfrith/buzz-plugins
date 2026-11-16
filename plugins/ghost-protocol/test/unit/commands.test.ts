@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { containerOf, imageCall, restartCall, rollbackCall, stateCall, statusCall, stopCall, updateCall } from "../../src/commands";
-import { PROCESS, VERSION_CALL } from "../../src/docker";
+import { COMMAND, PROCESS } from "../../src/docker";
 import { SLUG_MAX, isSlug, slugOf } from "../../src/slug";
 import manifest from "../../manifest.json" with { type: "json" };
 import { argvOf } from "./support/fake-host";
@@ -18,7 +18,6 @@ describe("the docker calls about an agent, to the letter (GHOST Protocol's inter
     expect(stopCall("maple")).toEqual({ process: "stop", args: ["gp-maple"] });
     expect(stateCall("maple")).toEqual({ process: "inspect-state", args: ["gp-maple"] });
     expect(imageCall("maple")).toEqual({ process: "inspect-image", args: ["gp-maple"] });
-    expect(VERSION_CALL).toEqual({ process: "version", args: [] });
   });
 
   it("makes the command lines `docker` gets, to the letter, once the manifest's fixed words are in front", () => {
@@ -29,13 +28,18 @@ describe("the docker calls about an agent, to the letter (GHOST Protocol's inter
     expect(argvOf(stopCall("maple"))).toEqual(["stop", "gp-maple"]);
     expect(argvOf(stateCall("maple"))).toEqual(["inspect", "--format", "{{.State.Status}}", "gp-maple"]);
     expect(argvOf(imageCall("maple"))).toEqual(["inspect", "--format", "{{.Config.Image}}", "gp-maple"]);
-    expect(argvOf(VERSION_CALL)).toEqual(["version", "--format", "{{.Server.Version}}"]);
   });
 
   it("uses every process the manifest declares, and only those: no grant is left unused, and no call names another", () => {
-    const used = new Set<string>([VERSION_CALL.process, ...BUILDERS.map((build) => build("maple").process)]);
+    const used = new Set<string>(BUILDERS.map((build) => build("maple").process));
     expect([...used].sort()).toEqual(manifest.host.processes.map(({ id }) => id).sort());
     expect([...used].sort()).toEqual(Object.values(PROCESS).sort());
+  });
+
+  it("keeps the version check out of the processes: it is the one declared command, whose every word is fixed", () => {
+    expect(Object.values(PROCESS)).not.toContain(COMMAND.version);
+    expect(manifest.host.commands.map(({ id }) => id)).toEqual([COMMAND.version]);
+    expect(manifest.host.commands[0]?.args).toEqual(["version", "--format", "{{.Server.Version}}"]);
   });
 
   it("writes to no process: no call takes -i or -t", () => {
@@ -96,8 +100,15 @@ describe("where the source asks docker anything", () => {
     expect(callers.map((file) => file.pathname.split("/").at(-1))).toEqual(["docker.ts"]);
   });
 
-  it("names a process in one place only, src/commands.ts (and the version call, in src/docker.ts, which keeps the list of ids)", () => {
+  it("runs a command in one place only, src/docker.ts, and only the version check", () => {
+    const code = (file: URL) => readFileSync(file, "utf8").replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    const callers = sources.filter((file) => /\brunCommand\(/.test(code(file)));
+    expect(callers.map((file) => file.pathname.split("/").at(-1))).toEqual(["docker.ts"]);
+    expect(code(callers[0] as URL).match(/\brunCommand\(([^)]*)\)/g)).toEqual(["runCommand(COMMAND.version)"]);
+  });
+
+  it("names a process in one place only, src/commands.ts", () => {
     const named = sources.filter((file) => /process:\s*(PROCESS\.|["'`])/.test(readFileSync(file, "utf8").replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "")));
-    expect(named.map((file) => file.pathname.split("/").at(-1)).sort()).toEqual(["commands.ts", "docker.ts"]);
+    expect(named.map((file) => file.pathname.split("/").at(-1)).sort()).toEqual(["commands.ts"]);
   });
 });

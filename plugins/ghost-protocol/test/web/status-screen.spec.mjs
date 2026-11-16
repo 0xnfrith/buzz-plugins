@@ -41,7 +41,7 @@ test.afterEach(async () => {
 const STATUS = "exec gp-maple gp status --json";
 const REFUSED = "Your relay does not accept owner attestations. Ask its admin to turn them on, or to add this agent as a relay member.";
 const OTHER_INTERFACE = "Update this plugin, or update GHOST Protocol";
-const DOCKER_TEXT = "Install or start Docker Desktop";
+const DOCKER_TEXT = "Docker didn't answer. Install or start Docker Desktop, then retry.";
 
 /**
  * The page, with `docker` being the fake. `scenario` is the fake's; `seed` is how the agent `maple` starts (false: no container).
@@ -655,24 +655,26 @@ test("asks the host for the declared process only, with these arguments only, ca
   // The look that follows Stop finds the container stopped: it asks `docker inspect` why.
   await expect(headline(page)).toHaveText("gp-maple is stopped (exited).");
   const { calls } = await gp(page);
-  // Each process the manifest declares fixes its leading words, and the plugin names one for each call: the whole command line has to be
-  // one of these, started as the process of its verb.
+  // The manifest declares the version check as a command (all its words fixed) and one process for each other verb, with its leading
+  // words fixed: the plugin names one for each call, and the whole command line has to be one of these, started as the verb's own.
   const allowed = {
-    version: /^version --format \{\{\.Server\.Version\}\}$/,
-    exec: /^exec gp-maple gp (status --json|update request|update rollback)$/,
-    "inspect-state": /^inspect --format \{\{\.State\.Status\}\} gp-maple$/,
-    "inspect-image": /^inspect --format \{\{\.Config\.Image\}\} gp-maple$/,
-    restart: /^restart gp-maple$/,
-    stop: /^stop gp-maple$/,
+    version: ["command", /^version --format \{\{\.Server\.Version\}\}$/],
+    exec: ["process", /^exec gp-maple gp (status --json|update request|update rollback)$/],
+    "inspect-state": ["process", /^inspect --format \{\{\.State\.Status\}\} gp-maple$/],
+    "inspect-image": ["process", /^inspect --format \{\{\.Config\.Image\}\} gp-maple$/],
+    restart: ["process", /^restart gp-maple$/],
+    stop: ["process", /^stop gp-maple$/],
   };
   expect(calls.length).toBeGreaterThan(5);
   for (const call of calls) {
     expect(Object.keys(allowed), call.argv.join(" ")).toContain(call.id);
-    expect(call.argv.join(" "), call.id).toMatch(allowed[call.id]);
+    const [kind, pattern] = allowed[call.id];
+    expect(call.kind, call.id).toBe(kind);
+    expect(call.argv.join(" "), call.id).toMatch(pattern);
     expect(call.declared).toBe(true);
     expect(call.onHost).toBe(true);
-    // Arguments and the two output handlers: no working directory, no environment.
-    expect(call.options).toEqual(["args", "onStderr", "onStdout"]);
+    // A process gets its arguments and the two output handlers: no working directory, no environment. A command gets nothing.
+    expect(call.options).toEqual(kind === "process" ? ["args", "onStderr", "onStdout"] : []);
   }
   // The tour used each verb but the image: the version check, the status, both answers of a button, and the look at a stopped container.
   expect([...new Set(calls.map((call) => call.id))].sort()).toEqual(["exec", "inspect-state", "restart", "stop", "version"]);
