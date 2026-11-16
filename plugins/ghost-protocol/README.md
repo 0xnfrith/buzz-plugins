@@ -130,7 +130,7 @@ The same steps, with the screens (the pictures are in the light theme; [how they
 
 ![The Add a plugin window: on the left a drop area with a Browse button for a folder, on the right a box for a Git or GitHub repository with a Find button](../../assets/install/2-add-a-plugin.png)
 
-**3. Type the address above and press Find.** Leave **Branch or tag** empty, or fill it with the tag above.
+**3. Type the address above and press Find** (it may read **Find plugins**). Leave **Branch or tag** empty, or fill it with the tag above.
 
 ![The repository address typed into the Git or GitHub repository box, with Find ready to press](../../assets/install/3-git-address.png)
 
@@ -206,7 +206,7 @@ plugins/ghost-protocol/test/screenshots.sh /path/to/block/buzz-app   # the READM
 
 ## The pictures
 
-The pictures are in `screenshots/`, in the light theme, and each is a small PNG. Steps 1 to 3 of the install are pictures of the Buzz desktop app that every plugin in this repository uses (`assets/install/`). The others are made from Buzz's own production web build, at the commit `BUZZ_APP_REF` pins, in headless Chromium, with the app's own made-up community: none holds a real key, relay, person or path. `test/web/screenshots.spec.mjs` makes them, and `test/run.sh` runs it in CI, so a screen that moved or a text that changed fails the suite and does not leave a stale picture behind.
+The pictures are in `screenshots/`, in the light theme, and each is a small PNG. Steps 1 to 3 of the install are pictures of the Buzz desktop app that every plugin in this repository uses (`assets/install/`); they come from an older desktop build than the pinned web build, so a button may be worded a little differently (step 3's **Find** reads **Find plugins** in the pinned build). The others are made from Buzz's own production web build, at the commit `BUZZ_APP_REF` pins, in headless Chromium, with the app's own made-up community: none holds a real key, relay, person or path. `test/web/screenshots.spec.mjs` makes them, and `test/run.sh` runs it in CI. A text that changed (the Docker panel's two messages, a row of the review, the dialogs' titles), a row of the review that is missing, or a picture that is missing, extra, not a PNG or not small fails the suite. A change of look (a layout, an icon, a colour) does not, and CI does not compare the committed files with what the spec makes, because fonts and anti-aliasing differ from one machine to the next. So whenever `BUZZ_APP_REF` moves, run `test/screenshots.sh` and read the pictures.
 
 - **Choose a plugin and Review plugin access:** Buzz's own dialogs. The web build has no installer (it is desktop only, and shows no Add button), so the page says it is the desktop app and the installer's answer is scripted, the way Buzz's own tests do it: one row for each plugin folder of this repository, from its own `manifest.json`. Buzz draws the review from this plugin's real `manifest.json`; nothing of it is written in the test. The commit under the title is an example, not a real one. The picture of the list stops at this plugin's row.
 - **Search and the Messages sidebar:** the built `plugin.js`, registered the way the web build registers an installed plugin. The other pages in the sidebar picture (Delayed fixture, Legacy) are the test build's own.

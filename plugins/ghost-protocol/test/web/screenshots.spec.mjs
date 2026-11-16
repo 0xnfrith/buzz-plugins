@@ -1,8 +1,10 @@
 // Makes the pictures in the plugin's README (../../README.md) from Buzz's own production web build, headless Chromium, in the light theme,
 // and checks them: each is a PNG of a sane size, and the set is the one committed in screenshots/. The harness's own fixture
 // community is all the data there is: no key, relay or person of anyone's. Make them again, into that folder, with
-// plugins/ghost-protocol/test/screenshots.sh whenever Buzz's screens change; test/run.sh runs this spec into a scratch folder, so a screen
-// that moved, or a text that changed, fails the suite and does not leave a stale picture to be found later.
+// plugins/ghost-protocol/test/screenshots.sh whenever BUZZ_APP_REF moves or a Buzz screen changes; test/run.sh runs this spec into a scratch
+// folder. A text that changed, a row of the review that is missing or a picture that is missing, extra or not a small PNG fails it. A change
+// of look does not, and the committed files are not compared with what it makes (fonts and anti-aliasing differ from one machine to the
+// next): read the pictures after making them again.
 //
 // How each picture is made:
 //   choose-a-plugin, review-access   Buzz's real Settings -> Manage plugins -> Add dialogs. The web build has no importer (it is desktop only,
@@ -68,6 +70,22 @@ async function alone(dialog) {
       if (element !== node) element.style.background = "transparent";
     }
     document.documentElement.style.background = "transparent";
+  });
+}
+
+/** A clip of whole pixels: the box's top left corner, its width, and down to `bottom`. Playwright rounds a clip with a fractional edge,
+ *  and it sometimes takes one more row of pixels, so the picture would differ from one run to the next. */
+function crop(box, bottom) {
+  const x = Math.floor(box.x);
+  const y = Math.floor(box.y);
+  return { x, y, width: Math.ceil(box.x + box.width) - x, height: Math.ceil(bottom) - y };
+}
+
+/** Scrolls the lists around `inside` to their tops. The review reuses the dialog the choice was made in, and the list keeps the place
+ *  that picking this plugin's row scrolled it to, so the review sometimes opens halfway down. */
+async function toTop(inside) {
+  await inside.evaluate((node) => {
+    for (let element = node.parentElement; element; element = element.parentElement) if (element.scrollHeight > element.clientHeight) element.scrollTop = 0;
   });
 }
 
@@ -180,10 +198,7 @@ test.describe("the installer", () => {
       while (row.parentElement && row.getBoundingClientRect().width < 400) row = row.parentElement;
       return row.getBoundingClientRect().bottom;
     });
-    await shot(page, "choose-a-plugin", {
-      omitBackground: true,
-      clip: { x: box.x, y: box.y, width: box.width, height: bottom + 8 - box.y },
-    });
+    await shot(page, "choose-a-plugin", { omitBackground: true, clip: crop(box, bottom + 8) });
   });
 
   test("review plugin access: drawn by Buzz from this plugin's own manifest.json", async ({ page, app }) => {
@@ -202,6 +217,8 @@ test.describe("the installer", () => {
     // Each row is a level 3 heading holding its button: these and no other.
     await expect(review.getByRole("heading", { level: 3 })).toHaveCount(1 + host.commands.length + host.processes.length);
     await animationsSettled(review);
+    await toTop(review.getByRole("button", { name: /^Computer access/ }));
+    await expect(review.getByRole("button", { name: /^Computer access/ })).toBeInViewport({ ratio: 1 });
     await expect(review.getByRole("button", { name: /^Run docker/ }).first()).toBeInViewport({ ratio: 1 });
     await alone(review);
     await shot(review, "review-access", { omitBackground: true });
@@ -231,33 +248,35 @@ test.describe("the page", () => {
     // The sidebar: the pages are listed below Activity.
     const sidebar = page.locator('aside[aria-label="Sidebar"]');
     await expect(sidebar.getByRole("button", { name: "GHOST Protocol", exact: true })).toBeVisible();
+    await animationsSettled(sidebar);
     const box = await sidebar.boundingBox();
-    const bottom = (await sidebar.getByRole("button", { name: "GHOST Protocol", exact: true }).boundingBox()).y + 60;
-    await shot(page, "find-in-sidebar", { clip: { x: box.x, y: box.y, width: box.width, height: Math.min(box.height, bottom - box.y) } });
+    const ours = await sidebar.getByRole("button", { name: "GHOST Protocol", exact: true }).boundingBox();
+    await shot(page, "find-in-sidebar", { clip: crop(box, Math.min(box.y + box.height, ours.y + 60)) });
     // The search: GHOST typed, its row under Pages.
     const choices = await pageChoices(page, "GHOST");
     await expect(choices.getByText("GHOST Protocol", { exact: true })).toBeVisible();
     // Only as far down as the Pages: the rows below them are the harness's own plugins, which the search lists whatever is typed.
     const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
     await alone(search);
+    await animationsSettled(search);
     const dialog = await search.boundingBox();
     const pages = await choices.boundingBox();
-    await shot(page, "find-by-search", {
-      omitBackground: true,
-      clip: { x: dialog.x, y: dialog.y, width: dialog.width, height: pages.y + pages.height + 12 - dialog.y },
-    });
+    await shot(page, "find-by-search", { omitBackground: true, clip: crop(dialog, pages.y + pages.height + 12) });
   });
 
   test("the Docker panel says Docker is running", async ({ page, app }) => {
     await arrange(page, app, { stdout: "27.3.1\n", code: 0 });
     await expect(root(page).getByRole("status")).toHaveText("Docker is running");
     await expect(root(page).locator("dd")).toHaveText("27.3.1");
+    // A text that fades in is a shade short of its colour for a moment, and the picture differs by a pixel here and there.
+    await animationsSettled(root(page), { subtree: true });
     await shot(dockerPanel(page), "docker-is-running");
   });
 
   test("the Docker panel says Docker didn't answer", async ({ page, app }) => {
     await arrange(page, app, { stderr: "Cannot connect to the Docker daemon\n", code: 1 });
     await expect(root(page).getByRole("alert")).toHaveText("Docker didn't answer. Install or start Docker Desktop, then retry.");
+    await animationsSettled(root(page), { subtree: true });
     await shot(dockerPanel(page), "docker-did-not-answer");
   });
 });
