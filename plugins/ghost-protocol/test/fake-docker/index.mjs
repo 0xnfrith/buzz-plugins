@@ -11,6 +11,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { pinnedImage } from "./image.mjs";
 import { PRESETS, loadScenario, merge, parseScenario } from "./scenario.mjs";
 import { readCalls, readState, withState } from "./store.mjs";
 
@@ -19,6 +20,9 @@ export const BIN_DIR = join(dirname(fileURLToPath(import.meta.url)), "bin");
 export const PRESET_NAMES = Object.keys(PRESETS);
 
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
+
+/** The image of one version, as the fake pins it: `<repository>/ghost-protocol:<tag>@sha256:<digest>`. The repository is registry.example unless given. */
+export const imageOfVersion = (tag, repository = "registry.example") => pinnedImage(repository, tag);
 
 /** A made-up owner public key (64 hex), the same for the same label. */
 export const ownerKey = (label = "owner") => sha256(`owner:${label}`);
@@ -127,7 +131,7 @@ export function createFakeDocker({ scenario = {}, dir } = {}) {
     seed(options = {}) {
       const { slug = "maple", name = "Maple", relay = "wss://relay.example.com", owner = ownerKey(), version = "0.0.0", condition = "running", container = true } = options;
       const volume = `gp-${slug}-data`;
-      const image = options.image ?? `registry.example/ghost-protocol:${version}`;
+      const image = options.image ?? imageOfVersion(version);
       // The update helper runs beside the agent when the user said yes to self-update (the scenario's `selfUpdate`), or as `updater` says.
       const helper = container && (options.updater ?? loadScenario({}, stateDir).selfUpdate === "yes");
       return withState(stateDir, (state) => {
@@ -145,6 +149,7 @@ export function createFakeDocker({ scenario = {}, dir } = {}) {
             running: condition !== "stopped",
             connectingLeft: 0,
             previousVersion: options.previousVersion ?? null,
+            previousImage: null,
             update: null,
             transition: null,
           };

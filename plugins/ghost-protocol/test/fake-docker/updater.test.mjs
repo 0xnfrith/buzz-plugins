@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { assertGpFailure, assertGpSuccess } from "./contract.mjs";
-import { IMAGE, createAgent, gp, pullArgs, runningAgent, startArgs, startHelperArgs, status, withFake } from "./support.mjs";
+import { BARE_TAG, DIGEST, IMAGE, createAgent, gp, imageOfVersion, literal, pullArgs, runningAgent, startArgs, startHelperArgs, status, withFake } from "./support.mjs";
 
 let fake;
 afterEach(() => fake?.cleanup());
@@ -54,13 +54,17 @@ describe("the command", () => {
 });
 
 describe("what is refused: exit 64, and the call log says refused", () => {
-  const OWN = /runs the agent's own image and exact tag \(registry\.example\/ghost-protocol:0\.0\.0\)/;
+  const OWN = new RegExp(`runs the agent's own image and exact tag \\(${literal(IMAGE)}\\)`);
+  const NOT_PINNED = /is not <registry>\/ghost-protocol:<exact version>@sha256:<64 hex digits>/;
   const refused = [
-    ["a tag that is not the agent's", startHelperArgs("maple", "registry.example/ghost-protocol:0.0.1"), OWN],
-    ["the agent's tag in another registry", startHelperArgs("maple", "other.example/ghost-protocol:0.0.0"), OWN],
-    ["a separate updater image: there is none", startHelperArgs("maple", "registry.example/ghost-protocol-updater:0.0.0"), /is not <registry>\/ghost-protocol:<exact version>/],
-    ["the tag latest", startHelperArgs("maple", "registry.example/ghost-protocol:latest"), /not latest/],
-    ["no tag", startHelperArgs("maple", "registry.example/ghost-protocol"), /is not <registry>\/ghost-protocol:<exact version>/],
+    ["a tag that is not the agent's", startHelperArgs("maple", imageOfVersion("0.0.1")), OWN],
+    ["the agent's tag with another digest", startHelperArgs("maple", `${BARE_TAG}@sha256:${DIGEST.replace(/^./, (first) => (first === "f" ? "e" : "f"))}`), OWN],
+    ["the agent's tag in another registry", startHelperArgs("maple", imageOfVersion("0.0.0", "other.example")), OWN],
+    ["a separate updater image: there is none", startHelperArgs("maple", imageOfVersion("0.0.0").replace("/ghost-protocol:", "/ghost-protocol-updater:")), NOT_PINNED],
+    ["the tag latest", startHelperArgs("maple", imageOfVersion("latest")), /not latest/],
+    ["no tag", startHelperArgs("maple", "registry.example/ghost-protocol"), NOT_PINNED],
+    ["the agent's tag with no digest", startHelperArgs("maple", BARE_TAG), NOT_PINNED],
+    ["the agent's digest with no tag", startHelperArgs("maple", `registry.example/ghost-protocol@sha256:${DIGEST}`), NOT_PINNED],
     ["no Docker socket mount", startHelperArgs().filter((arg, i, all) => arg !== "-v" && all[i - 1] !== "-v"), /-v \/var\/run\/docker\.sock:\/var\/run\/docker\.sock/],
     ["the socket mounted somewhere else", startHelperArgs().map((arg) => (arg.startsWith("/var/run/docker.sock:") ? "/var/run/docker.sock:/docker.sock" : arg)), /-v \/var\/run\/docker\.sock/],
     ["the agent's data volume mounted as well", [...startHelperArgs().slice(0, 8), "-v", "gp-maple-data:/data", ...startHelperArgs().slice(8)], /nothing else mounted/],

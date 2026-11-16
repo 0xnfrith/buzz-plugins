@@ -71,10 +71,13 @@ describe("manifest.json", () => {
     expect(manifest.host.processes.filter(({ args }) => args[0] === "rm" || args[0] === "volume").map(({ id }) => id).sort()).toEqual(["rm", "volume-rm"]);
   });
 
-  it("names the one image the plugin may pull, the one the code runs", () => {
-    expect(IMAGE).toMatch(/^[a-z0-9.-]+(?::[0-9]+)?(?:\/[a-z0-9._-]+)*\/ghost-protocol:[A-Za-z0-9._-]+$/);
-    expect(IMAGE).not.toMatch(/:latest$/);
-    expect(manifest.host.processes.find(({ id }) => id === "pull")?.args).toEqual(["pull", IMAGE]);
+  it("names the one image the plugin may pull, the one the code runs, pinned by tag and digest (test/unit/image.test.ts holds what is refused)", () => {
+    const pulled = manifest.host.processes.find(({ id }) => id === "pull")?.args;
+    expect(pulled).toHaveLength(2);
+    // Written out here and not read from the code: a tag alone, or a digest alone, is not an image the plugin may pull.
+    expect(pulled?.[1]).toMatch(/^[a-z0-9.-]+(?::[0-9]+)?(?:\/[a-z0-9._-]+)*\/ghost-protocol:[A-Za-z0-9_][A-Za-z0-9_.-]*@sha256:[0-9a-f]{64}$/);
+    expect(pulled?.[1]).not.toMatch(/:latest@/);
+    expect(pulled).toEqual(["pull", IMAGE]);
   });
 
   it("is not a shell: nothing runs through `sh`, `bash`, `cmd` or an interpreter, and no argument is a script", () => {

@@ -71,6 +71,7 @@ export interface SeedOptions {
   owner?: string;
   version?: string;
   previousVersion?: string | null;
+  /** The agent's image, pinned: `<registry>/ghost-protocol:<tag>@sha256:<64 hex>`. By default `imageOfVersion(version)`. */
   image?: string;
   container?: boolean;
   /** The update helper beside the agent: there when the scenario's `selfUpdate` is "yes", by default. */
@@ -96,5 +97,7 @@ export interface FakeDocker {
 export const BIN_DIR: string;
 export const PRESET_NAMES: Preset[];
 export function ownerKey(label?: string): string;
+/** The image of one version as the fake pins it (`<repository>/ghost-protocol:<tag>@sha256:<digest>`, a made-up digest the same for the same tag). */
+export function imageOfVersion(tag: string, repository?: string): string;
 export function attestationTag(owner?: string, conditions?: string): string;
 export function createFakeDocker(options?: { scenario?: ScenarioInput; dir?: string }): FakeDocker;

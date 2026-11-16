@@ -6,19 +6,33 @@ import { OTHER_INTERFACE, REFUSED_NOT_MEMBER } from "../words";
 // fixes it: the plugin's code reads these and holds no copy.
 
 /**
- * The agent's one image: `<registry>/ghost-protocol:<exact tag>`, as the `pull` process in manifest.json names it (that is the only place
- * it is written, so the review shows the image the plugin may pull and the code runs the same one). GHOST Protocol sends the registry
- * path and the first version with its first release candidate; until then the manifest holds a name that can never resolve (`.invalid` is
- * reserved for that), so Create ends at the pull with "Docker could not download GHOST Protocol" and never runs anything else.
+ * The image's form: a registry (with a port, if it has one) and a path ending in `ghost-protocol`, a tag that is not `latest`, and a sha256
+ * digest of 64 lower-case hex digits. A bare tag, a bare digest, a short or upper-case digest and anything after the digest are not it.
  */
-export const IMAGE = (manifest.host.processes.find((process) => process.id === "pull")?.args ?? [])[1] ?? "";
+export const PINNED_IMAGE =
+  /^(?!.*\/ghost-protocol:latest@)[a-z0-9]+(?:[.-][a-z0-9]+)*(?::[0-9]+)?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*\/ghost-protocol:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}@sha256:[0-9a-f]{64}$/;
+
+/**
+ * The agent's one image, pinned: `<registry>/ghost-protocol:<exact tag>@sha256:<64 lower-case hex>`, as the `pull` process in manifest.json
+ * names it (that is the only place it is written, so the review shows the image the plugin may pull and the code runs the same one). The
+ * tag tells a person which version it is; the digest is what Docker checks, and a tag can be moved after it was tested where a digest
+ * cannot. A bare tag and a bare digest are refused: the image is then an empty name, so the pull does not begin with the words the manifest
+ * declares and Create stops before it runs anything. GHOST Protocol sends the registry path, the first version and its digest with its
+ * first release; until then the manifest holds a placeholder (version 0.0.0, a digest of zeros) on a name that can never resolve
+ * (`.invalid` is reserved for that), so Create ends at the pull with "Docker could not download GHOST Protocol".
+ */
+export const IMAGE = pinnedOrNothing((manifest.host.processes.find((process) => process.id === "pull")?.args ?? [])[1]);
+
+function pinnedOrNothing(image: string | undefined): string {
+  return image !== undefined && PINNED_IMAGE.test(image) ? image : "";
+}
 
 /** The interface number this plugin was written to (`GP_INTERFACE=` and the status's `interface`). Any other number stops Create. */
 export const INTERFACE = 1;
 
 /**
- * What the update helper runs, after the image and before `--target gp-<slug>`: the agent's own image with a different command. GP fixes
- * the command and its arguments in the interface note; this is a placeholder until it does.
+ * What the update helper runs, after the image and before `--target gp-<slug>`: the agent's own image with a different command, which
+ * GHOST Protocol has fixed as `updater --target gp-<slug>`.
  */
 export const UPDATER_COMMAND: readonly string[] = ["updater"];
 

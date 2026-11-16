@@ -10,7 +10,7 @@
   "host": {
     "commands": [{ "id": "version", "program": "docker", "args": ["version", "--format", "{{.Server.Version}}"] }],
     "processes": [
-      { "id": "pull", "program": "docker", "args": ["pull", "registry.invalid/ghost-protocol:0.0.0"] },
+      { "id": "pull", "program": "docker", "args": ["pull", "registry.invalid/ghost-protocol:0.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000"] },
       { "id": "run-init", "program": "docker", "args": ["run", "--rm", "-v"] },
       { "id": "run-agent", "program": "docker", "args": ["run", "-d", "--restart", "unless-stopped", "--name"] },
       { "id": "run-updater", "program": "docker", "args": ["run", "-d", "--restart", "unless-stopped", "-v", "/var/run/docker.sock:/var/run/docker.sock", "--name"] },
