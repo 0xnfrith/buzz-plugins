@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { assertStatusShape, parseGp } from "./contract.mjs";
 import { BIN_DIR, PRESET_NAMES, attestationTag, createFakeDocker } from "./index.mjs";
 import { STEPS } from "./scenario.mjs";
-import { OWNER, attest, createAgent, gp, gpInput, initArgs, runningAgent, status, statusArgs, versionArgs, withFake } from "./support.mjs";
+import { OWNER, attest, createAgent, gp, gpInput, initArgs, runningAgent, startArgs, startHelperArgs, status, statusArgs, versionArgs, withFake } from "./support.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let fake;
@@ -129,6 +129,17 @@ describe("the call log", () => {
     assert.equal(attestation.stdin.bytes, Buffer.byteLength(tag.trimEnd()));
   });
 
+  test("what the interface has is readable in the log: the commands, flags, names, image, relay and owner; the updater command words are not", async () => {
+    fake = withFake();
+    await runningAgent(fake);
+    const logged = (first) => fake.calls().find((call) => call.argv[0] === first && (first !== "run" || call.argv.includes("init"))).argv;
+    assert.deepEqual(logged("pull"), ["pull", "registry.example/ghost-protocol:0.0.0"]);
+    assert.deepEqual(logged("run"), ["run", "--rm", "-v", "gp-maple-data:/data", "registry.example/ghost-protocol:0.0.0", "init", "--name", "Maple", "--relay", "wss://relay.example.com", "--owner", OWNER]);
+    const helper = fake.calls().find((call) => call.argv.includes("gp-maple.updater") && call.argv[0] === "run").argv;
+    assert.deepEqual(helper, ["run", "-d", "--name", "gp-maple.updater", "--restart", "unless-stopped", "-v", "/var/run/docker.sock:/var/run/docker.sock", "registry.example/ghost-protocol:0.0.0", "<not logged>", "--target", "gp-maple"]);
+    assert.deepEqual(fake.calls().find((call) => call.argv[0] === "exec").argv, ["exec", "-i", "gp-maple", "gp", "auth-tag", "set"]);
+  });
+
   test("the plugin's commands as the note gives them are never refused", async () => {
     fake = withFake("claude-signed-in");
     await runningAgent(fake);
@@ -198,6 +209,22 @@ describe("a secret given as an argument by mistake", () => {
       ["pull", SECRET],
       ["inspect", "--format", "{{.State.Status}}", SECRET],
       ["rm", "-f", SECRET],
+      // the other commands: the agent's start, `init`, the helper's start, `version`, `volume rm`
+      ["run", "-d", "-e", `CLAUDE_CODE_OAUTH_TOKEN=${SECRET}`, ...startArgs().slice(2)],
+      ["run", "-d", `--env=CLAUDE_CODE_OAUTH_TOKEN=${SECRET}`, ...startArgs().slice(2)],
+      ["run", "-d", "--token", SECRET, ...startArgs().slice(2)],
+      [...startArgs(), SECRET],
+      ["run", SECRET],
+      ["run", "-d", "--name", SECRET, ...startArgs().slice(4)], // in the place of a container's name (only init's --name is free text)
+      ["run", "--rm", "-e", `X=${SECRET}`, ...initArgs().slice(2)],
+      [...initArgs(), "--token", SECRET],
+      [...initArgs(), SECRET],
+      ["run", "-d", "-e", `X=${SECRET}`, ...startHelperArgs().slice(2)],
+      [...startHelperArgs(), "--token", SECRET],
+      ["version", SECRET],
+      ["volume", "rm", SECRET],
+      ["volume", SECRET],
+      [SECRET],
     ];
     for (const argv of mistakes) {
       const result = await fake.run(argv);

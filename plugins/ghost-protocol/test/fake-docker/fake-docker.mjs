@@ -796,22 +796,29 @@ function describeGp(command) {
   return `\`gp ${shown.join(" ")}\`${hidden > 0 ? ` with ${hidden} more argument${hidden > 1 ? "s" : ""} (not shown: an argument may be a secret)` : ""}`;
 }
 
-/**
- * argv as the call log keeps it. For `docker exec` only what the interface has is logged: `-i`, a container name, `gp` and its words. An
- * environment flag, a container position or any other word could be a token given by mistake, and is `<not logged>`.
- */
+// What the call log keeps of a command, word by word, for every command: only what the interface has in that place. Anything else, such as a
+// token put in an environment flag, a `--token` flag, a container's or an image's place or a stray word, is `<not logged>`.
+const LOGGED_WORDS = [
+  /^(exec|version|pull|run|restart|stop|rm|inspect|volume|init|gp)$/, // the commands
+  /^(-d|--detach|--rm|--name|--restart|-v|--volume|-i|--interactive|-f|--force|--format|--target|--relay|--owner)$/, // the flags the interface lists
+  /^gp-[a-z0-9-]+(\.updater|-data(:\/data)?)?$/, // containers, the helper, the data volume and its mount
+  /^unless-stopped$/,
+  /^\/var\/run\/docker\.sock:\/var\/run\/docker\.sock$/,
+  /^wss?:\/\/\S{1,200}$/, // the relay
+  /^[0-9a-f]{64}$/, // the owner's public key
+  /^\{\{[A-Za-z0-9_. ]*\}\}$/, // a template
+];
+
+/** argv as the call log keeps it. */
 function loggedArgv(argv) {
-  if (argv[0] === "exec") {
-    const known = new Set(["exec", "-i", "--interactive", "gp", ...Object.keys(GP_WORDS), ...Object.values(GP_WORDS).flat()]);
-    return argv.map((word) => (known.has(word) || /^gp-[a-z0-9-]+(\.updater)?$/.test(word) ? word : "<not logged>"));
-  }
-  // The commands that take a container, a volume or an image in a position a secret could be put in by mistake: only a name of the
-  // interface, a flag of the command, or a template is kept.
-  if (["restart", "stop", "rm", "inspect", "volume", "pull"].includes(argv[0])) {
-    const kept = /^(gp-[a-z0-9-]+(\.updater|-data)?|-f|--force|--format|rm|\{\{[A-Za-z0-9_. ]*\}\})$/;
-    return argv.map((word, at) => (at === 0 || kept.test(word) || IMAGE.test(word) ? word : "<not logged>"));
-  }
-  return argv;
+  const known = new Set([...Object.keys(GP_WORDS), ...Object.values(GP_WORDS).flat()]);
+  const initial = argv.includes("init");
+  return argv.map((word, at) => {
+    if (known.has(word) || IMAGE.test(word) || LOGGED_WORDS.some((pattern) => pattern.test(word))) return word;
+    // The agent's name, given to `init` after --name: free text, but one line and short.
+    if (initial && argv[at - 1] === "--name" && /^[^\r\n\0]{1,80}$/.test(word)) return word;
+    return "<not logged>";
+  });
 }
 
 async function dockerExec(ctx) {
