@@ -18,21 +18,24 @@ const FIXED_TIME = "2026-01-01T00:00:00.000000000Z"; // docker's timestamps, fix
 const IMAGE = /^(?<repository>[a-z0-9]+(?:[.-][a-z0-9]+)*(?::[0-9]+)?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*)\/ghost-protocol:(?<tag>[0-9A-Za-z][0-9A-Za-z._+-]*)$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 
-// The update helper: a second, long-lived container that swaps the agent's image, started by the plugin after the agent's container, only
-// when the user said yes to self-update. GHOST Protocol has not fixed the helper's image name or the arguments after it: these two
-// constants are the placeholder, and the only places to change when it does.
-const UPDATER_IMAGE_NAME = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
-const updaterArgs = (slug) => ["--target", `gp-${slug}`];
+// The update helper: a second, long-lived container that swaps the agent's image. It runs the agent's own image and exact tag with a different
+// command, and the plugin starts it after the agent's container, only when the user said yes to self-update. GHOST Protocol has not fixed the
+// command and its arguments: UPDATER_COMMAND is the one place to set them. While it is null, any command words are taken.
+const UPDATER_COMMAND = null;
 const DOCKER_SOCKET_MOUNT = "/var/run/docker.sock:/var/run/docker.sock";
+// The helper's container name. A dot cannot be in a slug, so it can never be an agent's: the one place to change if GHOST Protocol renames it.
+const HELPER_SUFFIX = ".updater";
+const HELPER_NAME = /^gp-(?<slug>[a-z0-9-]+)\.updater$/;
 const HEX128 = /^[0-9a-f]{128}$/;
 
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
 
 /** docker's own failure: a message on stderr and an exit code. */
 class DockerError extends Error {
-  constructor(message, code = 1) {
+  constructor(message, code = 1, stdout = "") {
     super(message);
     this.exitCode = code;
+    this.stdout = stdout;
   }
 }
 /** GHOST Protocol's own failure: GP_ERROR on stdout and exit 1. */
@@ -109,25 +112,17 @@ function parseImage(reference) {
   return { reference, name: "ghost-protocol", ...match.groups };
 }
 
-const ANY_IMAGE = /^(?<repository>[a-z0-9]+(?:[.-][a-z0-9]+)*(?::[0-9]+)?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*)\/(?<name>[a-z0-9]+(?:[._-][a-z0-9]+)*):(?<tag>[0-9A-Za-z][0-9A-Za-z._+-]*)$/;
-/** The update helper's image: <registry>/<name>:<exact tag>, with a name GHOST Protocol has not fixed yet. */
-function parseUpdaterImage(reference) {
-  const match = ANY_IMAGE.exec(reference ?? "");
-  if (!match || !UPDATER_IMAGE_NAME.test(match.groups.name)) throw new Refused(`"${reference}" is not <registry>/<updater image>:<exact version>`);
-  if (match.groups.tag === "latest") throw new Refused("the helper's image must carry an exact version, not latest");
-  return { reference, ...match.groups };
-}
-
 function parseVolume(text) {
   const match = /^(?<name>gp-[a-z0-9-]+-data):\/data$/.exec(text ?? "");
   if (!match) throw new Refused("-v must be gp-<slug>-data:/data");
   return { name: match.groups.name, slug: match.groups.name.slice(3, -5) };
 }
 
+/** An agent's container, gp-<slug>, or the update helper's, gp-<slug>.updater. */
 function parseContainerName(text) {
-  const match = /^gp-(?<slug>[a-z0-9-]+)$/.exec(text ?? "");
-  if (!match) throw new Refused(`"${text}" is not a container name of the interface (gp-<slug>)`);
-  return { slug: match.groups.slug, name: text };
+  const match = /^gp-(?<slug>[a-z0-9-]+)(?<helper>\.updater)?$/.exec(text ?? "");
+  if (!match) throw new Refused(`"${text}" is not a container name of the interface (gp-<slug>, or gp-<slug>.updater for the update helper)`);
+  return { slug: match.groups.slug, name: text, helper: Boolean(match.groups.helper) };
 }
 
 /** `{{.Server.Version}}`-style templates, enough for the ones the plugin may use: a field path, or `json` and a field path. */
@@ -167,9 +162,19 @@ function makeOutput(io, scenario) {
 // ---------------------------------------------------------------------------------------------------------------------------------
 // What the scenario says about docker itself
 
-function checkDocker(scenario) {
+function checkDocker(scenario, argv) {
   if (scenario.docker === "missing") throw new DockerError("docker: command not found", 127);
-  if (scenario.docker === "daemon-down") throw new DockerError(`Cannot connect to the Docker daemon at ${SOCKET}. Is the docker daemon running?`);
+  if (scenario.docker === "daemon-down") {
+    if (scenario.dockerStyle === "classic") throw new DockerError(`Cannot connect to the Docker daemon at ${SOCKET}. Is the docker daemon running?`);
+    // Docker 29: another text, and `inspect` and a formatted `version` still print their empty result on stdout.
+    const formatted = argv.some((arg) => arg === "--format" || arg === "-f" || arg.startsWith("--format="));
+    const stdout = formatted ? "\n" : argv[0] === "inspect" ? "[]\n" : "";
+    throw new DockerError(
+      `failed to connect to the docker API at ${SOCKET}; check if the path is correct and if the daemon is running: dial unix /var/run/docker.sock: connect: no such file or directory`,
+      1,
+      stdout,
+    );
+  }
   if (scenario.docker === "permission-denied") {
     throw new DockerError(
       `permission denied while trying to connect to the Docker daemon socket at ${SOCKET}: ` +
@@ -333,28 +338,11 @@ function pullFailure(image, scenario) {
   return null;
 }
 
-/** What `docker pull` takes: the agent's image, or the update helper's (any name, the same exact tag as the agent's). */
-function parsePullable(reference) {
-  if (IMAGE.test(reference ?? "")) return { helper: false, ...parseImage(reference) };
-  if (/:latest$/.test(reference ?? "")) throw new Refused("an image must carry an exact version, not latest");
-  try {
-    return { helper: true, ...parseUpdaterImage(reference) };
-  } catch {
-    throw new Refused(`"${reference}" is not an image of the interface: <registry>/ghost-protocol:<exact version>, or the update helper's <registry>/<name>:<the same version>`);
-  }
-}
-
 async function dockerPull(ctx) {
   const { rest } = parseFlags(ctx.args);
   if (rest.length !== 1) throw new Refused("`docker pull` takes one image");
-  const image = parsePullable(rest[0]);
+  const image = parseImage(rest[0]); // Create pulls one image: the update helper runs the agent's own
   const { scenario, dir, output } = ctx;
-  if (image.helper) {
-    // The plugin pulls the helper's image during Create, right after the agent's, with the same exact tag, and only after a yes.
-    if (scenario.selfUpdate === "no") throw new Refused("the user said no to self-update: the plugin must not pull the update helper's image");
-    const agents = Object.values(readState(dir).images).filter((known) => known.name === "ghost-protocol" && known.tag === image.tag);
-    if (!agents.length) throw new Refused(`the update helper's image is pulled after the agent's image, with the same exact tag (${image.tag})`);
-  }
   await wait(scenario, "pull");
   const problem = pullFailure(image, scenario);
   if (problem) throw new DockerError(problem);
@@ -384,7 +372,10 @@ async function dockerRun(ctx) {
     stop: true,
   });
   const detached = flag(flags, "-d", "--detach");
-  if (detached && /^gp-[a-z0-9-]+-updater$/.test(single(flags, "--name", "--name") ?? "")) return startHelper(ctx, { flags, rest });
+  // The update helper is told by its name, which no agent can have, or by its shape: the Docker socket mounted, or no data volume.
+  const mountsGiven = ["-v", "--volume"].flatMap((flagName) => flags[flagName] ?? []);
+  const shaped = mountsGiven.some((mount) => mount.startsWith("/var/run/docker.sock")) || !mountsGiven.some((mount) => /^gp-[a-z0-9-]+-data:\/data$/.test(mount));
+  if (detached && (shaped || (single(flags, "--name", "--name") ?? "").endsWith(HELPER_SUFFIX))) return startHelper(ctx, { flags, rest });
   const image = parseImage(rest[0]);
   const command = rest.slice(1);
   const volume = parseVolume(single(flags, "-v", "-v", "--volume"));
@@ -429,27 +420,42 @@ function conflict(state, name) {
   );
 }
 
+/** The helper's arguments after the image: its command, then `--target gp-<slug>`. null when they are as the interface has them. */
+function helperArgsProblem(args, slug) {
+  const tail = JSON.stringify(args.slice(-2));
+  const command = args.slice(0, -2);
+  if (tail !== JSON.stringify(["--target", `gp-${slug}`])) return `the update helper's arguments end with \`--target gp-${slug}\``;
+  if (UPDATER_COMMAND) {
+    return JSON.stringify(command) === JSON.stringify(UPDATER_COMMAND) ? null : `the update helper's command is \`${UPDATER_COMMAND.join(" ")}\``;
+  }
+  if (!command.length || command[0].startsWith("-")) return `the update helper's arguments are its command, then \`--target gp-${slug}\``;
+  return null;
+}
+
 /**
- * The update helper, started by the plugin after the agent's container, when the user said yes to self-update:
- * docker run -d --name gp-<slug>-updater --restart unless-stopped -v /var/run/docker.sock:/var/run/docker.sock <updater image>:<the agent's tag> --target gp-<slug>
+ * The update helper, started by the plugin after the agent's container, when the user said yes to self-update. It runs the agent's own image
+ * and exact tag with a different command:
+ * docker run -d --name gp-<slug>.updater --restart unless-stopped -v /var/run/docker.sock:/var/run/docker.sock <agent image>:<tag> <updater command> --target gp-<slug>
  */
 async function startHelper(ctx, { flags, rest }) {
   const name = single(flags, "--name", "--name");
-  const slug = /^gp-(?<slug>[a-z0-9-]+)-updater$/.exec(name).groups.slug;
+  const named = HELPER_NAME.exec(name ?? "");
+  if (!named) throw new Refused(`the update helper is named gp-<slug>${HELPER_SUFFIX}, not "${name}"`);
+  const slug = named.groups.slug;
   if (flag(flags, "--rm")) throw new Refused("the update helper is long-lived: it is not started with --rm");
   if (single(flags, "--restart", "--restart") !== "unless-stopped") throw new Refused("the update helper is started with --restart unless-stopped");
   const mounts = ["-v", "--volume"].flatMap((flagName) => flags[flagName] ?? []);
   if (mounts.length !== 1 || mounts[0] !== DOCKER_SOCKET_MOUNT) throw new Refused(`the update helper is started with -v ${DOCKER_SOCKET_MOUNT}, and nothing else mounted`);
-  const image = parseUpdaterImage(rest[0]);
-  const expected = updaterArgs(slug);
-  if (JSON.stringify(rest.slice(1)) !== JSON.stringify(expected)) throw new Refused(`the update helper's arguments are \`${expected.join(" ")}\``);
+  const image = parseImage(rest[0]);
+  const problem = helperArgsProblem(rest.slice(1), slug);
+  if (problem) throw new Refused(problem);
   const { scenario, dir, output } = ctx;
   if (scenario.selfUpdate === "no") throw new Refused("the user said no to self-update: the plugin must not start the update helper");
   await wait(scenario, "start-updater");
   const id = withState(dir, (state) => {
     const agent = state.containers[`gp-${slug}`];
     if (!agent) throw new Refused(`the update helper is started after the agent's container, and gp-${slug} is not there`);
-    if (image.tag !== agent.version) throw new Refused(`the update helper's tag (${image.tag}) must be the agent's (${agent.version})`);
+    if (image.reference !== agent.image) throw new Refused(`the update helper runs the agent's own image and exact tag (${agent.image}), not ${image.reference}`);
     conflict(state, name);
     implicitPull(state, image, output);
     const created = containerId(state, name);
@@ -495,12 +501,13 @@ async function dockerRm(ctx) {
   const names = rest.map((text) => parseContainerName(text).name);
   const force = flag(flags, "-f", "--force");
   await wait(ctx.scenario, "rm");
-  // One name at a time, as docker does: the ones it can remove are removed and named on stdout, the others are errors on stderr, and
-  // the exit code is 1 when any of them failed.
+  // One name at a time, as docker does: the ones it can remove are removed and named on stdout, the others are errors on stderr. With -f a
+  // container that is not there is an error line and not a failure (docker's exit code stays 0, as docker 29 does); without -f, and for
+  // any other error, the exit code is 1.
   const results = withState(ctx.dir, (state) =>
     names.map((name) => {
       const container = state.containers[name];
-      if (!container) return { error: `Error response from daemon: No such container: ${name}` };
+      if (!container) return { error: `Error response from daemon: No such container: ${name}`, missing: true };
       if (container.running && !force) {
         return { error: `Error response from daemon: cannot remove container "/${name}": container is running: stop the container before removing or force remove` };
       }
@@ -512,7 +519,7 @@ async function dockerRm(ctx) {
     if (result.error) ctx.output.err(`${result.error}\n`);
     else ctx.output.out(`${result.name}\n`);
   }
-  return results.some((result) => result.error) ? 1 : 0;
+  return results.some((result) => result.error && !(result.missing && force)) ? 1 : 0;
 }
 
 async function dockerInspect(ctx) {
@@ -525,8 +532,10 @@ async function dockerInspect(ctx) {
   const container = readState(ctx.dir).containers[name];
   const gap = Boolean(container) && inGap(container);
   if (!container || (gap && scenario.updateGapKind !== "stopped")) {
+    // docker 27: `Error: No such object: x`. docker 29: `error: no such object: x`, and a formatted inspect prints an empty line.
     if (format === undefined) output.out("[]\n");
-    output.err(`Error: No such object: ${name}\n`);
+    else if (scenario.dockerStyle === "current") output.out("\n");
+    output.err(scenario.dockerStyle === "current" ? `error: no such object: ${name}\n` : `Error: No such object: ${name}\n`);
     return 1;
   }
   const view = inspectOf(container, name, gap);
@@ -689,6 +698,8 @@ function advance(state, container, name, scenario) {
   container.previousVersion = t.kind === "update" ? t.from : null;
   container.update = t.kind === "update" ? { available: false, version: null } : { available: true, version: t.from };
   container.version = t.to;
+  container.image = container.image.replace(/:[^:/]+$/, `:${t.to}`); // the agent's container runs the new image; the helper keeps the one it was started with
+  state.images[container.image] = { tag: t.to, name: "ghost-protocol" };
   container.transition = null;
   return "running";
 }
@@ -745,7 +756,7 @@ function gpUpdate(ctx, name, action) {
     gp.start();
     const problem = failure(scenario, action === "request" ? "updateRequest" : "updateRollback");
     if (problem) throw new GpError(problem.code, problem.message);
-    const helper = state.containers[`${name}-updater`];
+    const helper = state.containers[`${name}${HELPER_SUFFIX}`];
     if (!helper?.helper || !helper.running) throw new GpError("no-updater", "No update helper is running.");
     if (container.transition) throw new GpError("update-in-progress", "An update is already under way.");
     const t = { from: container.version, startLeft: scenario.updateStartPolls, updatingLeft: scenario.updatingPolls };
@@ -764,11 +775,37 @@ function gpUpdate(ctx, name, action) {
   return 0;
 }
 
+// The words of the `gp` commands the interface lists. Anything else after `gp` may be a secret given by mistake, as an argument and not on
+// stdin: it is neither shown in a message nor kept in the call log.
+const GP_WORDS = { "auth-tag": ["set"], claude: ["status", "login", "token"], status: ["--json"], update: ["request", "rollback"] };
+
+function describeGp(command) {
+  const [group, action] = command;
+  if (!Object.hasOwn(GP_WORDS, group ?? "")) return "`gp` followed by a command the interface does not list";
+  const shown = GP_WORDS[group].includes(action) ? [group, action] : [group];
+  const hidden = command.length - shown.length;
+  return `\`gp ${shown.join(" ")}\`${hidden > 0 ? ` with ${hidden} more argument${hidden > 1 ? "s" : ""} (not shown: an argument may be a secret)` : ""}`;
+}
+
+/** argv as the call log keeps it: after `gp`, only the words of the interface. */
+function loggedArgv(argv) {
+  if (argv[0] !== "exec") return argv;
+  const known = new Set([...Object.keys(GP_WORDS), ...Object.values(GP_WORDS).flat()]);
+  const shown = ["exec"];
+  let at = 1;
+  while (at < argv.length && argv[at].startsWith("-")) shown.push(argv[at++]); // -i
+  if (at < argv.length) shown.push(argv[at++]); // the container
+  if (at < argv.length) shown.push(/^[a-z][a-z0-9-]{0,15}$/.test(argv[at]) ? argv[at] : "<not logged>"); // the program
+  at++;
+  for (; at < argv.length; at++) shown.push(known.has(argv[at]) ? argv[at] : "<not logged>");
+  return shown;
+}
+
 async function dockerExec(ctx) {
   const { flags, rest } = parseFlags(ctx.args, { bool: ["-i", "--interactive"], stop: true });
   const name = parseContainerName(rest[0]).name;
   const [program, ...command] = rest.slice(1);
-  if (program !== "gp") throw new Refused(`"${program}" is not a program of the interface (gp)`);
+  if (program !== "gp") throw new Refused(`${/^[a-z][a-z0-9-]{0,15}$/.test(program ?? "") ? `"${program}"` : "that"} is not a program of the interface (gp)`);
   ctx.interactive = flag(flags, "-i", "--interactive");
   if (readState(ctx.dir).containers[name]?.helper) throw new Refused(`${name} is the update helper: the interface runs no gp command in it`);
   const [group, action, ...extra] = command;
@@ -777,7 +814,7 @@ async function dockerExec(ctx) {
     (group === "claude" && ["status", "login", "token"].includes(action) && !extra.length && `claude-${action}`) ||
     (group === "status" && action === "--json" && !extra.length && "status") ||
     (group === "update" && ["request", "rollback"].includes(action) && !extra.length && `update-${action}`);
-  if (!step) throw new Refused(`\`gp ${command.join(" ")}\` is not a command of the interface`);
+  if (!step) throw new Refused(`${describeGp(command)} is not a command of the interface`);
   await wait(ctx.scenario, step);
   if (step === "auth-tag") return gpAuthTag(ctx, name);
   if (step === "status") return gpStatus(ctx, name);
@@ -801,6 +838,7 @@ const COMMANDS = {
 
 function report(error, ctx) {
   if (error instanceof DockerError) {
+    if (error.stdout) ctx.output.out(error.stdout);
     ctx.output.err(`${error.message}\n`);
     return error.exitCode;
   }
@@ -836,13 +874,13 @@ export async function main(argv, io) {
     return REFUSED;
   }
   const record = { argv };
-  const n = startCall(dir, { argv });
+  const n = startCall(dir, { argv: loggedArgv(argv) });
   const ctx = { args: argv.slice(1), scenario, dir, record, output: makeOutput(io, scenario), readLine: makeInput(io, record), interactive: false };
   let code;
   try {
     const run = COMMANDS[argv[0]];
     if (!run) throw new Refused(`"${argv[0] ?? ""}" is not a command of the interface`);
-    checkDocker(scenario);
+    checkDocker(scenario, argv);
     code = await run(ctx);
   } catch (error) {
     code = report(error, ctx);

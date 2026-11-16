@@ -11,6 +11,7 @@ import { join } from "node:path";
 export const DEFAULTS = {
   docker: "ok", // ok | missing | daemon-down | permission-denied
   dockerVersion: "27.3.1",
+  dockerStyle: "classic", // classic: the wording of docker 27 | current: the wording of docker 29 (inspect, and a daemon that is not there)
   interface: 1, // the number in `GP_INTERFACE=` and in the status
   pull: "ok", // ok | not-found | unauthorized | network
   authTag: "accept", // accept | reject
@@ -66,6 +67,7 @@ export const PRESETS = {
   "update-gap-stopped": { update: { available: true, version: "0.1.1" }, updateGapPolls: 2, updateGapKind: "stopped" },
   "update-never-returns": { update: { available: true, version: "0.1.1" }, updateGapPolls: "forever" },
   "no-self-update": { selfUpdate: "no" },
+  "docker-29-wording": { dockerStyle: "current", dockerVersion: "29.1.3" },
   "unknown-interface": { interface: 2 },
   "status-error": { statusOverride: { state: "error", error: STATUS_ERROR } },
   "status-compact-with-preamble": { statusFormat: "compact", statusPreamble: true },
@@ -103,9 +105,71 @@ export function parseScenario(text) {
   return result;
 }
 
+/** The steps a scenario can slow (`delayMs`) or stop (`hang`): one per command the fake answers. */
+export const STEPS = [
+  "version", "pull", "init", "start", "start-updater", "auth-tag", "claude-status", "claude-login", "claude-token", "status",
+  "update-request", "update-rollback", "restart", "stop", "rm", "inspect", "volume-rm",
+];
+
+const ENUMS = {
+  docker: ["ok", "missing", "daemon-down", "permission-denied"],
+  dockerStyle: ["classic", "current"],
+  pull: ["ok", "not-found", "unauthorized", "network"],
+  authTag: ["accept", "reject"],
+  claude: ["not-active", "active"],
+  relay: ["connected", "refused-not-member", "unreachable"],
+  selfUpdate: ["yes", "no"],
+  updateGapKind: ["gone", "stopped"],
+  statusFormat: ["pretty", "compact"],
+};
+const BOOLEANS = ["statusPreamble", "logLines"];
+const COUNTS = ["connectingPolls", "updateStartPolls", "updatingPolls"];
+
+const count = (value) => Number.isInteger(value) && value >= 0;
+const text = (value) => typeof value === "string" && value !== "";
+
+/** Every value of the scenario checked: an enum, a number's type, a step's name. A typo in a value would otherwise do nothing, quietly. */
+function validate(scenario) {
+  const bad = (key, expected, got) => {
+    throw new Error(`the scenario has a bad value for "${key}": ${JSON.stringify(got)} (expected ${expected})`);
+  };
+  for (const [key, allowed] of Object.entries(ENUMS)) if (!allowed.includes(scenario[key])) bad(key, `one of ${allowed.join(", ")}`, scenario[key]);
+  for (const key of BOOLEANS) if (typeof scenario[key] !== "boolean") bad(key, "true or false", scenario[key]);
+  for (const key of COUNTS) if (!count(scenario[key])) bad(key, "a whole number, 0 or more", scenario[key]);
+  if (!Number.isInteger(scenario.interface) || scenario.interface < 1) bad("interface", "a whole number, 1 or more", scenario.interface);
+  if (!text(scenario.dockerVersion)) bad("dockerVersion", "a version such as 27.3.1", scenario.dockerVersion);
+  if (scenario.loginCode !== null && !text(scenario.loginCode)) bad("loginCode", "a non-empty string, or null", scenario.loginCode);
+  if (scenario.updateGapPolls !== "forever" && !count(scenario.updateGapPolls)) bad("updateGapPolls", 'a whole number, 0 or more, or "forever"', scenario.updateGapPolls);
+
+  const update = scenario.update;
+  if (!isObject(update) || Object.keys(update).some((key) => !["available", "version"].includes(key))) bad("update", "{ available, version }", update);
+  if (typeof update.available !== "boolean") bad("update.available", "true or false", update.available);
+  if (update.version !== null && !text(update.version)) bad("update.version", "a version, or null", update.version);
+
+  if (scenario.statusOverride !== null && !isObject(scenario.statusOverride)) bad("statusOverride", "an object, or null", scenario.statusOverride);
+
+  if (!isObject(scenario.fail)) bad("fail", "an object of steps", scenario.fail);
+  for (const [step, wanted] of Object.entries(scenario.fail)) {
+    if (!Object.hasOwn(FAILURES, step)) bad(`fail.${step}`, `a step: ${Object.keys(FAILURES).join(", ")}`, step);
+    const fine =
+      typeof wanted === "boolean" ||
+      (isObject(wanted) && Object.entries(wanted).every(([key, value]) => ["code", "message"].includes(key) && text(value)));
+    if (!fine) bad(`fail.${step}`, "true, false, or { code, message }", wanted);
+  }
+
+  if (!isObject(scenario.delayMs)) bad("delayMs", "an object of steps", scenario.delayMs);
+  for (const [step, ms] of Object.entries(scenario.delayMs)) {
+    if (!STEPS.includes(step)) bad(`delayMs.${step}`, `a step: ${STEPS.join(", ")}`, step);
+    if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) bad(`delayMs.${step}`, "milliseconds, 0 or more", ms);
+  }
+
+  if (!Array.isArray(scenario.hang)) bad("hang", "a list of steps", scenario.hang);
+  for (const step of scenario.hang) if (!STEPS.includes(step)) bad("hang", `steps from: ${STEPS.join(", ")}`, step);
+}
+
 const KNOWN = new Set(Object.keys(DEFAULTS));
 
-/** The scenario for this command: defaults, then the environment's, then scenario.json's. An unknown key is an error, so a typo shows. */
+/** The scenario for this command: defaults, then the environment's, then scenario.json's. An unknown key, or a value it cannot mean, is an error. */
 export function loadScenario(env, stateDir) {
   let scenario = DEFAULTS;
   if (env.FAKE_DOCKER_SCENARIO) scenario = merge(scenario, parseScenario(env.FAKE_DOCKER_SCENARIO));
@@ -121,5 +185,6 @@ export function loadScenario(env, stateDir) {
   for (const key of Object.keys(scenario)) {
     if (!KNOWN.has(key)) throw new Error(`the scenario has a key the fake does not know: "${key}"`);
   }
+  validate(scenario);
   return scenario;
 }

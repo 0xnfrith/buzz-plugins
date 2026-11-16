@@ -15,6 +15,7 @@ export interface Scenario {
   updatingPolls?: number;
   updateGapPolls?: number | "forever";
   updateGapKind?: "gone" | "stopped";
+  dockerStyle?: "classic" | "current";
   selfUpdate?: "yes" | "no";
   statusFormat?: "pretty" | "compact";
   statusPreamble?: boolean;
@@ -28,7 +29,7 @@ export interface Scenario {
 export type Preset =
   | "ok" | "docker-missing" | "daemon-down" | "permission-denied" | "pull-not-found" | "pull-unauthorized" | "pull-offline" | "init-fails"
   | "bad-auth-tag" | "claude-signed-in" | "login-fails" | "token-rejected" | "relay-refuses" | "relay-unreachable" | "update-available"
-  | "no-self-update" | "update-gap" | "update-gap-stopped" | "update-never-returns" | "unknown-interface" | "status-error" | "status-compact-with-preamble";
+  | "no-self-update" | "docker-29-wording" | "update-gap" | "update-gap-stopped" | "update-never-returns" | "unknown-interface" | "status-error" | "status-compact-with-preamble";
 
 /** A preset name, several joined with commas, or an object. */
 export type ScenarioInput = Preset | (string & {}) | Scenario;
@@ -38,6 +39,8 @@ export interface Result {
   signal: string | null;
   stdout: string;
   stderr: string;
+  /** The process was still there after `timeoutMs` and was killed. */
+  timedOut: boolean;
 }
 
 export interface Running {
@@ -81,8 +84,8 @@ export interface FakeDocker {
   missingEnv(base?: NodeJS.ProcessEnv): NodeJS.ProcessEnv;
   use(scenario: ScenarioInput): void;
   tweak(changes: Scenario): void;
-  start(argv: string[], options?: { env?: NodeJS.ProcessEnv; input?: string }): Running;
-  run(argv: string[], options?: { env?: NodeJS.ProcessEnv; input?: string }): Promise<Result>;
+  start(argv: string[], options?: { env?: NodeJS.ProcessEnv; input?: string; timeoutMs?: number }): Running;
+  run(argv: string[], options?: { env?: NodeJS.ProcessEnv; input?: string; timeoutMs?: number }): Promise<Result>;
   calls(): Call[];
   state(): { counter: number; images: Record<string, unknown>; volumes: Record<string, any>; containers: Record<string, any> };
   patchState<T>(change: (state: ReturnType<FakeDocker["state"]>) => T): T;

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { assertGpFailure, parseGp } from "./contract.mjs";
-import { IMAGE, createAgent, gp, gpInput, initArgs, pullArgs, startArgs, status, statusArgs, versionArgs, withFake } from "./support.mjs";
+import { IMAGE, createAgent, gp, gpInput, initArgs, pullArgs, runningAgent, startArgs, status, statusArgs, versionArgs, withFake } from "./support.mjs";
 
 let fake;
 afterEach(() => fake?.cleanup());
@@ -66,6 +66,58 @@ describe("the Docker daemon is not running", () => {
   test("it comes back when the scenario does", async () => {
     fake.use("ok");
     assert.equal((await fake.run(versionArgs)).code, 0);
+  });
+});
+
+describe("the wording of newer docker (docker 29) is a scenario of its own: dockerStyle current", () => {
+  const down = "failed to connect to the docker API at unix:///var/run/docker.sock; check if the path is correct and if the daemon is running: dial unix /var/run/docker.sock: connect: no such file or directory\n";
+
+  test("a daemon that is not there: the new text, and docker's empty results on stdout (`[]` for inspect, an empty line for a formatted command)", async () => {
+    fake = withFake("daemon-down,docker-29-wording");
+    const version = await fake.run(versionArgs);
+    assert.deepEqual([version.code, version.stdout, version.stderr], [1, "\n", down]);
+    const inspect = await fake.run(["inspect", "gp-maple"]);
+    assert.deepEqual([inspect.code, inspect.stdout, inspect.stderr], [1, "[]\n", down]);
+    const formatted = await fake.run(["inspect", "-f", "{{.State.Status}}", "gp-maple"]);
+    assert.deepEqual([formatted.code, formatted.stdout], [1, "\n"]);
+    const pull = await fake.run(pullArgs());
+    assert.deepEqual([pull.code, pull.stdout, pull.stderr], [1, "", down]);
+  });
+
+  test("a container that is not there: `error: no such object` in lower case, and an empty line from a formatted inspect", async () => {
+    fake = withFake("docker-29-wording");
+    const plain = await fake.run(["inspect", "gp-nobody"]);
+    assert.deepEqual([plain.code, plain.stdout, plain.stderr], [1, "[]\n", "error: no such object: gp-nobody\n"]);
+    const formatted = await fake.run(["inspect", "--format", "{{.State.Status}}", "gp-nobody"]);
+    assert.deepEqual([formatted.code, formatted.stdout, formatted.stderr], [1, "\n", "error: no such object: gp-nobody\n"]);
+  });
+
+  test("the texts the two versions share are the same: no such container, volume in use, not running", async () => {
+    for (const style of ["classic", "current"]) {
+      fake = withFake({ dockerStyle: style });
+      const exec = await fake.run(statusArgs());
+      assert.equal(exec.stderr, "Error response from daemon: No such container: gp-maple\n", style);
+      const volume = await fake.run(["volume", "rm", "gp-nobody-data"]);
+      assert.equal(volume.stderr, "Error response from daemon: get gp-nobody-data: no such volume\n", style);
+      fake.cleanup();
+    }
+  });
+
+  test("the default is the wording of docker 27", async () => {
+    fake = withFake();
+    const looked = await fake.run(["inspect", "gp-nobody"]);
+    assert.equal(looked.stderr, "Error: No such object: gp-nobody\n");
+  });
+
+  test("the gap in an update shows the wording of the style chosen", async () => {
+    fake = withFake("update-gap,docker-29-wording");
+    await runningAgent(fake);
+    await fake.run(gp("maple", "update", "request"));
+    await status(fake);
+    await status(fake);
+    await fake.run(statusArgs());
+    const looked = await fake.run(["inspect", "gp-maple"]);
+    assert.equal(looked.stderr, "error: no such object: gp-maple\n");
   });
 });
 

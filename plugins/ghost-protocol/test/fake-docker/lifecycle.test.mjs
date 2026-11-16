@@ -73,6 +73,14 @@ describe("restart and stop", () => {
 });
 
 describe("remove", () => {
+  test("`docker rm -f` of a container that is not there prints docker's error and exits 0, as docker 29 does; without -f it exits 1", async () => {
+    const forced = await fake.run(["rm", "-f", "gp-nobody", "gp-nobody2"]);
+    assert.deepEqual([forced.code, forced.stdout], [0, ""]);
+    assert.equal(forced.stderr, "Error response from daemon: No such container: gp-nobody\nError response from daemon: No such container: gp-nobody2\n");
+    const plain = await fake.run(["rm", "gp-nobody"]);
+    assert.deepEqual([plain.code, plain.stderr], [1, "Error response from daemon: No such container: gp-nobody\n"]);
+  });
+
   test("`docker rm -f gp-<slug>` prints the name; the container is gone and the data volume stays", async () => {
     const result = await fake.run(["rm", "-f", "gp-maple"]);
     assert.deepEqual([result.code, result.stdout], [0, "gp-maple\n"]);
@@ -100,25 +108,25 @@ describe("remove", () => {
   });
 });
 
-describe("delete the agent's data: `docker rm -f gp-<slug> gp-<slug>-updater`, then `docker volume rm gp-<slug>-data`", () => {
-  const remove = ["rm", "-f", "gp-maple", "gp-maple-updater"];
+describe("delete the agent's data: `docker rm -f gp-<slug> gp-<slug>.updater`, then `docker volume rm gp-<slug>-data`", () => {
+  const remove = ["rm", "-f", "gp-maple", "gp-maple.updater"];
 
   test("the user said yes to self-update and the plugin started the helper: both are removed, exit 0", async () => {
-    const [view] = JSON.parse((await fake.run(["inspect", "gp-maple-updater"])).stdout);
-    assert.deepEqual([view.Name, view.State.Running, view.Mounts], ["/gp-maple-updater", true, []]);
+    const [view] = JSON.parse((await fake.run(["inspect", "gp-maple.updater"])).stdout);
+    assert.deepEqual([view.Name, view.State.Running, view.Mounts], ["/gp-maple.updater", true, []]);
     const result = await fake.run(remove);
-    assert.deepEqual([result.code, result.stdout, result.stderr], [0, "gp-maple\ngp-maple-updater\n", ""]);
+    assert.deepEqual([result.code, result.stdout, result.stderr], [0, "gp-maple\ngp-maple.updater\n", ""]);
   });
 
-  test("the user said no: there is no helper, so the first is removed and the second is docker's 'No such container', exit 1", async () => {
+  test("the user said no: there is no helper, so the first is removed and the second is docker's 'No such container' on stderr, exit 0 with -f", async () => {
     const other = withFake("no-self-update");
     try {
       await runningAgent(other, { helper: false });
-      assert.equal(other.state().containers["gp-maple-updater"], undefined);
+      assert.equal(other.state().containers["gp-maple.updater"], undefined);
       const result = await other.run(remove);
-      assert.equal(result.code, 1);
+      assert.equal(result.code, 0, "docker 29: with -f, a container that is not there is an error line and not a failure");
       assert.equal(result.stdout, "gp-maple\n");
-      assert.equal(result.stderr, "Error response from daemon: No such container: gp-maple-updater\n");
+      assert.equal(result.stderr, "Error response from daemon: No such container: gp-maple.updater\n");
       assert.equal(other.state().containers["gp-maple"], undefined, "the agent's container is removed all the same");
     } finally {
       other.cleanup();
@@ -129,12 +137,12 @@ describe("delete the agent's data: `docker rm -f gp-<slug> gp-<slug>-updater`, t
     fake.use({ update: { available: true, version: "0.1.1" } });
     await fake.run(gp("maple", "update", "request"));
     for (let i = 0; i < 4; i++) await status(fake);
-    const running = async () => JSON.parse((await fake.run(["inspect", "-f", "{{.State.Running}}", "gp-maple-updater"])).stdout);
+    const running = async () => JSON.parse((await fake.run(["inspect", "-f", "{{.State.Running}}", "gp-maple.updater"])).stdout);
     assert.equal(await running(), true);
-    const before = fake.state().containers["gp-maple-updater"].id;
+    const before = fake.state().containers["gp-maple.updater"].id;
     await fake.run(["rm", "-f", "gp-maple"]);
     await fake.run(startArgs());
-    assert.equal(fake.state().containers["gp-maple-updater"].id, before, "one helper, not two");
+    assert.equal(fake.state().containers["gp-maple.updater"].id, before, "one helper, not two");
     assert.equal(await running(), true);
   });
 
@@ -166,17 +174,17 @@ describe("delete the agent's data: `docker rm -f gp-<slug> gp-<slug>-updater`, t
 
 describe("the helper container is not an agent", () => {
   test("the interface runs no gp command in it: the fake refuses, and the agent's own commands are unaffected", async () => {
-    const result = await fake.run(gp("maple-updater", "status", "--json"));
+    const result = await fake.run(gp("maple.updater", "status", "--json"));
     assert.equal(result.code, 64);
-    assert.match(result.stderr, /^fake-docker: gp-maple-updater is the update helper/);
+    assert.match(result.stderr, /^fake-docker: gp-maple\.updater is the update helper/);
     assertGpSuccess(await fake.run(gp("maple", "claude", "status")));
   });
 
   test("restart and stop work on it as on any container, and the agent is not touched", async () => {
-    assert.equal((await fake.run(["stop", "gp-maple-updater"])).stdout, "gp-maple-updater\n");
-    assert.equal(JSON.parse((await fake.run(["inspect", "gp-maple-updater"])).stdout)[0].State.Status, "exited");
+    assert.equal((await fake.run(["stop", "gp-maple.updater"])).stdout, "gp-maple.updater\n");
+    assert.equal(JSON.parse((await fake.run(["inspect", "gp-maple.updater"])).stdout)[0].State.Status, "exited");
     assert.equal(JSON.parse((await fake.run(["inspect", "gp-maple"])).stdout)[0].State.Status, "running");
-    await fake.run(["restart", "gp-maple-updater"]);
-    assert.equal(JSON.parse((await fake.run(["inspect", "gp-maple-updater"])).stdout)[0].State.Status, "running");
+    await fake.run(["restart", "gp-maple.updater"]);
+    assert.equal(JSON.parse((await fake.run(["inspect", "gp-maple.updater"])).stdout)[0].State.Status, "running");
   });
 });

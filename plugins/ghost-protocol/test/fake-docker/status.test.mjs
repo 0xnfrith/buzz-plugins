@@ -175,6 +175,19 @@ describe("update and way back", () => {
     assert.deepEqual(seen[2].update, { available: true, version: "0.1.1" });
   });
 
+  test("the agent's container runs the new image after an update and the old one after a rollback; the helper keeps the one it was started with", async () => {
+    const image = async (name) => (await fake.run(["inspect", "-f", "{{.Config.Image}}", name])).stdout.trim();
+    assert.equal(await image("gp-maple"), "registry.example/ghost-protocol:0.0.0");
+    await fake.run(gp("maple", "update", "request"));
+    await polls(3);
+    assert.equal(await image("gp-maple"), "registry.example/ghost-protocol:0.1.1");
+    assert.equal(await image("gp-maple.updater"), "registry.example/ghost-protocol:0.0.0");
+    assert.equal(fake.state().images["registry.example/ghost-protocol:0.1.1"].name, "ghost-protocol");
+    await fake.run(gp("maple", "update", "rollback"));
+    await polls(3);
+    assert.equal(await image("gp-maple"), "registry.example/ghost-protocol:0.0.0");
+  });
+
   test("without an update, `request` is no-update-available; without a previous version, `rollback` is no-previous-version", async () => {
     assertGpFailure(await fake.run(gp("maple", "update", "rollback")), "no-previous-version");
     fake.use({});

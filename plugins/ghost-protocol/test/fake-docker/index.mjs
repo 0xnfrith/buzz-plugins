@@ -38,27 +38,50 @@ export function createFakeDocker({ scenario = {}, dir } = {}) {
 
   function write(next) {
     const given = typeof next === "string" ? parseScenario(next) : next;
+    let before = null;
+    try {
+      before = readFileSync(scenarioFile, "utf8");
+    } catch {
+      // there was no scenario yet
+    }
     writeFileSync(scenarioFile, JSON.stringify(given));
     try {
-      loadScenario({}, stateDir); // an unknown key or preset is an error here, in the test, and not in the middle of a command
+      loadScenario({}, stateDir); // an unknown key, preset or value is an error here, in the test, and not in the middle of a command
     } catch (error) {
-      rmSync(scenarioFile, { force: true });
+      if (before === null) rmSync(scenarioFile, { force: true });
+      else writeFileSync(scenarioFile, before); // the scenario that was in force stays in force
       throw error;
     }
   }
   write(scenario);
 
-  /** Starts the fake and gives a handle on it: what it printed so far, a way to write to its stdin, and when it ended. */
-  function start(argv, { env, input } = {}) {
+  const running = new Set();
+
+  /**
+   * Starts the fake and gives a handle on it: what it printed so far, a way to write to its stdin, and when it ended. A process that is
+   * still there after `timeoutMs` (30 s) is killed and ends with `timedOut: true`, and `cleanup()` kills any that are left, so a test that
+   * fails half way cannot leave one waiting (or hang the run).
+   */
+  function start(argv, { env, input, timeoutMs = 30_000 } = {}) {
     const child = spawn(join(BIN_DIR, "docker"), argv, { env: env ?? fake.env(), stdio: ["pipe", "pipe", "pipe"] });
+    running.add(child);
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, timeoutMs);
     child.stdout.setEncoding("utf8").on("data", (chunk) => (stdout += chunk));
     child.stderr.setEncoding("utf8").on("data", (chunk) => (stderr += chunk));
     child.stdin.on("error", () => {}); // the fake may exit before it reads
     const exited = new Promise((resolve, reject) => {
       child.on("error", reject);
-      child.on("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
+      child.on("close", (code, signal) => {
+        clearTimeout(timer);
+        running.delete(child);
+        resolve({ code, signal, stdout, stderr, timedOut });
+      });
     });
     if (input !== undefined) child.stdin.end(input);
     return {
@@ -127,9 +150,9 @@ export function createFakeDocker({ scenario = {}, dir } = {}) {
           };
         }
         if (helper) {
-          state.containers[`gp-${slug}-updater`] = {
-            id: sha256(`container:gp-${slug}-updater:seed`),
-            image: image.replace("/ghost-protocol:", "/ghost-protocol-updater:"),
+          state.containers[`gp-${slug}.updater`] = {
+            id: sha256(`container:gp-${slug}.updater:seed`),
+            image, // the agent's own image
             volume: null,
             version,
             running: true,
@@ -140,7 +163,10 @@ export function createFakeDocker({ scenario = {}, dir } = {}) {
         return { container: `gp-${slug}`, volume, pubkey, owner, image };
       });
     },
-    cleanup: () => rmSync(stateDir, { recursive: true, force: true }),
+    cleanup() {
+      for (const child of running) child.kill("SIGKILL");
+      rmSync(stateDir, { recursive: true, force: true });
+    },
   };
 
   return fake;

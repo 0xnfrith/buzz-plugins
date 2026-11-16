@@ -15,11 +15,12 @@ export const initArgs = (slug = "maple", { name = "Maple", relay = RELAY, owner 
 export const startArgs = (slug = "maple", image = IMAGE) => [
   "run", "-d", "--name", `gp-${slug}`, "--restart", "unless-stopped", "-v", `gp-${slug}-data:/data`, image,
 ];
-// The update helper, started by the plugin after the agent's container when the user said yes to self-update. The image's name and the
-// arguments after it are a placeholder until GHOST Protocol fixes them (one constant in the plugin; two in the fake).
-export const UPDATER_IMAGE = "registry.example/ghost-protocol-updater:0.0.0";
-export const startHelperArgs = (slug = "maple", image = UPDATER_IMAGE) => [
-  "run", "-d", "--name", `gp-${slug}-updater`, "--restart", "unless-stopped", "-v", "/var/run/docker.sock:/var/run/docker.sock", image, "--target", `gp-${slug}`,
+// The update helper, started by the plugin after the agent's container when the user said yes to self-update. It runs the agent's own image and
+// exact tag with a different command; the command is a placeholder until GHOST Protocol fixes it (UPDATER_COMMAND in fake-docker.mjs is null,
+// so the fake takes any command words).
+export const UPDATER_COMMAND = ["updater"];
+export const startHelperArgs = (slug = "maple", image = IMAGE, command = UPDATER_COMMAND) => [
+  "run", "-d", "--name", `gp-${slug}.updater`, "--restart", "unless-stopped", "-v", "/var/run/docker.sock:/var/run/docker.sock", image, ...command, "--target", `gp-${slug}`,
 ];
 export const gp = (slug, ...command) => ["exec", `gp-${slug}`, "gp", ...command];
 export const gpInput = (slug, ...command) => ["exec", "-i", `gp-${slug}`, "gp", ...command];

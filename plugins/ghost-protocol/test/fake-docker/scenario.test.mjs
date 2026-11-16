@@ -9,6 +9,7 @@ import { afterEach, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { assertStatusShape, parseGp } from "./contract.mjs";
 import { BIN_DIR, PRESET_NAMES, attestationTag, createFakeDocker } from "./index.mjs";
+import { STEPS } from "./scenario.mjs";
 import { OWNER, attest, createAgent, gp, gpInput, initArgs, runningAgent, status, statusArgs, versionArgs, withFake } from "./support.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -52,6 +53,30 @@ describe("choosing a scenario", () => {
     fake = withFake({ dockerVersion: "3.0.0" });
     assert.throws(() => fake.use("no-such-preset"), /no scenario preset called "no-such-preset"/);
     assert.throws(() => fake.use({ dockerVersoin: "x" }), /a key the fake does not know: "dockerVersoin"/);
+  });
+
+  test("a typo in a value, a number or a step name is an error too, at once (and the old scenario stays)", () => {
+    fake = withFake({ dockerVersion: "3.0.0" });
+    const typos = [
+      { docker: "daemon_down" }, { pull: "nofound" }, { relay: "refused" }, { selfUpdate: "maybe" }, { claude: "activ" },
+      { updateGapKind: "stoped" }, { authTag: "rejct" }, { interface: "two" }, { interface: 0 }, { fail: { authTags: true } },
+      { fail: { init: "yes" } }, { fail: { init: { codee: "x" } } }, { hang: ["statuz"] }, { delayMs: { pul: 5000 } },
+      { delayMs: { pull: -1 } }, { connectingPolls: -1 }, { updatingPolls: 1.5 }, { updateGapPolls: "for ever" }, { statusFormat: "pretty-printed" },
+      { statusPreamble: "yes" }, { logLines: 1 }, { dockerStyle: "docker29" }, { loginCode: "" }, { update: { available: "yes", version: null } },
+      { update: { avalable: true, version: "1" } }, { statusOverride: "running" }, { dockerVersion: "" },
+    ];
+    for (const typo of typos) assert.throws(() => fake.use(typo), /the scenario has a bad value|a key the fake does not know/, JSON.stringify(typo));
+    assert.equal(JSON.parse(readFileSync(join(fake.stateDir, "scenario.json"), "utf8")).dockerVersion, "3.0.0");
+  });
+
+  test("and what is meant is accepted: every enum value, every step, \"forever\", a custom failure", () => {
+    fake = withFake();
+    fake.use({
+      docker: "permission-denied", dockerStyle: "current", pull: "network", authTag: "reject", claude: "active", relay: "unreachable",
+      selfUpdate: "no", updateGapKind: "stopped", updateGapPolls: "forever", statusFormat: "compact", statusPreamble: true, interface: 7,
+      fail: { init: { code: "x" }, claudeToken: true, updateRollback: false }, hang: STEPS, delayMs: Object.fromEntries(STEPS.map((step) => [step, 1])),
+      loginCode: "123", update: { available: true, version: "2.0.0" }, statusOverride: { future_field: { a: 1 } },
+    });
   });
 
   test("the same mistake made straight in the environment is a refusal: exit 64, and the message names it", async () => {
@@ -110,7 +135,7 @@ describe("the call log", () => {
     await fake.run(["stop", "gp-maple"]);
     await fake.run(["restart", "gp-maple"]);
     await fake.run(["inspect", "gp-maple"]);
-    await fake.run(["rm", "-f", "gp-maple", "gp-maple-updater"]);
+    await fake.run(["rm", "-f", "gp-maple", "gp-maple.updater"]);
     await fake.run(["volume", "rm", "gp-maple-data"]);
     assert.deepEqual(fake.calls().filter((call) => call.refused), []);
   });
@@ -150,6 +175,58 @@ describe("a Claude token and a login code never leave the fake", () => {
   });
 });
 
+describe("a secret given as an argument by mistake", () => {
+  const SECRET = "sk-made-up-argument-secret-9f3a-LLL";
+
+  test("is refused without being shown, and is in no file: not the message, not the call log, not the state", async () => {
+    fake = withFake();
+    await createAgent(fake);
+    const mistakes = [
+      gpInput("maple", "claude", "token", SECRET),
+      gpInput("maple", "claude", "login", SECRET),
+      gpInput("maple", "claude", SECRET),
+      gpInput("maple", "reset", SECRET),
+      gpInput("maple", SECRET),
+      ["exec", "-i", "gp-maple", SECRET, "claude", "token"],
+    ];
+    for (const argv of mistakes) {
+      const result = await fake.run(argv);
+      assert.equal(result.code, 64, argv.join(" "));
+      assert.ok(!(result.stdout + result.stderr).includes(SECRET), `echoed: ${result.stderr}`);
+    }
+    for (const entry of readdirSync(fake.stateDir, { recursive: true })) {
+      const file = join(fake.stateDir, entry);
+      if (statSync(file).isFile()) assert.ok(!readFileSync(file, "utf8").includes(SECRET), `written to ${entry}`);
+    }
+    const logged = fake.calls().filter((call) => call.refused).map((call) => call.argv.join(" "));
+    assert.ok(logged.some((line) => line.includes("<not logged>")), "the call log says that something was left out");
+  });
+
+  test("the refusal still says what was wrong, without the value", async () => {
+    fake = withFake();
+    await createAgent(fake);
+    const result = await fake.run(gpInput("maple", "claude", "token", SECRET));
+    assert.match(result.stderr, /^fake-docker: `gp claude token` with 1 more argument \(not shown: an argument may be a secret\) is not a command of the interface\n$/);
+  });
+});
+
+describe("a process cannot be left behind", () => {
+  test("a process still there after timeoutMs is killed and ends with timedOut", async () => {
+    fake = withFake({ hang: ["version"] });
+    const result = await fake.start(versionArgs, { timeoutMs: 300 }).exited;
+    assert.deepEqual([result.timedOut, result.signal], [true, "SIGKILL"]);
+  });
+
+  test("cleanup kills the ones that are left", async () => {
+    fake = withFake({ hang: ["version"] });
+    const running = fake.start(versionArgs);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    fake.cleanup();
+    const result = await running.exited;
+    assert.equal(result.signal, "SIGKILL");
+  });
+});
+
 describe("seeding an agent in a condition, without running its commands", () => {
   for (const [condition, expected] of [["needs-auth-tag", "needs-auth-tag"], ["needs-claude", "needs-claude"], ["running", "running"]]) {
     test(condition, async () => {
@@ -164,16 +241,16 @@ describe("seeding an agent in a condition, without running its commands", () => 
 
   test("the update helper is seeded with the agent when the scenario's selfUpdate is yes, or `updater: true`; not with `updater: false` or no container", async () => {
     fake = withFake();
-    assert.ok(fake.seed({ slug: "maple" }) && fake.state().containers["gp-maple-updater"].running);
+    assert.ok(fake.seed({ slug: "maple" }) && fake.state().containers["gp-maple.updater"].running);
     fake.seed({ slug: "birch", updater: false });
-    assert.equal(fake.state().containers["gp-birch-updater"], undefined);
+    assert.equal(fake.state().containers["gp-birch.updater"], undefined);
     fake.seed({ slug: "oak", container: false });
-    assert.equal(fake.state().containers["gp-oak-updater"], undefined);
+    assert.equal(fake.state().containers["gp-oak.updater"], undefined);
     fake.use("no-self-update");
     fake.seed({ slug: "elm" });
-    assert.equal(fake.state().containers["gp-elm-updater"], undefined);
+    assert.equal(fake.state().containers["gp-elm.updater"], undefined);
     fake.seed({ slug: "ash", updater: true });
-    assert.equal(fake.state().containers["gp-ash-updater"].target, "gp-ash");
+    assert.equal(fake.state().containers["gp-ash.updater"].target, "gp-ash");
   });
 
   test("stopped: exec fails, inspect says exited; a version, a previous version and a name can be given", async () => {

@@ -182,11 +182,14 @@ describe("5. the attestation", () => {
 
   test("the process ends after one line even when the plugin keeps stdin open", async () => {
     const running = fake.start(gpInput("maple", "auth-tag", "set"));
-    running.write(`${attestationTag(OWNER)}\n`);
-    const result = await Promise.race([running.exited, new Promise((resolve) => setTimeout(() => resolve("hung"), 5000))]);
-    running.end();
-    assert.notEqual(result, "hung", "the fake waited for the end of stdin");
-    assert.equal(result.code, 0);
+    try {
+      running.write(`${attestationTag(OWNER)}\n`);
+      const result = await Promise.race([running.exited, new Promise((resolve) => setTimeout(() => resolve("hung"), 5000))]);
+      assert.notEqual(result, "hung", "the fake waited for the end of stdin");
+      assert.equal(result.code, 0);
+    } finally {
+      running.kill("SIGKILL");
+    }
   });
 });
 
@@ -206,15 +209,19 @@ describe("6 and 7. Claude, then waiting for `running`", () => {
 
   test("way A: `claude login` prints the address first and waits for the code on stdin, then GP_CLAUDE=active", async () => {
     const login = fake.start(gpInput("maple", "claude", "login"));
-    await waitFor(() => login.stdout().includes("GP_CLAUDE_LOGIN_URL="), "the address");
-    assert.equal(login.child.exitCode, null, "it is still running, waiting for the code");
-    assert.match(login.stdout(), /^GP_INTERFACE=1\n/);
-    assert.match(login.stdout(), /\nGP_CLAUDE_LOGIN_URL=https:\/\/claude\.example\/login\?state=[0-9a-f]{16}\n/);
-    login.write("a-made-up-code\n");
-    const result = await login.exited;
-    const out = assertGpSuccess(result);
-    assert.deepEqual(out.order, ["INTERFACE", "CLAUDE_LOGIN_URL", "CLAUDE"]);
-    assert.equal(out.values.CLAUDE, "active");
+    try {
+      await waitFor(() => login.stdout().includes("GP_CLAUDE_LOGIN_URL="), "the address");
+      assert.equal(login.child.exitCode, null, "it is still running, waiting for the code");
+      assert.match(login.stdout(), /^GP_INTERFACE=1\n/);
+      assert.match(login.stdout(), /\nGP_CLAUDE_LOGIN_URL=https:\/\/claude\.example\/login\?state=[0-9a-f]{16}\n/);
+      login.write("a-made-up-code\n");
+      const result = await login.exited;
+      const out = assertGpSuccess(result);
+      assert.deepEqual(out.order, ["INTERFACE", "CLAUDE_LOGIN_URL", "CLAUDE"]);
+      assert.equal(out.values.CLAUDE, "active");
+    } finally {
+      login.kill("SIGKILL"); // a failed assertion above must not leave the process waiting for a code
+    }
   });
 
   test("a second login prints another address", async () => {
