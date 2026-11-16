@@ -401,6 +401,80 @@ test("Buzz's own Delete warns before anything is removed, and Cancel removes not
   noneRemoved();
 });
 
+test("Buzz's Finish setup, with the token way and no form, leaves the agent waiting for Claude and does not refuse it", async ({ page, app }) => {
+  const fake = await arrange(page, app, { scenario: "bad-auth-tag" });
+  const dialog = await openForm(page);
+  await fill(dialog);
+  await create(page, dialog);
+  await expect(introOf(page).getByRole("alert")).toContainText("did not accept your attestation", { timeout: 60_000 });
+  // The dialog is closed, so the token held in memory is gone, and Buzz keeps the agent as one whose setup did not finish.
+  await introOf(page).getByRole("button", { name: "Back", exact: true }).click();
+  await dialogOf(page).getByRole("button", { name: "Close", exact: true }).click();
+  await expect(dialogOf(page)).toHaveCount(0);
+  await page.getByText("Maple", { exact: true }).first().click();
+  await expect(page.getByText("Its provider made it, but its setup did not finish.")).toBeVisible();
+  fake.use("ok");
+  await page.getByRole("button", { name: "Finish setup" }).click();
+  await expect(page.getByText("On this computer")).toBeVisible({ timeout: 60_000 });
+  // It was not refused for lack of a token: the sign-in is left for its tab.
+  expect(calls(fake).some((line) => line.includes(" claude token") || line.includes(" claude login"))).toBe(false);
+  const waiting = JSON.parse((await fake.run(["exec", "gp-maple", "gp", "status", "--json"])).stdout);
+  expect(waiting.state).toBe("needs-claude");
+  await page.getByRole("tab", { name: "GHOST Protocol" }).click();
+  await expect(page.locator('[data-gp="claude"] [data-gp="claude-state"]')).toHaveText("Not signed in to Claude yet.");
+  expect(Object.keys(fake.state().containers).sort()).toEqual(["gp-maple", "gp-maple.updater"]);
+});
+
+test("the tab acts only on a container that says it is this agent's", async ({ page, app }) => {
+  const fake = await arrange(page, app);
+  const dialog = await openForm(page);
+  await fill(dialog);
+  await create(page, dialog);
+  await expect(page.getByText("On this computer")).toBeVisible({ timeout: 60_000 });
+  const tab = page.getByRole("tab", { name: "GHOST Protocol" });
+  const remount = async () => {
+    await page.getByRole("tab", { name: "Identity" }).click();
+    await tab.click();
+  };
+
+  // Its own container: the status screen and the Claude panel are there.
+  await tab.click();
+  await expect(page.locator('[data-gp="agent-tab"] .gp-agent')).toBeVisible();
+
+  // A container that cannot say, with the pair the plugin wrote down: still its own, so the screen shows it stopped, with Restart.
+  fake.patchState((state) => {
+    for (const container of Object.values(state.containers)) container.running = false;
+  });
+  await remount();
+  await expect(page.locator('[data-gp="agent-tab"] .gp-agent').getByRole("button", { name: "Restart", exact: true })).toBeVisible({ timeout: 30_000 });
+
+  // The same container with no pair written down: the name is only a guess, and a container that cannot say is not acted on.
+  await page.evaluate(() => localStorage.removeItem("megatech.ghost-protocol.agents"));
+  const before = calls(fake).length;
+  await remount();
+  await expect(page.locator('[data-gp="container-unknown"]')).toContainText("Nothing here acts on gp-maple");
+  await expect(page.locator('[data-gp="agent-tab"]')).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Restart", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Claude setup token")).toHaveCount(0);
+  await shot(page, "tab-1-unknown");
+
+  // A running container whose status names another agent's key: this agent's tab does not act on it, pair or no pair.
+  fake.patchState((state) => {
+    for (const container of Object.values(state.containers)) container.running = true;
+    for (const volume of Object.values(state.volumes)) volume.pubkey = "c".repeat(64);
+  });
+  await remount();
+  await expect(page.locator('[data-gp="container-other"]')).toContainText("This container belongs to another agent");
+  await expect(page.getByRole("button", { name: "Restart", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Claude setup token")).toHaveCount(0);
+  // Nothing was sent to it but the one look at its status.
+  const sent = calls(fake).slice(before).filter((line) => !line.startsWith("exec gp-maple gp status --json") && !line.startsWith("inspect "));
+  expect(sent).toEqual([]);
+  await shot(page, "tab-2-other");
+});
+
 test("the tab is only on its own agents: another type's agent has none", async ({ page, app }) => {
   await arrange(page, app);
   await page.getByText("Local tester", { exact: true }).first().click();

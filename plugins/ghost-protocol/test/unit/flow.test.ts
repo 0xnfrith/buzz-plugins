@@ -156,16 +156,35 @@ describe("a secret stays where it was put", () => {
     expect(r.secrets.token()).toBe("");
   });
 
-  it("refuses to run `claude token` without a token, or with one that has a space in it", async () => {
-    for (const token of ["", "two words"]) {
+  it("refuses a token with a space in it before it reaches the agent", async () => {
+    for (const token of ["two words", "a\nb"]) {
       const r = make();
       r.secrets.setToken(token);
       const flow = create(r);
       const { pubkey } = await flow.provision();
       const error = await flow.activate(pubkey).catch((reason: unknown) => reason);
-      expect((error as Error).message).toMatch(/Paste a Claude setup token first/);
+      expect((error as Error).message).toMatch(/not a Claude setup token/);
       expect(r.fake.calls().some((call) => call.argv.includes("token"))).toBe(false);
+      expect(r.secrets.token()).toBe("");
     }
+  });
+
+  it("leaves the sign-in for the agent's tab when no token is held, as when Buzz's Finish setup runs the step again with no form", async () => {
+    const r = make("bad-auth-tag");
+    r.secrets.setToken(TOKEN);
+    const flow = create(r);
+    const { pubkey } = await flow.provision();
+    // The first try fails at the attestation, and the dialog is closed: the token held in memory is gone.
+    await flow.activate(pubkey).catch(() => undefined);
+    r.secrets.clear();
+    r.fake.use("ok");
+    // Finish setup: the same saved settings (the token's way), no token.
+    const status = await flow.activate(pubkey);
+    expect(status.state).toBe("needs-claude");
+    expect(states(r)).toMatchObject({ tag: "done", claude: "skipped", wait: "done" });
+    expect(r.progress.view().steps.find((step) => step.id === "claude")?.note).toBe("Sign in from the agent's panel");
+    expect(r.fake.calls().some((call) => call.argv.includes("token") || call.argv.includes("login"))).toBe(false);
+    expect(Object.keys(r.fake.state().containers).sort()).toEqual(["gp-maple", "gp-maple.updater"]);
   });
 });
 
@@ -404,6 +423,38 @@ describe("removing an agent", () => {
     const used = r.fake.calls().map((call) => call.argv.join(" "));
     expect(used).toContain(lineOf(commands.remove("maple")).join(" "));
     expect(used).toContain(lineOf(commands.removeData("maple")).join(" "));
+  });
+
+  it("deletes the data volume, the agent's key and memory, and that is the last thing it does", async () => {
+    const r = make();
+    r.secrets.setToken(TOKEN);
+    const flow = create(r);
+    await flow.activate((await flow.provision()).pubkey);
+    expect(Object.keys(r.fake.state().volumes)).toEqual(["gp-maple-data"]);
+    await remove(r.deps.start, "maple", SIGNAL);
+    expect(r.fake.state().volumes).toEqual({});
+    const removal = r.fake.calls().map((call) => call.argv.join(" ")).filter((line) => line.startsWith("rm ") || line.startsWith("volume rm"));
+    expect(removal).toEqual(["rm -f gp-maple gp-maple.updater", "volume rm gp-maple-data"]);
+  });
+
+  it("does not delete the data volume when the container could not be removed, and says so", async () => {
+    const r = make();
+    r.secrets.setToken(TOKEN);
+    const flow = create(r);
+    await flow.activate((await flow.provision()).pubkey);
+    const real = r.deps.start;
+    // `docker rm -f` fails (the daemon refuses, say): the volume must stay, or the agent's key goes while the agent still runs.
+    const start: typeof real = async (command, handlers) => {
+      if (command.process !== "rm") return real(command, handlers);
+      queueMicrotask(() => handlers.onStderr("Error response from daemon: cannot remove container: permission denied\n"));
+      return { write: async () => undefined, end: async () => undefined, kill: async () => undefined, exited: Promise.resolve(1) };
+    };
+    const error = await remove(start, "maple", SIGNAL).catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(CreateError);
+    expect((error as Error).message).toMatch(/could not remove the agent's container/);
+    expect(r.fake.calls().some((call) => call.argv.includes("volume"))).toBe(false);
+    expect(Object.keys(r.fake.state().volumes)).toEqual(["gp-maple-data"]);
+    expect(Object.keys(r.fake.state().containers).sort()).toEqual(["gp-maple", "gp-maple.updater"]);
   });
 
   it("says what failed when docker cannot", async () => {

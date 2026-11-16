@@ -10,7 +10,8 @@ export type Config = Readonly<{
   claudeWay: ClaudeWay;
 }>;
 
-export const startingConfig = (): Config => ({ place: "local", selfUpdate: null, claudeWay: CLAUDE_LEADS });
+/** A new agent's settings: the way Claude leads with is `leads`, which is `CLAUDE_LEADS` unless a test asks for the other. */
+export const startingConfig = (leads: ClaudeWay = CLAUDE_LEADS): Config => ({ place: "local", selfUpdate: null, claudeWay: leads });
 
 /** What a saved config says, or why it cannot be used. */
 export type Chosen = Readonly<{ selfUpdate: boolean; claudeWay: ClaudeWay }>;

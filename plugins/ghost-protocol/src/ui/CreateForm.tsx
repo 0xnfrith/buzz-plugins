@@ -21,7 +21,9 @@ const WAYS: Readonly<Record<ClaudeWay, { label: string }>> = {
   token: { label: "Paste a setup token" },
   login: { label: "Sign in with an address" },
 };
-const ORDER: readonly ClaudeWay[] = CLAUDE_LEADS === "token" ? ["token", "login"] : ["login", "token"];
+/** The two ways to sign in to Claude, the leading one first. */
+export const waysFor = (leads: ClaudeWay): readonly ClaudeWay[] => (leads === "token" ? ["token", "login"] : ["login", "token"]);
+const ORDER = waysFor(CLAUDE_LEADS);
 
 export function createParts(progress: Progress, secrets: Secrets): Parts {
   function Configuration({ config, onChange, disabled, harnessControl, onReadyChange }: ConfigurationProps) {

@@ -350,10 +350,11 @@ var LIMITS = {
 	pollMs: 1500
 };
 // src/gp/config.ts
-var startingConfig = () => ({
+/** A new agent's settings: the way Claude leads with is `leads`, which is `CLAUDE_LEADS` unless a test asks for the other. */
+var startingConfig = (leads = CLAUDE_LEADS) => ({
 	place: "local",
 	selfUpdate: null,
-	claudeWay: CLAUDE_LEADS
+	claudeWay: leads
 });
 function chosenFrom(config) {
 	const value = typeof config === "object" && config !== null ? config : {};
@@ -895,7 +896,12 @@ async function signIn(d, slug, input) {
 		d.progress.set("claude", "done", "Already signed in");
 		return false;
 	}
-	if (input.claudeWay === "login") {
+	const held = d.token();
+	if (input.claudeWay === "token" && held.trim() !== "" && /\s/.test(held.trim())) {
+		d.clearToken();
+		return stop(d, "claude", "That is not a Claude setup token: it has a space in it. Make one with `claude setup-token`, paste it, and press Create again.");
+	}
+	if (input.claudeWay === "login" || held.trim() === "") {
 		d.clearToken();
 		d.progress.set("claude", "skipped", "Sign in from the agent's panel");
 		return true;
@@ -1258,6 +1264,18 @@ var React;
 function provideReact(react) {
 	React = react;
 }
+// src/gp/guard.ts
+/**
+* Asks `gp status --json` of `gp-<slug>` and compares the key it names with the agent's. Resolves with `undefined` when `signal` aborts
+* first. `written` is true when the slug is the pair the plugin wrote down.
+*/
+async function verifyContainer(host, slug, pubkey, written, signal) {
+	const ran = await runnerFor(host, signal)(statusCall(slug));
+	if (ran === void 0) return void 0;
+	const read = ran.kind === "exit" && ran.code === 0 ? parseStatus(ran.stdout) : void 0;
+	if (read?.status) return read.status.agentPubkey === pubkey ? "ok" : "other";
+	return written ? "ok" : "unknown";
+}
 // src/ui/copy.ts
 /**
 * Puts `text` on the clipboard and says whether it got there. The webview may refuse the async clipboard (a click that came too long
@@ -1354,7 +1372,9 @@ var WAYS = {
 	token: { label: "Paste a setup token" },
 	login: { label: "Sign in with an address" }
 };
-var ORDER = ["token", "login"];
+/** The two ways to sign in to Claude, the leading one first. */
+var waysFor = (leads) => leads === "token" ? ["token", "login"] : ["login", "token"];
+var ORDER = waysFor(CLAUDE_LEADS);
 function createParts(progress, secrets) {
 	function Configuration({ config, onChange, disabled, harnessControl, onReadyChange }) {
 		const token = React.useSyncExternalStore(secrets.subscribe, secrets.token);
@@ -2035,11 +2055,31 @@ function createAgentTab(host, book) {
 	const ClaudePanel = createClaudePanel(host);
 	const StatusScreen = createStatusScreen(host);
 	return function GhostProtocolTab({ agent }) {
-		const slug = book.get(agent.pubkey) ?? slugFromName(agent.name);
+		const written = book.get(agent.pubkey);
+		const slug = written ?? slugFromName(agent.name);
+		const [guard, setGuard] = React.useState("checking");
+		React.useEffect(() => {
+			if (slug === void 0) return;
+			const abort = new AbortController();
+			setGuard("checking");
+			verifyContainer(host, slug, agent.pubkey, written !== void 0, abort.signal).then((answer) => {
+				if (answer !== void 0 && !abort.signal.aborted) setGuard(answer);
+			});
+			return () => abort.abort();
+		}, [
+			slug,
+			agent.pubkey,
+			written !== void 0
+		]);
 		if (slug === void 0) return /* @__PURE__ */ React.createElement("p", {
 			className: "gp-create gp-hint",
 			"data-gp": "no-container"
 		}, "This computer has no GHOST Protocol container for this agent.");
+		if (guard !== "ok") return /* @__PURE__ */ React.createElement("p", {
+			className: "gp-create gp-hint",
+			role: guard === "checking" ? "status" : "alert",
+			"data-gp": guard === "checking" ? "checking" : `container-${guard}`
+		}, guard === "checking" ? "Looking at this agent's container…" : guard === "other" ? `This container belongs to another agent: gp-${slug} on this computer is not this agent's, so nothing here acts on it.` : `Nothing here acts on gp-${slug}: this computer has no record of which container is this agent's, and Docker did not say whose it is.`);
 		return /* @__PURE__ */ React.createElement("div", {
 			className: "gp-root gp-in-tab",
 			"data-gp": "agent-tab"

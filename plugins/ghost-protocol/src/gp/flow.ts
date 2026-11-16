@@ -208,8 +208,16 @@ async function signIn(d: Deps, slug: string, input: ActivateInput): Promise<bool
     d.progress.set("claude", "done", "Already signed in");
     return false;
   }
-  if (input.claudeWay === "login") {
+  const held = d.token();
+  // A token with a space in it is no token: it is refused, not put off.
+  if (input.claudeWay === "token" && held.trim() !== "" && /\s/.test(held.trim())) {
+    d.clearToken();
+    return stop(d, "claude", "That is not a Claude setup token: it has a space in it. Make one with `claude setup-token`, paste it, and press Create again.");
+  }
+  if (input.claudeWay === "login" || held.trim() === "") {
     // The address's way needs the person to act while it runs, which Buzz's Create dialog does not allow: it runs from the agent's panel.
+    // So does a token's way with no token held: Buzz's "Finish setup" and a restart of Buzz run this step again with the saved settings and
+    // no form, and the token held in memory is gone, so the agent is left at `needs-claude` for its tab to sign in, not refused.
     d.clearToken();
     d.progress.set("claude", "skipped", "Sign in from the agent's panel");
     return true;
