@@ -71,6 +71,28 @@ good/ghost-protocol
 
 Then read the review (above), press **Install plugin**, and open the page (next). The desktop app is needed: the browser build cannot install plugins, or run a program.
 
+The same steps, with the screens (the pictures are in the light theme; [how they were made](#the-pictures)):
+
+**1. Open Settings, then Plugins, then Manage plugins, and press Add.**
+
+![Settings open on Manage plugins, with the Add button at the top right](../../assets/install/1-manage-plugins.png)
+
+**2. Choose how to load it.** The Add a plugin window has a folder on the left and a Git or GitHub repository on the right. Use the repository: there is nothing to download first.
+
+![The Add a plugin window: on the left a drop area with a Browse button for a folder, on the right a box for a Git or GitHub repository with a Find button](../../assets/install/2-add-a-plugin.png)
+
+**3. Type the address above and press Find.** Leave **Branch or tag** empty, or fill it with the tag above.
+
+![The repository address typed into the Git or GitHub repository box, with Find ready to press](../../assets/install/3-git-address.png)
+
+**4. Pick GHOST Protocol and press Continue.** Buzz lists every plugin in the repository, with its folder and id.
+
+![The Choose a plugin window: the repository's plugins listed from Agent Skills Highlighter down, with GHOST Protocol picked](screenshots/choose-a-plugin.png)
+
+**5. Read the review, then press Install plugin.** Beside the **Computer access** row that every plugin gets, it must show one **Run docker** and five **Start docker**, and nothing else (see [What it asks for](#what-it-asks-for)): each row opens to show its program and arguments. **Enable plugin** is on, so the plugin is turned on as it is installed.
+
+![The Review plugin access window for GHOST Protocol: a Computer access row, one Run docker row and five Start docker rows, each one closed, Enable plugin switched on, and the Install plugin button](screenshots/review-access.png)
+
 ## Where the page is
 
 Installing adds a page, not a button in Settings: **Settings → Plugins → Manage plugins** lists the plugin and its state, and shows an error there if it did not start. Open the page in either of these ways:
@@ -78,7 +100,23 @@ Installing adds a page, not a button in Settings: **Settings → Plugins → Man
 - **Search:** press **Cmd+K** (Ctrl+K on Windows and Linux), or click **Search** at the top of the window, type `GHOST`, and choose **GHOST Protocol** under **Pages**. This always works, whichever part of Buzz is open.
 - **The Messages sidebar:** pick **Messages** (the first icon in the left rail). In its sidebar, under the **All / Solo / Team** tabs, the pages are listed below **Activity**: **GHOST Protocol**, with a ghost icon. If the sidebar is hidden, the button at the top left of the window shows it, and in a narrow window it is behind **Show navigation**.
 
+![Cmd+K Search with GHOST typed: GHOST Protocol listed under Pages, with a ghost icon](screenshots/find-by-search.png)
+
+![The top of the Messages sidebar: the All, Solo and Team tabs, then the pages, with Activity first and GHOST Protocol, with a ghost icon, among them](screenshots/find-in-sidebar.png)
+
 If it is in neither place, the plugin did not start: look at **Settings → Plugins → Manage plugins** for its error.
+
+## What the page shows first
+
+The **Docker** panel. With Docker running it says **Docker is running** and the version of Docker's server:
+
+![The Docker panel: Docker is running, Docker version 27.3.1, and a Check again button](screenshots/docker-is-running.png)
+
+When Docker does not answer it says so, for every way the check can fail (see [What it does](#what-it-does)):
+
+![The Docker panel: Docker didn't answer. Install or start Docker Desktop, then retry., and a Check again button](screenshots/docker-did-not-answer.png)
+
+Start Docker Desktop, then press **Check again**.
 
 ## Check it on your computer
 
@@ -94,10 +132,10 @@ The plugin has not been run in the Buzz desktop app yet; a run on a real Mac is 
 
 | | |
 | --- | --- |
-| Unit tests (`test/unit`) | The manifest declares exactly the one command and five processes above, each `docker` with its fixed words, and none for another verb; the command is closed (no input, no arguments of the caller's); every call the plugin builds names one of the processes and no declared process goes unused; Buzz's rules for a program and this repository's rules for a manifest pass. The check of Docker, with a stub standing in for the host's `runCommand`: a version shows on success, and the one failure text for null, a thrown call, an answer that is not a version and a host with no `runCommand`. The page's icon is one shape with a mask rule that matches only its own image. The status parser: every `state`, `relay` and `claude` value, an unknown interface, a status over several lines, and every field missing or of the wrong kind. Every call the plugin makes, to the letter, and that only a checked name goes into one. The look at an agent, **run against the fake `docker`** (below): every state, relay value and error, a stopped and a missing container, Docker down, and the two-minute gap while an update swaps the container (the minute before it, the moment it ends, and a gap that never does). The four buttons against the fake: each answer GHOST Protocol and Docker can give, and the steps to update by hand. |
+| Unit tests (`test/unit`) | The manifest declares exactly the one command and five processes above, each `docker` with its fixed words, and none for another verb; the command is closed (no input, no arguments of the caller's); every call the plugin builds names one of the processes and no declared process goes unused; Buzz's rules for a program and this repository's rules for a manifest pass. The check of Docker, with a stub standing in for the host's `runCommand`: a version shows on success, and the one failure text for null, a thrown call, an answer that is not a version and a host with no `runCommand`. The page's icon is one shape with a mask rule that matches only its own image. The status parser: every `state`, `relay` and `claude` value, an unknown interface, a status over several lines, and every field missing or of the wrong kind. Every call the plugin makes, to the letter, and that only a checked name goes into one. The look at an agent, **run against the fake `docker`** (below): every state, relay value and error, a stopped and a missing container, Docker down, and the two-minute gap while an update swaps the container (the minute before it, the moment it ends, and a gap that never does). The four buttons against the fake: each answer GHOST Protocol and Docker can give, and the steps to update by hand. Every picture this README points at is a file, and `screenshots/` holds those pictures and no other (the repository's `plugin-assets` check reads every Markdown file's images the same way). |
 | The fake `docker` (`test/fake-docker`) | A fake `docker` written from GHOST Protocol's interface, which answers every command above and the failures around them, so none of this needs the GHOST Protocol image. It is for tests only; its README lists what it assumes where GHOST Protocol's interface is silent. The unit tests start it as a process and the plugin reads what it prints. |
-| Browser suite (`test/web`) | The built plugin runs in Buzz's own production web build, in headless Chromium, at the commit `BUZZ_APP_REF` pins. The page is opened from the navigation, and its ghost icon is checked in navigation and in search, in light and dark, painted in the entry's own text colour. The status screen is drawn for every `state`, every `relay` value, an unknown interface, a stopped, a missing and an unreachable container, the update gap and its two-minute end, and each button's answers, with the page's clock moved by the test for the ten-second look. It asserts that the plugin asks the host for the declared command or process of each call's verb only, with the command lines in the table above, and that the fake never refused one. Light and dark text contrast. |
-| **Not covered** | **Starting a process is desktop only, so the browser suite replaces the host's `spawn` and `runCommand` with stubs that run the fake `docker` in Node (or, for the Docker panel's own tests, scripted answers). Nothing in CI runs a real `docker`, a real GHOST Protocol, the plugin in the Buzz desktop app or the Git importer.** A run in the desktop app is not built yet. The clipboard is the browser's (`navigator.clipboard`, then the older copy command): whether the desktop app's webview on macOS allows it has not been tried. |
+| Browser suite (`test/web`) | The built plugin runs in Buzz's own production web build, in headless Chromium, at the commit `BUZZ_APP_REF` pins. The page is opened from the navigation, and its ghost icon is checked in navigation and in search, in light and dark, painted in the entry's own text colour. The status screen is drawn for every `state`, every `relay` value, an unknown interface, a stopped, a missing and an unreachable container, the update gap and its two-minute end, and each button's answers, with the page's clock moved by the test for the ten-second look. It asserts that the plugin asks the host for the declared command or process of each call's verb only, with the command lines in the table above, and that the fake never refused one. Light and dark text contrast. It also makes the README's pictures (below) and checks that each is a small PNG and that `screenshots/` holds exactly those. |
+| **Not covered** | **Starting a process is desktop only, so the browser suite replaces the host's `spawn` and `runCommand` with stubs that run the fake `docker` in Node (or, for the Docker panel's own tests, scripted answers). Nothing in CI runs a real `docker`, a real GHOST Protocol, the plugin in the Buzz desktop app or the Git importer.** A run in the desktop app is not built yet. The clipboard is the browser's (`navigator.clipboard`, then the older copy command): whether the desktop app's webview on macOS allows it has not been tried. The pictures in this README are of Buzz's web build (and, for the first three install steps, of the desktop app), not of this plugin running in the desktop app. |
 | Platforms | **macOS:** not run yet. **Linux:** should work, not run. **Windows:** not checked; whether Buzz can start `docker` there has not been tried. |
 
 The pipeline, for a change to this folder: `.github/workflows/ghost-protocol-tests.yml` runs the type check, the unit tests, a check that the committed `plugin.js` is the build of `src/`, the tests of the fake `docker` (`test/fake-docker`) on Linux and on macOS through `test/fake-docker-tests.sh`, which fails when that folder has no test file or a test fails or is skipped, and the browser suite. `all-tests` waits for it.
@@ -110,9 +148,20 @@ corepack pnpm@12.16.1 exec tsc          # type check
 corepack pnpm@12.16.1 test              # unit tests
 corepack pnpm@12.16.1 run build         # writes plugin.js, which is committed
 plugins/ghost-protocol/test/run.sh /path/to/block/buzz-app   # the browser suite; the app checkout needs its own install
+plugins/ghost-protocol/test/screenshots.sh /path/to/block/buzz-app   # the README's pictures again, into screenshots/
 ```
 
 `plugin.js` is committed beside `manifest.json`, because Buzz installs from a repository and never runs a build; CI fails a change whose `plugin.js` is not the build of its source.
+
+## The pictures
+
+The pictures are in `screenshots/`, in the light theme, and each is a small PNG. Steps 1 to 3 of the install are pictures of the Buzz desktop app that every plugin in this repository uses (`assets/install/`). The others are made from Buzz's own production web build, at the commit `BUZZ_APP_REF` pins, in headless Chromium, with the app's own made-up community: none holds a real key, relay, person or path. `test/web/screenshots.spec.mjs` makes them, and `test/run.sh` runs it in CI, so a screen that moved or a text that changed fails the suite and does not leave a stale picture behind.
+
+- **Choose a plugin and Review plugin access:** Buzz's own dialogs. The web build has no installer (it is desktop only, and shows no Add button), so the page says it is the desktop app and the installer's answer is scripted, the way Buzz's own tests do it: one row for each plugin folder of this repository, from its own `manifest.json`. Buzz draws the review from this plugin's real `manifest.json`; nothing of it is written in the test. The commit under the title is an example, not a real one. The picture of the list stops at this plugin's row.
+- **Search and the Messages sidebar:** the built `plugin.js`, registered the way the web build registers an installed plugin. The other pages in the sidebar picture (Delayed fixture, Legacy) are the test build's own.
+- **The Docker panel:** the built plugin, with what `docker version` prints scripted, because the web build cannot run a program: the version in the picture, 27.3.1, is the one the test says.
+
+Not compared with a run in the desktop app: it is the same front end in a native window, so the dialogs should look the same there, but nobody has laid the pictures beside a Mac's. To make them again when a Buzz screen changes, run `test/screenshots.sh` (above), then look at every picture before you commit it.
 
 ## Licence
 

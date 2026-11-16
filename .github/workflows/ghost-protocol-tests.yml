@@ -95,10 +95,12 @@ jobs:
         run: plugins/ghost-protocol/test/fake-docker-tests.sh
 
   browser:
-    # plugins/ghost-protocol/test/web/ghost-protocol.spec.mjs and status-screen.spec.mjs in headless Chromium against block/buzz-app's own
-    # production web build, at BUZZ_APP_REF. test/run.sh copies the committed plugin, a wrapper that points the host's `spawn` at a stub, and
-    # the specs into the app checkout; the second spec runs the fake `docker` from this folder (GHOST_PROTOCOL_DIR) in Node. No real docker,
-    # network, key or token is used.
+    # plugins/ghost-protocol/test/web/ghost-protocol.spec.mjs, status-screen.spec.mjs and screenshots.spec.mjs in headless Chromium against
+    # block/buzz-app's own production web build, at BUZZ_APP_REF. test/run.sh copies the committed plugin, a wrapper that points the host's
+    # `spawn` at a stub, and the specs into the app checkout; the second spec runs the fake `docker` from this folder (GHOST_PROTOCOL_DIR) in
+    # Node; the third makes the README's pictures into a scratch folder and checks them against the committed ones in screenshots/ (a
+    # PNG each, small, the same set, though not the same pixels: they differ from one machine to the next). No real docker, network, key or
+    # token is used.
     name: GHOST Protocol browser tests
     runs-on: ubuntu-24.04
     timeout-minutes: 30 # the tests take a few minutes; the set-up is most of it

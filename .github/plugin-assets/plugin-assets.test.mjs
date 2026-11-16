@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { crc32, deflateSync } from "node:zlib";
-import { check, codeBlocks, ICON_SIZE, installable, manifestProblems, pngProblems, readmeProblems, REPOSITORY, validId } from "./check.mjs";
+import { check, codeBlocks, ICON_SIZE, imageProblems, imageTargets, installable, manifestProblems, pngProblems, readmeProblems, REPOSITORY, validId } from "./check.mjs";
 
 const repo = join(import.meta.dirname, "../..");
 const has = (problems, text) => problems.some((problem) => problem.includes(text));
@@ -257,6 +257,84 @@ test("placeholder text for a missing screenshot is a problem in any .md or .svg,
   withRepo(({ put }) => put(".github/plugin-assets/pending.json", JSON.stringify({ placeholders: ["assets/cards/gone.svg"] })), (root) => assert.ok(has(check(root), "lists assets/cards/gone.svg, which has no placeholder text any more")));
   withRepo(({ put }) => put("node_modules/x/README.md", "SCREENSHOT NEEDED"), (root) => assert.deepEqual(check(root), []), "dependencies are not scanned");
   withRepo(({ put }) => put(".github/plugin-assets/notes.md", "SCREENSHOT NEEDED"), (root) => assert.deepEqual(check(root), []), "the check's own folder is not scanned");
+});
+
+// ---- the images a Markdown file points at ----------------------------------------------------------------------------------------------
+
+test("imageTargets reads Markdown images, with a title or <...> around the path, and one inside a link", () => {
+  assert.deepEqual(imageTargets("![A](a.png) and ![B](sub/b.png \"Title\") and ![C](<my c.png>) and ![](d.png 'x')"), ["a.png", "sub/b.png", "my c.png", "d.png"]);
+  assert.deepEqual(imageTargets("[![Alt with \\] bracket](e.png)](https://example.test/page)"), ["e.png"]);
+  assert.deepEqual(imageTargets("![A]( f.png )"), ["f.png"], "space inside the brackets");
+  assert.deepEqual(imageTargets("A [link](not-an-image.png) is not an image."), []);
+});
+
+test("imageTargets reads a reference-style image through its [id]: line, and only a defined one", () => {
+  const text = ["![One][a] ![Two][] ![Three][Missing] ![Four]", "", "[a]: one.png", "[TWO]: <two.png> \"Title\"", "[four]: nope.png"].join("\n");
+  assert.deepEqual(imageTargets(text), ["one.png", "two.png"]);
+});
+
+test("imageTargets reads <img src> and the addresses of <source srcset>, and not a <a href>", () => {
+  const html = [`<img alt="x" src="a.svg" width="100%">`, `<IMG SRC='b.png'>`, `<picture><source media="(prefers-color-scheme: dark)" srcset="c-dark.svg">`, `<source srcset="d.png 1x, e.png 2x"></picture>`, `<a href="page.md">link</a>`, `<img src="">`].join("\n");
+  assert.deepEqual(imageTargets(html), ["a.svg", "b.png", "c-dark.svg", "d.png", "e.png"]);
+});
+
+test("imageTargets leaves out web addresses, data URLs, anchors and anything in a code block or a code span", () => {
+  const text = ["![W](https://example.test/w.png) ![P](//example.test/p.png) ![D](data:image/png;base64,AAAA) ![H](#top) ![M](mailto:x@example.test)", "", "```md", "![In a block](block.png)", "```", "", "~~~html", `<img src="tilde.png">`, "~~~", "", "Write `![In a span](span.png)` and ``![Two](double.png)`` like that.", "", "![Kept](kept.png)"].join("\n");
+  assert.deepEqual(imageTargets(text), ["kept.png"]);
+});
+
+test("an image has to be a regular file inside the repository, found from the file's own folder or, with a slash, from the root", () => {
+  withRepo(({ put }) => {
+    put("plugins/example/shots/a.png", "x");
+    put("assets/b.png", "x");
+    put("plugins/example/with space.png", "x");
+    put("plugins/example/folder/index.png", "x");
+    put("plugins/example/100%.png", "x");
+    put("..hidden/x.png", "x");
+  }, (root) => {
+    const problems = (path, markdown) => imageProblems(root, path, markdown);
+    assert.deepEqual(problems("plugins/example/README.md", "![A](shots/a.png) ![B](../../assets/b.png) ![B again](/assets/b.png) ![C](with%20space.png) ![D](<with space.png>) ![E](shots/a.png#frag) ![F](shots/a.png?raw=1) ![G](./shots/../shots/a.png)"), []);
+    assert.deepEqual(problems("README.md", "![A](plugins/example/shots/a.png) ![W](https://example.test/x.png)"), []);
+    assert.ok(has(problems("plugins/example/README.md", "![A](shots/missing.png)"), "the image shots/missing.png is not a file in the repository (plugins/example/shots/missing.png is missing"));
+    assert.ok(has(problems("plugins/example/README.md", "![A](a.png)"), "plugins/example/a.png is missing"), "from the file's folder, not the root or the working directory");
+    assert.ok(has(problems("README.md", "![A](shots/a.png)"), "shots/a.png is missing"));
+    assert.ok(has(problems("plugins/example/README.md", "![A](/shots/a.png)"), "shots/a.png is missing"), "a slash starts at the root, not at the file");
+    assert.ok(has(problems("plugins/example/README.md", "![A](folder)"), "the image folder is not a file"), "a folder is not an image");
+    assert.ok(has(problems("plugins/example/README.md", "![A](.)"), "is not a file"), "nor is the folder itself");
+    assert.ok(has(problems("plugins/example/README.md", "![A](../../../outside.png)"), "outside the repository"));
+    assert.ok(has(problems("plugins/example/README.md", "![A](../../../etc/hosts)"), "the image ../../../etc/hosts is outside the repository"));
+    assert.ok(has(problems("plugins/example/README.md", "![A](/../outside.png)"), "outside the repository"), "a slash path cannot climb out either");
+    assert.deepEqual(problems("README.md", "![A](..hidden/x.png)"), [], "a folder whose name starts with two dots is inside");
+    assert.deepEqual(problems("plugins/example/README.md", "![A](100%.png)"), [], "a bad escape is the path as written");
+    assert.ok(has(problems("plugins/example/README.md", "![A](%zz.png)"), "the image %zz.png is not a file"));
+    assert.equal(problems("plugins/example/README.md", "![A](nope.png) ![B](shots/a.png) ![C](nada.png)").length, 2, "every missing image, not the first");
+    assert.deepEqual(problems("plugins/example/README.md", "`![A](nope.png)`"), [], "not in a code span");
+  });
+});
+
+test("a link is not a regular file, so an image that is one is a problem", () => {
+  withRepo(({ root, put }) => {
+    put("assets/real.png", "x");
+    symlinkSync(join(root, "assets/real.png"), join(root, "assets/link.png"));
+  }, (root) => {
+    assert.deepEqual(imageProblems(root, "README.md", "![A](assets/real.png)"), []);
+    assert.ok(has(imageProblems(root, "README.md", "![A](assets/link.png)"), "is not a file in the repository"));
+  });
+});
+
+test("the check reads every .md file for its images, and reports the file; not dependencies, and not its own folder", () => {
+  withRepo(({ put }) => put("plugins/example/README.md", `${installBlocks("example")}\n![A](screenshots/gone.png)\n`), (root) => {
+    const problems = check(root);
+    assert.equal(problems.length, 1);
+    assert.ok(problems[0].startsWith("plugins/example/README.md: the image screenshots/gone.png is not a file in the repository"));
+  });
+  withRepo(({ put }) => put("docs/install.md", `${installBlocks("x")}\n<img src="../assets/gone.png">\n`), (root) => assert.ok(has(check(root), "docs/install.md: the image ../assets/gone.png")));
+  withRepo(({ put }) => put("README.md", `${installBlocks("x")}\n<picture><source srcset="assets/gone-dark.svg"><img src="assets/gone.svg"></picture>\n`), (root) => assert.equal(check(root).filter((p) => p.startsWith("README.md: the image")).length, 2));
+  withRepo(({ put }) => put("plugins/example/NOTES.md", "![A](gone.png)\n"), (root) => assert.ok(has(check(root), "plugins/example/NOTES.md: the image gone.png")));
+  withRepo(({ put }) => put("node_modules/x/README.md", "![A](gone.png)"), (root) => assert.deepEqual(check(root), []), "dependencies are not scanned");
+  withRepo(({ put }) => put(".github/plugin-assets/notes.md", "![A](gone.png)"), (root) => assert.deepEqual(check(root), []), "the check's own folder is not scanned");
+  withRepo(({ put }) => { put("plugins/example/README.md", `${installBlocks("example")}\n![A](screenshots/here.png)\n`); put("plugins/example/screenshots/here.png", "x"); }, (root) => assert.deepEqual(check(root), []));
+  withRepo(({ put }) => put("assets/card.svg", "<svg xmlns='http://www.w3.org/2000/svg'><!-- ![A](gone.png) --></svg>"), (root) => assert.deepEqual(check(root), []), "an .svg is not read for images, only a .md is");
 });
 
 // ---- this repository -------------------------------------------------------------------------------------------------------------------
