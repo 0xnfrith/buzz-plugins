@@ -7,6 +7,8 @@
 //             whether it waits to be released (the spec's `script` and `fallback`).
 //   fake      with `window.__gp.fake` set, each call is handed to `window.__gpDocker(argv)`, which the spec exposes from Node and which
 //             runs the fake `docker` (test/fake-docker) as a process there. What the plugin reads is what the fake printed.
+//   stream    with `window.__gp.stream` set, the fake starts at once in Node (test/web/pipe.mjs), the plugin's stdin is written to it as it
+//             writes it, and what the fake prints and its exit come back as they happen: for the create form, which writes a token.
 import * as plugin from "./plugin.js";
 import manifest from "./manifest.json";
 
@@ -14,6 +16,7 @@ type Behaviour = { stdout?: string; stderr?: string; code?: number | null; rejec
 /** `args` are the call's own; `argv` is the whole command line `docker` gets: the words the manifest fixes for the process, then `args`. */
 type Call = { kind: "process" | "command"; id: string; options: string[]; args: string[]; argv: string[]; onHost: boolean; declared: boolean };
 type Ran = { stdout: string; stderr: string; code: number | null };
+type Pipe = { out(text: string): void; err(text: string): void; exit(code: number | null): void };
 
 declare global {
   interface Window {
@@ -32,9 +35,21 @@ declare global {
       mode?: string;
       /** Hand each call to `window.__gpDocker` instead of the script. */
       fake?: boolean;
+      /** Hand each call to the fake `docker` the spec runs in Node, with its stdin and output streamed (`__gpOpen` and the rest). */
+      stream?: boolean;
+      /** The next handle for a streamed process. */
+      handles?: number;
     };
     /** Exposed by the spec: runs the fake `docker` with these arguments, in Node. */
     __gpDocker?: (argv: string[]) => Promise<Ran>;
+    /** The output of the streamed processes the spec's Node side is running, by handle: it calls these as the fake prints and ends. */
+    __gpPipes?: Record<string, Pipe>;
+    /** Exposed by the spec: starts the fake `docker` for a declared process id and the caller's arguments, in Node. */
+    __gpOpen?: (handle: string, id: string, args: string[]) => Promise<void>;
+    __gpWrite?: (handle: string, data: string) => Promise<void>;
+    /** Writes the final `data` (if any) and closes stdin. */
+    __gpEnd?: (handle: string, data: string | null) => Promise<void>;
+    __gpKill?: (handle: string) => Promise<void>;
   }
 }
 
@@ -73,6 +88,30 @@ export const ghostProtocolFixture = {
           const argv = [...fixed, ...(options.args ?? [])];
           gp.calls.push({ kind: "process", id, options: Object.keys(options).sort(), args: [...(options.args ?? [])], argv, onHost: this === host, declared });
           if (gp.mode === "missing") return Promise.reject(new Error("program not found"));
+          if (gp.stream) {
+            // Streamed: Node starts the fake at once; stdin is written as the plugin writes it; output comes back as the fake prints it.
+            const handle = `h${(gp.handles = (gp.handles ?? 0) + 1)}`;
+            let end!: (code: number | null) => void;
+            const done = new Promise<number | null>((resolve) => (end = resolve));
+            (window.__gpPipes ??= {})[handle] = {
+              out: (text) => options.onStdout?.(text),
+              err: (text) => options.onStderr?.(text),
+              exit: (code) => end(code),
+            };
+            const stop = async () => {
+              gp.kills += 1;
+              await window.__gpKill!(handle);
+            };
+            ctx.effect(() => () => void stop());
+            return window.__gpOpen!(handle, id, [...(options.args ?? [])]).then(() =>
+              Object.freeze({
+                write: (data: string) => window.__gpWrite!(handle, data),
+                end: (data?: string) => window.__gpEnd!(handle, data ?? null),
+                kill: stop,
+                exited: done,
+              }),
+            );
+          }
           const behaviour = gp.fake ? {} : (gp.script.shift() ?? gp.fallback);
           if (behaviour.reject) return Promise.reject(new Error(behaviour.reject));
           let exit!: (code: number | null) => void;
