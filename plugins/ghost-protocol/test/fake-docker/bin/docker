@@ -1,0 +1,22 @@
+#!/usr/bin/env node
+// The fake `docker` (README.md in the folder above). A shim: it works whether the nearest package.json says "type": "module" or not.
+'use strict';
+import('../fake-docker.mjs').then(
+  ({ main }) =>
+    main(process.argv.slice(2), {
+      env: process.env,
+      stdout: process.stdout,
+      stderr: process.stderr,
+      get stdin() {
+        return process.stdin;
+      },
+    }),
+).then(
+  (code) => {
+    process.exitCode = code;
+  },
+  (error) => {
+    process.stderr.write(`fake-docker: ${error && error.stack ? error.stack : error}\n`);
+    process.exitCode = 70;
+  },
+);
