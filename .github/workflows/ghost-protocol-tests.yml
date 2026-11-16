@@ -1,0 +1,136 @@
+# Type check, unit tests and build check of the GHOST Protocol plugin (plugins/ghost-protocol/test/unit), the node tests of its fake
+# `docker` (plugins/ghost-protocol/test/fake-docker, on Linux and on macOS), and its browser suite (plugins/ghost-protocol/test/web) in
+# headless Chromium against block/buzz-app's own production web build, the way plugins/ghost-protocol/test/run.sh runs it by hand.
+#
+# What the browser suite cannot cover: the web build has no `ctx.host.spawn` (it throws "Processes require an installed desktop plugin"),
+# so the suite replaces it with a stub that scripts what `docker version` prints and how it exits. It proves the page, the one screen for
+# each way the command can end, and that the plugin asks the host for the declared process and nothing else. It does not run `docker`, the
+# desktop app or the Git importer: a run in the desktop app is not built yet (AGENTS.md), and the plugin's first real check is a run on a
+# real Mac.
+name: GHOST Protocol tests
+
+on:
+  # Called by tests.yml, which runs on every pull request to main, every push to main and every merge group, and calls this
+  # workflow when its plugin changes (or anything under .github/). Its `all-tests` check is the one to require. Run by hand from the
+  # Actions tab with workflow_dispatch.
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # The block/buzz-app commit the plugin is tested against. The other workflows that build the app name the same commit: the first step
+  # of each of them (.github/check-app-ref.sh) fails when any two differ, or when one uses it without defining it, so change them together.
+  BUZZ_APP_REF: 51d63954c074e94497dc030b54a204d34b7471be
+
+jobs:
+  test:
+    name: GHOST Protocol type check, unit tests and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: plugins/ghost-protocol
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@12.16.1 --activate
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Type check
+        run: pnpm exec tsc
+      - name: Unit tests
+        # A run that finds no tests passes too, so the machine-readable result says it: some tests ran, every one passed, none was skipped.
+        run: |
+          pnpm exec vitest run --reporter=json --outputFile="$RUNNER_TEMP/unit.json"
+          jq -e '.numTotalTests > 0 and .numPassedTests == .numTotalTests and .numFailedTests == 0 and .numPendingTests == 0' "$RUNNER_TEMP/unit.json"
+          jq '{tests: .numTotalTests, passed: .numPassedTests, failed: .numFailedTests, skipped: .numPendingTests}' "$RUNNER_TEMP/unit.json"
+      - name: Fake docker tests
+        # The fake `docker` the plugin's later tests put first on the PATH has node:test files and needs no install. The script runs them
+        # once the folder exists. From then on it fails when the folder has no *.test.mjs file (`node --test` with a glob that matches
+        # nothing exits 0), and when a test fails or is skipped, so they cannot stop running quietly. Its own tests are in the unit tests.
+        working-directory: .
+        run: plugins/ghost-protocol/test/fake-docker-tests.sh
+      - name: plugin.js is the build of the source
+        # Buzz loads the committed plugin.js and never runs a build: it has to be what this source builds to. The file is removed
+        # first, so a build that does not write it (a changed output name, a build script that does nothing) leaves it missing, and
+        # `git status` also catches a plugin.js that is missing from the commit, not tracked or ignored. The status is its own command,
+        # so a git error fails the step.
+        run: |
+          rm -f plugin.js
+          pnpm run build
+          status=$(git status --porcelain --ignored -- plugin.js)
+          if [ -n "$status" ]; then
+            echo "$status"
+            git diff -- plugin.js
+            echo "::error::plugin.js is not the build of src/: run 'pnpm run build' in plugins/ghost-protocol and commit it"
+            exit 1
+          fi
+
+  fake-docker-macos:
+    # The fake `docker` runs on Linux and on macOS CI (it is a node script). This is the repository's only macOS job; it runs the same
+    # node:test files as the step above (the same script), on a Mac, and has nothing to run until plugins/ghost-protocol/test/fake-docker exists.
+    name: GHOST Protocol fake docker tests (macOS)
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Fake docker tests
+        # The same script as the Linux job runs, and the same guards.
+        run: plugins/ghost-protocol/test/fake-docker-tests.sh
+
+  browser:
+    # plugins/ghost-protocol/test/web/ghost-protocol.spec.mjs in headless Chromium against block/buzz-app's own production web build, at
+    # BUZZ_APP_REF. test/run.sh copies the committed plugin, a wrapper that points the host's `spawn` at a stub, and the spec into the app
+    # checkout. No docker, network, key or token is used.
+    name: GHOST Protocol browser tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30 # the tests take a few minutes; the set-up is most of it
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: BUZZ_APP_REF is defined, and the same, in every workflow that builds the app
+        run: .github/check-app-ref.sh
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: block/buzz-app
+          ref: ${{ env.BUZZ_APP_REF }}
+          path: buzz-app
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: pnpm, as the app pins it
+        run: |
+          corepack enable
+          corepack prepare "$(node -p "require('./buzz-app/package.json').packageManager")" --activate
+      - name: Install the app's dependencies (frozen lockfile)
+        working-directory: buzz-app
+        run: pnpm install --frozen-lockfile
+      - name: Install Chromium
+        working-directory: buzz-app
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Browser tests
+        # The committed plugin.js is what the suite loads. The unit job above checks that it is the build of the source.
+        run: plugins/ghost-protocol/test/run.sh buzz-app
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: ghost-protocol-browser-test-results
+          path: buzz-app/test-results
+          if-no-files-found: ignore
+          retention-days: 14
