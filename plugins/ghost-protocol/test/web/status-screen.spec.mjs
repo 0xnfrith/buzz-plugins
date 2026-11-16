@@ -117,7 +117,7 @@ test("asks nothing about an agent until it is named, then shows a running agent:
   await expect(fact(page, "Version")).toHaveText("0.0.0");
   await expect(fact(page, "Relay")).toHaveText("Connected");
   await expect(fact(page, "Relay address")).toHaveText("wss://relay.example.com");
-  await expect(fact(page, "Claude")).toHaveText("Signed in");
+  await expect(fact(page, "Claude")).toHaveText("Active");
   await expect(fact(page, "Update")).toHaveText("No update is available");
   await expect(fact(page, "Previous version")).toHaveText("None");
   // Four buttons; Roll back waits for a previous version.
@@ -225,7 +225,7 @@ test("cuts a long text from GHOST Protocol, so it cannot fill the page", async (
 test("shows a Claude that is not signed in", async ({ page, app }) => {
   await arrange(page, app, { seed: { condition: "needs-claude" } });
   await show(page);
-  await expect(fact(page, "Claude")).toHaveText("Not signed in");
+  await expect(fact(page, "Claude")).toHaveText("Not active");
 });
 
 // ---- an interface it does not know -----------------------------------------------------------------------------------------------------

@@ -256,8 +256,8 @@ var RELAY_WORDS = {
 	unreachable: "Cannot be reached"
 };
 var CLAUDE_WORDS = {
-	active: "Signed in",
-	"not-active": "Not signed in"
+	active: "Active",
+	"not-active": "Not active"
 };
 /** The only thing shown when GHOST Protocol speaks an interface this plugin does not know (GHOST Protocol's interface). */
 var OTHER_INTERFACE = "Update this plugin, or update GHOST Protocol";
@@ -674,10 +674,29 @@ var stopped = {
 	message: "Stopped.",
 	stopped: true
 };
-var fail = (message) => ({
+var fail = (message, said) => said === void 0 ? {
 	ok: false,
 	message
-});
+} : {
+	ok: false,
+	message,
+	said
+};
+/** The most of GHOST Protocol's own line that is shown: a long one is cut, so it cannot fill the panel. */
+var SAID_MAX = 200;
+/**
+* GHOST Protocol's refusal as the person sees it. It never prints a secret, but this is the one place its words reach the screen
+* from a command that was given one, so any piece of `secrets` that turns up in them is taken out before anything is shown.
+*/
+function saidBy(gp, secrets) {
+	if (gp.error === void 0) return void 0;
+	const clean = (text) => secrets.filter((secret) => secret !== "").reduce((rest, secret) => rest.split(secret).join("…"), text);
+	const line = clean(gp.error.message).trim();
+	return {
+		code: clean(gp.error.code).trim(),
+		message: line.length > SAID_MAX ? `${line.slice(0, SAID_MAX)}…` : line
+	};
+}
 /** Whether the agent has a Claude sign-in: `gp claude status`. */
 async function isSignedIn(claude, slug, signal) {
 	const outcome = await run(claude.start, commands.claudeStatus(slug), {
@@ -715,7 +734,7 @@ async function signInWithToken(claude, slug, token, signal) {
 	if (outcome.kind === "cannot-start") return fail(WORDS.docker);
 	if (outcome.kind === "timeout") return fail("GHOST Protocol did not answer in time.");
 	if (unknownInterface(outcome.gp)) return fail(WORDS.unknownInterface);
-	if (outcome.code !== 0 || outcome.gp.error || outcome.gp.values.get("CLAUDE") !== "active") return fail("Claude did not accept that token. Make a new one with `claude setup-token` and paste it.");
+	if (outcome.code !== 0 || outcome.gp.error || outcome.gp.values.get("CLAUDE") !== "active") return fail("Claude did not accept that token. Make a new one with `claude setup-token` and paste it.", saidBy(outcome.gp, [text]));
 	return { ok: true };
 }
 var LOGIN_LINE = /^GP_CLAUDE_LOGIN_URL=(.*)$/;
@@ -729,12 +748,14 @@ async function signInByAddress(claude, slug, askCode, signal) {
 	let cancelled = false;
 	let badAddress = false;
 	let asked = false;
+	let given = "";
 	let resolveRunning;
 	const running = new Promise((resolve) => resolveRunning = resolve);
 	const answer = async (url) => {
 		const process = await running;
 		try {
 			const code = await askCode(url, signal);
+			given = code;
 			await process.end(`${code}\n`);
 		} catch {
 			cancelled = true;
@@ -767,7 +788,7 @@ async function signInByAddress(claude, slug, askCode, signal) {
 	if (outcome.kind === "timeout") return fail("Signing in to Claude took too long. Try again.");
 	if (cancelled) return fail("Signing in to Claude was cancelled.");
 	if (unknownInterface(outcome.gp)) return fail(WORDS.unknownInterface);
-	if (outcome.code !== 0 || outcome.gp.error || outcome.gp.values.get("CLAUDE") !== "active") return fail("Claude did not accept the sign-in. Try again.");
+	if (outcome.code !== 0 || outcome.gp.error || outcome.gp.values.get("CLAUDE") !== "active") return fail("Claude did not accept the sign-in. Try again.", saidBy(outcome.gp, [given]));
 	return { ok: true };
 }
 // src/gp/flow.ts
@@ -1276,6 +1297,253 @@ async function verifyContainer(host, slug, pubkey, written, signal) {
 	if (read?.status) return read.status.agentPubkey === pubkey ? "ok" : "other";
 	return written ? "ok" : "unknown";
 }
+// src/claude-words.ts
+var CLAUDE_STATUS = {
+	checking: "Checking Claude…",
+	active: "Claude: active",
+	notActive: "Claude: not active",
+	/** After a sign-in the agent accepted, until the person does something else. */
+	accepted: "Claude accepted the sign-in. The agent connects to your relay next."
+};
+/** The commands of the guide, each shown in a copy block. */
+var COMMANDS = {
+	check: "claude --version",
+	installUnix: "curl -fsSL https://claude.ai/install.sh | bash",
+	installWindows: "irm https://claude.ai/install.ps1 | iex",
+	token: "claude setup-token"
+};
+var LINKS = {
+	plans: "https://claude.com/pricing",
+	install: "https://code.claude.com/docs/en/setup"
+};
+/** The codes GHOST Protocol answers with when Claude refuses, as the interface note names them. */
+var CODES = {
+	token: "claude-token-invalid",
+	login: "claude-login-failed"
+};
+var GUIDE = {
+	title: "Connect Claude",
+	intro: "GHOST Protocol uses your own Claude subscription to think, so the agent cannot work until it has a sign-in.",
+	subscription: "A Claude subscription is a paid Claude plan: Pro, Max, Ultra, Team or Enterprise. The free plan does not include Claude Code, so it is not enough.",
+	plans: "See the plans",
+	token: {
+		title: "Option 1 (recommended): paste a setup token",
+		terminal: "Open a terminal on your own computer: Terminal on a Mac, PowerShell on Windows. Not a terminal inside Docker.",
+		check: "Check whether Claude Code is installed:",
+		checkOk: "If it prints a version number, go on to step 2.",
+		install: "If the terminal says the command is not found, install Claude Code:",
+		unix: "macOS, Linux or WSL",
+		windows: "Windows PowerShell",
+		installDone: "Then open a new terminal window and run the check again.",
+		installHelp: "Installation help",
+		make: "Make a token:",
+		makeHow: "Your browser opens. Sign in to Claude and approve. The terminal then prints a long token. It does not save the token, so copy all of it now.",
+		paste: "Paste the token here and press Send token. It goes to the agent and nowhere else: this plugin does not store it or log it.",
+		send: "Send token",
+		field: "Claude setup token",
+		works: "When it works, the field empties and this section says Claude: active.",
+		fails: `If Claude refuses the token, you see "Claude did not accept that token" and GHOST Protocol's code ${CODES.token}. The field empties either way. Make a new token and paste it.`
+	},
+	login: {
+		title: "Option 2: sign in at an address",
+		why: "Use this if you cannot run the terminal command above.",
+		press: "Press Sign in with an address. The agent gives an address.",
+		open: "Open the address and sign in to Claude in your browser. Claude then shows a code.",
+		code: "Copy the code, paste it into the box under the address, and press Continue.",
+		start: "Sign in with an address",
+		works: "When it works, the address and box go away and this section says Claude: active.",
+		fails: `If the code is wrong or has run out, you see "Claude did not accept the sign-in" and GHOST Protocol's code ${CODES.login}. Press Sign in with an address again for a new address.`
+	},
+	said: (code, message) => message === "" ? `GHOST Protocol answered ${code}.` : `GHOST Protocol said: ${message} (${code})`
+};
+var STATES = [
+	"needs-claude",
+	"needs-auth-tag",
+	"connecting",
+	"running",
+	"updating",
+	"error"
+];
+var RELAYS = [
+	"connected",
+	"refused-not-member",
+	"unreachable"
+];
+var CLAUDES = ["active", "not-active"];
+var PUBKEY = /^[0-9a-fA-F]{64}$/;
+var GP_LINE = /^GP_[A-Z][A-Z0-9_]*=/;
+var isObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+var isOneOf = (list, value) => typeof value === "string" && list.includes(value);
+var isText = (value) => typeof value === "string" && value !== "";
+var isTextOrNull = (value) => value === null || typeof value === "string";
+/** Reads the whole of stdout as a status. */
+function readStatus(stdout) {
+	let json;
+	try {
+		json = JSON.parse(stdout.split(/\r?\n/).filter((line) => !GP_LINE.test(line)).join("\n"));
+	} catch {
+		return { kind: "unreadable" };
+	}
+	if (!isObject(json)) return { kind: "unreadable" };
+	if (json.interface !== 1) return { kind: "other-interface" };
+	const { state, version, agent_pubkey: agentPubkey, relay_url: relayUrl, relay, claude, update, previous_version: previousVersion, error } = json;
+	if (!isOneOf(STATES, state) || !isOneOf(RELAYS, relay) || !isOneOf(CLAUDES, claude)) return { kind: "unreadable" };
+	if (!isText(version) || typeof agentPubkey !== "string" || !PUBKEY.test(agentPubkey) || typeof relayUrl !== "string") return { kind: "unreadable" };
+	if (!isTextOrNull(previousVersion)) return { kind: "unreadable" };
+	if (!isObject(update) || typeof update.available !== "boolean" || !isTextOrNull(update.version)) return { kind: "unreadable" };
+	if (error !== null && !(isObject(error) && typeof error.code === "string" && typeof error.message === "string")) return { kind: "unreadable" };
+	return {
+		kind: "status",
+		status: {
+			state,
+			version,
+			agentPubkey,
+			relayUrl,
+			relay,
+			claude,
+			update: {
+				available: update.available,
+				version: update.version
+			},
+			previousVersion,
+			error: error === null ? null : {
+				code: error.code,
+				message: error.message
+			}
+		}
+	};
+}
+/** The `GP_<KEY>=<value>` lines of stdout (GHOST Protocol's interface), by key. A key printed twice keeps its last value. */
+function gpLines(stdout) {
+	const lines = /* @__PURE__ */ new Map();
+	for (const line of stdout.split(/\r?\n/)) {
+		const found = /^GP_([A-Z][A-Z0-9_]*)=(.*)$/.exec(line);
+		if (found?.[1] !== void 0 && found[2] !== void 0) lines.set(found[1], found[2]);
+	}
+	return lines;
+}
+// src/observe.ts
+/** About how often the screen looks, in milliseconds. */
+var POLL_MS = 1e4;
+var NOTHING_YET = {
+	lastState: void 0,
+	gapSince: void 0,
+	asked: void 0
+};
+/** The memory after the screen asked for an update or a roll back, while the agent was on `version`. */
+var askedFor = (before, version) => ({
+	...before,
+	asked: {
+		from: version,
+		sawUpdating: false
+	}
+});
+/**
+* What a button that Docker or GHOST Protocol accepted does to what the screen knows. An Update or a Roll back is under way from then on
+* (`version` is the one the agent was on). A Stop or a Restart is the user's own doing and ends any update that was under way: the next
+* look says what it finds, so a container that is stopped is shown as stopped, with its Restart, and not as being swapped.
+*/
+function afterButton(before, job, accepted, version) {
+	if (!accepted) return before;
+	if (job === "restart" || job === "stop") return NOTHING_YET;
+	return version === void 0 ? before : askedFor(before, version);
+}
+/** What a status does to an ask that is under way: the new version ends it, and so does an update that ended on the old one. */
+function afterStatus(asked, status) {
+	if (asked === void 0 || status.version !== asked.from) return void 0;
+	if (status.state === "updating") return {
+		from: asked.from,
+		sawUpdating: true
+	};
+	return asked.sawUpdating ? void 0 : asked;
+}
+/** What Docker says of a container that is not there: `Error: No such object: gp-x`, or `No such container: gp-x`. */
+var NOT_THERE = /No such (object|container)/i;
+/** Looks once. Resolves with `undefined` when the caller left first (the runner returns nothing). */
+async function observe(run, slug, before, now) {
+	const asked = await run(statusCall(slug));
+	if (asked === void 0) return void 0;
+	if (asked.kind === "unsupported") return {
+		view: { kind: "unsupported" },
+		memory: before
+	};
+	if (asked.kind === "unavailable") return {
+		view: { kind: "docker-unavailable" },
+		memory: before
+	};
+	if (asked.code === 0) {
+		const read = readStatus(asked.stdout);
+		if (read.kind === "status") {
+			const memory = {
+				lastState: read.status.state,
+				gapSince: void 0,
+				asked: afterStatus(before.asked, read.status)
+			};
+			return {
+				view: {
+					kind: "status",
+					status: read.status
+				},
+				memory
+			};
+		}
+		return {
+			view: { kind: read.kind },
+			memory: before
+		};
+	}
+	const inspected = await run(stateCall(slug));
+	if (inspected === void 0) return void 0;
+	if (inspected.kind === "unsupported") return {
+		view: { kind: "unsupported" },
+		memory: before
+	};
+	if (inspected.kind === "unavailable") return {
+		view: { kind: "docker-unavailable" },
+		memory: before
+	};
+	let view;
+	if (inspected.code === 0) {
+		const dockerState = inspected.stdout.trim();
+		if (dockerState === "running") {
+			const lines = gpLines(asked.stdout);
+			view = {
+				kind: "not-answering",
+				code: lines.get("ERROR"),
+				message: lines.get("ERROR_MESSAGE")
+			};
+		} else view = {
+			kind: "stopped",
+			dockerState
+		};
+	} else if (NOT_THERE.test(inspected.stderr)) view = { kind: "gone" };
+	else return {
+		view: { kind: "docker-unavailable" },
+		memory: before
+	};
+	if (before.lastState !== "updating" && before.asked === void 0) return {
+		view,
+		memory: before
+	};
+	const gapSince = before.gapSince ?? now;
+	return {
+		view: now - gapSince < 12e4 ? { kind: "swapping" } : view,
+		memory: {
+			...before,
+			gapSince
+		}
+	};
+}
+/**
+* The image the container was made from, as Docker prints it (`registry/ghost-protocol:1.2.3`), or undefined when it cannot be read.
+* Resolves with `undefined` as well when the caller left first.
+*/
+async function imageOf(run, slug) {
+	const ran = await run(imageCall(slug));
+	if (ran === void 0 || ran.kind !== "exit" || ran.code !== 0) return void 0;
+	const image = ran.stdout.trim();
+	return image === "" ? void 0 : image;
+}
 // src/ui/copy.ts
 /**
 * Puts `text` on the clipboard and says whether it got there. The webview may refuse the async clipboard (a click that came too long
@@ -1497,9 +1765,89 @@ var MARKS = {
 	skipped: "–",
 	failed: "✕"
 };
+// src/ui/CopyBlock.tsx
+/** One command, key or address to put on the clipboard, shown as text with a button that copies it. */
+function CopyBlock({ text, label }) {
+	const [result, setResult] = React.useState();
+	return /* @__PURE__ */ React.createElement("div", { className: "gp-copy" }, /* @__PURE__ */ React.createElement("code", { className: "gp-code" }, text), /* @__PURE__ */ React.createElement("button", {
+		type: "button",
+		className: "gp-button",
+		"aria-label": label === void 0 ? void 0 : `${WORDS$1.copy} ${label}`,
+		onClick: () => void copyText(text).then((copied) => setResult(copied ? "copied" : "failed"))
+	}, result === "copied" ? WORDS$1.copied : WORDS$1.copy), result === "failed" && /* @__PURE__ */ React.createElement("span", { role: "alert" }, WORDS$1.copyFailed));
+}
+// src/ui/ClaudeGuide.tsx
+var Link = ({ href, children }) => /* @__PURE__ */ React.createElement("a", {
+	href,
+	target: "_blank",
+	rel: "noopener noreferrer"
+}, children);
+function Refusal({ failure, way }) {
+	if (failure?.way !== way) return null;
+	return /* @__PURE__ */ React.createElement("div", {
+		className: "gp-refusal",
+		role: "alert",
+		"data-gp": "claude-problem",
+		"data-code": failure.said?.code
+	}, /* @__PURE__ */ React.createElement("p", { className: "gp-problem" }, failure.message), failure.said && /* @__PURE__ */ React.createElement("p", {
+		className: "gp-note",
+		"data-gp": "claude-said"
+	}, GUIDE.said(failure.said.code, failure.said.message)));
+}
+function ClaudeGuide({ busy, token, onToken, canSend, onSend, onStartLogin, login, failure }) {
+	return /* @__PURE__ */ React.createElement("div", {
+		className: "gp-guide",
+		"data-gp": "guide"
+	}, /* @__PURE__ */ React.createElement("p", { className: "gp-hint" }, GUIDE.intro), /* @__PURE__ */ React.createElement("p", { className: "gp-hint" }, GUIDE.subscription, " ", /* @__PURE__ */ React.createElement(Link, { href: LINKS.plans }, GUIDE.plans)), /* @__PURE__ */ React.createElement("section", {
+		className: "gp-way",
+		"aria-labelledby": "gp-way-token",
+		"data-gp": "guide-token"
+	}, /* @__PURE__ */ React.createElement("h4", { id: "gp-way-token" }, GUIDE.token.title), /* @__PURE__ */ React.createElement("ol", null, /* @__PURE__ */ React.createElement("li", null, /* @__PURE__ */ React.createElement("p", null, GUIDE.token.terminal), /* @__PURE__ */ React.createElement("p", null, GUIDE.token.check), /* @__PURE__ */ React.createElement(CopyBlock, { text: COMMANDS.check }), /* @__PURE__ */ React.createElement("p", { className: "gp-hint" }, GUIDE.token.checkOk), /* @__PURE__ */ React.createElement("p", null, GUIDE.token.install), /* @__PURE__ */ React.createElement("p", { className: "gp-os" }, GUIDE.token.unix), /* @__PURE__ */ React.createElement(CopyBlock, {
+		text: COMMANDS.installUnix,
+		label: GUIDE.token.unix
+	}), /* @__PURE__ */ React.createElement("p", { className: "gp-os" }, GUIDE.token.windows), /* @__PURE__ */ React.createElement(CopyBlock, {
+		text: COMMANDS.installWindows,
+		label: GUIDE.token.windows
+	}), /* @__PURE__ */ React.createElement("p", { className: "gp-hint" }, GUIDE.token.installDone, " ", /* @__PURE__ */ React.createElement(Link, { href: LINKS.install }, GUIDE.token.installHelp))), /* @__PURE__ */ React.createElement("li", null, /* @__PURE__ */ React.createElement("p", null, GUIDE.token.make), /* @__PURE__ */ React.createElement(CopyBlock, { text: COMMANDS.token }), /* @__PURE__ */ React.createElement("p", { className: "gp-hint" }, GUIDE.token.makeHow)), /* @__PURE__ */ React.createElement("li", null, /* @__PURE__ */ React.createElement("p", null, GUIDE.token.paste), /* @__PURE__ */ React.createElement("input", {
+		className: "gp-input",
+		type: "password",
+		autoComplete: "off",
+		spellCheck: false,
+		"aria-label": GUIDE.token.field,
+		value: token,
+		disabled: busy,
+		onChange: (event) => onToken(event.target.value)
+	}), /* @__PURE__ */ React.createElement("div", { className: "gp-row" }, /* @__PURE__ */ React.createElement("button", {
+		type: "button",
+		className: "gp-button",
+		disabled: busy || !canSend,
+		onClick: onSend
+	}, GUIDE.token.send)))), /* @__PURE__ */ React.createElement(Refusal, {
+		failure,
+		way: "token"
+	}), /* @__PURE__ */ React.createElement("p", {
+		className: "gp-hint",
+		"data-gp": "guide-token-expect"
+	}, GUIDE.token.works, " ", GUIDE.token.fails)), /* @__PURE__ */ React.createElement("section", {
+		className: "gp-way",
+		"aria-labelledby": "gp-way-login",
+		"data-gp": "guide-login"
+	}, /* @__PURE__ */ React.createElement("h4", { id: "gp-way-login" }, GUIDE.login.title), /* @__PURE__ */ React.createElement("p", { className: "gp-hint" }, GUIDE.login.why), /* @__PURE__ */ React.createElement("ol", null, /* @__PURE__ */ React.createElement("li", null, /* @__PURE__ */ React.createElement("p", null, GUIDE.login.press), /* @__PURE__ */ React.createElement("div", { className: "gp-row" }, /* @__PURE__ */ React.createElement("button", {
+		type: "button",
+		className: "gp-button",
+		disabled: busy,
+		onClick: onStartLogin
+	}, GUIDE.login.start))), /* @__PURE__ */ React.createElement("li", null, /* @__PURE__ */ React.createElement("p", null, GUIDE.login.open)), /* @__PURE__ */ React.createElement("li", null, /* @__PURE__ */ React.createElement("p", null, GUIDE.login.code))), login, /* @__PURE__ */ React.createElement(Refusal, {
+		failure,
+		way: "login"
+	}), /* @__PURE__ */ React.createElement("p", {
+		className: "gp-hint",
+		"data-gp": "guide-login-expect"
+	}, GUIDE.login.works, " ", GUIDE.login.fails)));
+}
 // src/ui/ClaudePanel.tsx
 function createClaudePanel(host) {
-	return function ClaudePanel({ slug }) {
+	return function ClaudePanel({ slug, onSignedIn }) {
 		const start = React.useMemo(() => startOn(host), []);
 		const secrets = React.useMemo(createSecrets, []);
 		const progress = React.useMemo(createProgress, []);
@@ -1508,23 +1856,35 @@ function createClaudePanel(host) {
 		const [state, setState] = React.useState({ kind: "checking" });
 		const [round, setRound] = React.useState(0);
 		const [busy, setBusy] = React.useState(false);
-		const [message, setMessage] = React.useState("");
+		const [failure, setFailure] = React.useState();
+		const [accepted, setAccepted] = React.useState(false);
 		const work = React.useRef(void 0);
+		const signingIn = React.useRef(false);
 		React.useEffect(() => {
 			if (!start) return;
 			const abort = new AbortController();
+			let timer;
 			setState({ kind: "checking" });
-			isSignedIn({ start }, slug, abort.signal).then((answer) => {
-				if (abort.signal.aborted) return;
-				setState(answer.ok ? {
-					kind: "answer",
-					active: answer.active
-				} : {
-					kind: "problem",
-					message: answer.message
-				});
-			});
-			return () => abort.abort();
+			const look = async () => {
+				if (!signingIn.current) {
+					const answer = await isSignedIn({ start }, slug, abort.signal);
+					if (abort.signal.aborted) return;
+					setState(answer.ok ? {
+						kind: "answer",
+						active: answer.active
+					} : {
+						kind: "problem",
+						message: answer.message
+					});
+					if (answer.ok && !answer.active) setAccepted(false);
+				}
+				timer = setTimeout(() => void look(), POLL_MS);
+			};
+			look();
+			return () => {
+				abort.abort();
+				clearTimeout(timer);
+			};
 		}, [
 			slug,
 			round,
@@ -1542,24 +1902,32 @@ function createClaudePanel(host) {
 			className: "gp-hint",
 			role: "alert"
 		}, "This Buzz cannot start programs. Use the Buzz desktop app."));
-		const finish = (result) => {
-			work.current = void 0;
-			setBusy(false);
-			secrets.clear();
-			if (result.ok) {
-				setMessage("");
-				setRound((n) => n + 1);
-			} else if (!result.stopped) setMessage(result.message);
-		};
-		const run = (job) => {
+		const run = (way, job) => {
 			const abort = new AbortController();
 			work.current = abort;
+			signingIn.current = true;
 			setBusy(true);
-			setMessage("");
-			job(abort.signal).then(finish);
+			setFailure(void 0);
+			setAccepted(false);
+			job(abort.signal).then((result) => {
+				work.current = void 0;
+				signingIn.current = false;
+				setBusy(false);
+				secrets.clear();
+				if (result.ok) {
+					setAccepted(true);
+					setRound((n) => n + 1);
+					onSignedIn?.();
+				} else if (!result.stopped) setFailure({
+					way,
+					message: result.message,
+					...result.said === void 0 ? {} : { said: result.said }
+				});
+			});
 		};
 		const active = state.kind === "answer" && state.active;
-		const headline = state.kind === "checking" ? "Checking…" : state.kind === "problem" ? state.message : active ? "Signed in to Claude." : "Not signed in to Claude yet.";
+		const notActive = state.kind === "answer" && !state.active;
+		const headline = state.kind === "checking" ? CLAUDE_STATUS.checking : state.kind === "problem" ? state.message : active ? CLAUDE_STATUS.active : CLAUDE_STATUS.notActive;
 		return /* @__PURE__ */ React.createElement("section", {
 			className: "gp-create",
 			"aria-labelledby": "gp-claude-title",
@@ -1568,105 +1936,33 @@ function createClaudePanel(host) {
 			className: "gp-question",
 			role: state.kind === "problem" ? "alert" : "status",
 			"data-gp": "claude-state"
-		}, headline), state.kind === "answer" && !active && !view.login && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { className: "gp-create-fields" }, /* @__PURE__ */ React.createElement("p", { className: "gp-hint" }, "Run ", /* @__PURE__ */ React.createElement("code", null, "claude setup-token"), " in a terminal and paste the token here. It goes to the agent and nowhere else: this plugin does not store it."), /* @__PURE__ */ React.createElement("input", {
-			className: "gp-input",
-			type: "password",
-			autoComplete: "off",
-			spellCheck: false,
-			"aria-label": "Claude setup token",
-			value: token,
-			disabled: busy,
-			onChange: (event) => secrets.setToken(event.target.value)
-		}), /* @__PURE__ */ React.createElement("div", { className: "gp-row" }, /* @__PURE__ */ React.createElement("button", {
-			type: "button",
-			className: "gp-button",
-			disabled: busy || !tokenFit(token),
-			onClick: () => run((signal) => signInWithToken({ start }, slug, token, signal))
-		}, "Send token"))), /* @__PURE__ */ React.createElement("div", { className: "gp-create-fields" }, /* @__PURE__ */ React.createElement("p", { className: "gp-hint" }, "Or sign in at an address, and paste back the code you get."), /* @__PURE__ */ React.createElement("div", { className: "gp-row" }, /* @__PURE__ */ React.createElement("button", {
-			type: "button",
-			className: "gp-button",
-			disabled: busy,
-			onClick: () => run((signal) => signInByAddress({ start }, slug, progress.askCode, signal))
-		}, "Sign in with an address")))), view.login && /* @__PURE__ */ React.createElement(Login, {
-			key: view.login.url,
-			progress,
-			url: view.login.url
-		}), message !== "" && /* @__PURE__ */ React.createElement("p", {
+		}, headline), accepted && active && /* @__PURE__ */ React.createElement("p", {
 			className: "gp-hint",
-			role: "alert",
-			"data-gp": "claude-problem"
-		}, message), (state.kind === "problem" || state.kind === "answer" && !active) && !busy && /* @__PURE__ */ React.createElement("div", { className: "gp-row" }, /* @__PURE__ */ React.createElement("button", {
+			role: "status",
+			"data-gp": "claude-accepted"
+		}, CLAUDE_STATUS.accepted), (state.kind === "problem" || notActive) && !busy && /* @__PURE__ */ React.createElement("div", { className: "gp-row" }, /* @__PURE__ */ React.createElement("button", {
 			type: "button",
 			className: "gp-button",
 			onClick: () => setRound((n) => n + 1)
-		}, "Check again")));
-	};
-}
-var STATES = [
-	"needs-claude",
-	"needs-auth-tag",
-	"connecting",
-	"running",
-	"updating",
-	"error"
-];
-var RELAYS = [
-	"connected",
-	"refused-not-member",
-	"unreachable"
-];
-var CLAUDES = ["active", "not-active"];
-var PUBKEY = /^[0-9a-fA-F]{64}$/;
-var GP_LINE = /^GP_[A-Z][A-Z0-9_]*=/;
-var isObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
-var isOneOf = (list, value) => typeof value === "string" && list.includes(value);
-var isText = (value) => typeof value === "string" && value !== "";
-var isTextOrNull = (value) => value === null || typeof value === "string";
-/** Reads the whole of stdout as a status. */
-function readStatus(stdout) {
-	let json;
-	try {
-		json = JSON.parse(stdout.split(/\r?\n/).filter((line) => !GP_LINE.test(line)).join("\n"));
-	} catch {
-		return { kind: "unreadable" };
-	}
-	if (!isObject(json)) return { kind: "unreadable" };
-	if (json.interface !== 1) return { kind: "other-interface" };
-	const { state, version, agent_pubkey: agentPubkey, relay_url: relayUrl, relay, claude, update, previous_version: previousVersion, error } = json;
-	if (!isOneOf(STATES, state) || !isOneOf(RELAYS, relay) || !isOneOf(CLAUDES, claude)) return { kind: "unreadable" };
-	if (!isText(version) || typeof agentPubkey !== "string" || !PUBKEY.test(agentPubkey) || typeof relayUrl !== "string") return { kind: "unreadable" };
-	if (!isTextOrNull(previousVersion)) return { kind: "unreadable" };
-	if (!isObject(update) || typeof update.available !== "boolean" || !isTextOrNull(update.version)) return { kind: "unreadable" };
-	if (error !== null && !(isObject(error) && typeof error.code === "string" && typeof error.message === "string")) return { kind: "unreadable" };
-	return {
-		kind: "status",
-		status: {
-			state,
-			version,
-			agentPubkey,
-			relayUrl,
-			relay,
-			claude,
-			update: {
-				available: update.available,
-				version: update.version
+		}, "Check again")), notActive && /* @__PURE__ */ React.createElement(ClaudeGuide, {
+			busy,
+			token,
+			onToken: secrets.setToken,
+			canSend: tokenFit(token),
+			onSend: () => {
+				const sent = token;
+				secrets.clear();
+				run("token", (signal) => signInWithToken({ start }, slug, sent, signal));
 			},
-			previousVersion,
-			error: error === null ? null : {
-				code: error.code,
-				message: error.message
-			}
-		}
+			onStartLogin: () => run("login", (signal) => signInByAddress({ start }, slug, progress.askCode, signal)),
+			login: view.login && /* @__PURE__ */ React.createElement(Login, {
+				key: view.login.url,
+				progress,
+				url: view.login.url
+			}),
+			failure
+		}));
 	};
-}
-/** The `GP_<KEY>=<value>` lines of stdout (GHOST Protocol's interface), by key. A key printed twice keeps its last value. */
-function gpLines(stdout) {
-	const lines = /* @__PURE__ */ new Map();
-	for (const line of stdout.split(/\r?\n/)) {
-		const found = /^GP_([A-Z][A-Z0-9_]*)=(.*)$/.exec(line);
-		if (found?.[1] !== void 0 && found[2] !== void 0) lines.set(found[1], found[2]);
-	}
-	return lines;
 }
 // src/actions.ts
 /** An update or a roll back waits for the agent to finish its task, and `docker exec` returns at once; this is for a slow Docker. */
@@ -1763,128 +2059,6 @@ async function askDocker(run, slug, which) {
 		text: withDetail(which === "restart" ? WORDS$1.restartFailed(container) : WORDS$1.stopFailed(container), firstLine(ran.stderr))
 	};
 }
-// src/observe.ts
-/** About how often the screen looks, in milliseconds. */
-var POLL_MS = 1e4;
-var NOTHING_YET = {
-	lastState: void 0,
-	gapSince: void 0,
-	asked: void 0
-};
-/** The memory after the screen asked for an update or a roll back, while the agent was on `version`. */
-var askedFor = (before, version) => ({
-	...before,
-	asked: {
-		from: version,
-		sawUpdating: false
-	}
-});
-/**
-* What a button that Docker or GHOST Protocol accepted does to what the screen knows. An Update or a Roll back is under way from then on
-* (`version` is the one the agent was on). A Stop or a Restart is the user's own doing and ends any update that was under way: the next
-* look says what it finds, so a container that is stopped is shown as stopped, with its Restart, and not as being swapped.
-*/
-function afterButton(before, job, accepted, version) {
-	if (!accepted) return before;
-	if (job === "restart" || job === "stop") return NOTHING_YET;
-	return version === void 0 ? before : askedFor(before, version);
-}
-/** What a status does to an ask that is under way: the new version ends it, and so does an update that ended on the old one. */
-function afterStatus(asked, status) {
-	if (asked === void 0 || status.version !== asked.from) return void 0;
-	if (status.state === "updating") return {
-		from: asked.from,
-		sawUpdating: true
-	};
-	return asked.sawUpdating ? void 0 : asked;
-}
-/** What Docker says of a container that is not there: `Error: No such object: gp-x`, or `No such container: gp-x`. */
-var NOT_THERE = /No such (object|container)/i;
-/** Looks once. Resolves with `undefined` when the caller left first (the runner returns nothing). */
-async function observe(run, slug, before, now) {
-	const asked = await run(statusCall(slug));
-	if (asked === void 0) return void 0;
-	if (asked.kind === "unsupported") return {
-		view: { kind: "unsupported" },
-		memory: before
-	};
-	if (asked.kind === "unavailable") return {
-		view: { kind: "docker-unavailable" },
-		memory: before
-	};
-	if (asked.code === 0) {
-		const read = readStatus(asked.stdout);
-		if (read.kind === "status") {
-			const memory = {
-				lastState: read.status.state,
-				gapSince: void 0,
-				asked: afterStatus(before.asked, read.status)
-			};
-			return {
-				view: {
-					kind: "status",
-					status: read.status
-				},
-				memory
-			};
-		}
-		return {
-			view: { kind: read.kind },
-			memory: before
-		};
-	}
-	const inspected = await run(stateCall(slug));
-	if (inspected === void 0) return void 0;
-	if (inspected.kind === "unsupported") return {
-		view: { kind: "unsupported" },
-		memory: before
-	};
-	if (inspected.kind === "unavailable") return {
-		view: { kind: "docker-unavailable" },
-		memory: before
-	};
-	let view;
-	if (inspected.code === 0) {
-		const dockerState = inspected.stdout.trim();
-		if (dockerState === "running") {
-			const lines = gpLines(asked.stdout);
-			view = {
-				kind: "not-answering",
-				code: lines.get("ERROR"),
-				message: lines.get("ERROR_MESSAGE")
-			};
-		} else view = {
-			kind: "stopped",
-			dockerState
-		};
-	} else if (NOT_THERE.test(inspected.stderr)) view = { kind: "gone" };
-	else return {
-		view: { kind: "docker-unavailable" },
-		memory: before
-	};
-	if (before.lastState !== "updating" && before.asked === void 0) return {
-		view,
-		memory: before
-	};
-	const gapSince = before.gapSince ?? now;
-	return {
-		view: now - gapSince < 12e4 ? { kind: "swapping" } : view,
-		memory: {
-			...before,
-			gapSince
-		}
-	};
-}
-/**
-* The image the container was made from, as Docker prints it (`registry/ghost-protocol:1.2.3`), or undefined when it cannot be read.
-* Resolves with `undefined` as well when the caller left first.
-*/
-async function imageOf(run, slug) {
-	const ran = await run(imageCall(slug));
-	if (ran === void 0 || ran.kind !== "exit" || ran.code !== 0) return void 0;
-	const image = ran.stdout.trim();
-	return image === "" ? void 0 : image;
-}
 var NAME = /^[a-z0-9][a-z0-9._/:-]*$/;
 var TAG = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
 /** The image's name without its tag (`registry.example.com:5000/team/ghost-protocol` from `…/ghost-protocol:1.2.3`), when it is safe. */
@@ -1954,15 +2128,6 @@ var lineOf = (view, container) => {
 		};
 	}
 };
-/** One command to run in a terminal, with a button that copies it. */
-function CopyBlock({ text }) {
-	const [result, setResult] = React.useState();
-	return /* @__PURE__ */ React.createElement("div", { className: "gp-copy" }, /* @__PURE__ */ React.createElement("code", { className: "gp-code" }, text), /* @__PURE__ */ React.createElement("button", {
-		type: "button",
-		className: "gp-button",
-		onClick: () => void copyText(text).then((copied) => setResult(copied ? "copied" : "failed"))
-	}, result === "copied" ? WORDS$1.copied : WORDS$1.copy), result === "failed" && /* @__PURE__ */ React.createElement("span", { role: "alert" }, WORDS$1.copyFailed));
-}
 function Facts({ status }) {
 	return /* @__PURE__ */ React.createElement("dl", { className: "gp-facts" }, /* @__PURE__ */ React.createElement("dt", null, WORDS$1.state), /* @__PURE__ */ React.createElement("dd", null, STATE_WORDS[status.state]), /* @__PURE__ */ React.createElement("dt", null, WORDS$1.version), /* @__PURE__ */ React.createElement("dd", { className: "gp-mono" }, clip(status.version)), /* @__PURE__ */ React.createElement("dt", null, WORDS$1.relay), /* @__PURE__ */ React.createElement("dd", null, RELAY_WORDS[status.relay]), /* @__PURE__ */ React.createElement("dt", null, WORDS$1.relayUrl), /* @__PURE__ */ React.createElement("dd", { className: "gp-mono" }, clip(status.relayUrl)), /* @__PURE__ */ React.createElement("dt", null, WORDS$1.claude), /* @__PURE__ */ React.createElement("dd", null, CLAUDE_WORDS[status.claude]), /* @__PURE__ */ React.createElement("dt", null, WORDS$1.update), /* @__PURE__ */ React.createElement("dd", null, status.update.available ? WORDS$1.updateAvailable(status.update.version === null ? null : clip(status.update.version)) : WORDS$1.noUpdate), /* @__PURE__ */ React.createElement("dt", null, WORDS$1.previousVersion), /* @__PURE__ */ React.createElement("dd", { className: status.previousVersion === null ? void 0 : "gp-mono" }, status.previousVersion === null ? WORDS$1.noPrevious : clip(status.previousVersion)));
 }
@@ -1971,7 +2136,7 @@ function Facts({ status }) {
 * looks about every ten seconds for as long as it is on the page, and its calls end with it.
 */
 function createStatusScreen(host) {
-	return function StatusScreen({ slug }) {
+	return function StatusScreen({ slug, again = 0 }) {
 		const container = containerOf(slug);
 		const [view, setView] = React.useState();
 		const [looks, setLooks] = React.useState(0);
@@ -1992,7 +2157,11 @@ function createStatusScreen(host) {
 				abort.abort();
 				clearTimeout(timer);
 			};
-		}, [slug, looks]);
+		}, [
+			slug,
+			looks,
+			again
+		]);
 		const life = React.useRef(void 0);
 		React.useEffect(() => {
 			const abort = new AbortController();
@@ -2058,6 +2227,7 @@ function createAgentTab(host, book) {
 		const written = book.get(agent.pubkey);
 		const slug = written ?? slugFromName(agent.name);
 		const [guard, setGuard] = React.useState("checking");
+		const [signedIn, setSignedIn] = React.useState(0);
 		React.useEffect(() => {
 			if (slug === void 0) return;
 			const abort = new AbortController();
@@ -2085,10 +2255,12 @@ function createAgentTab(host, book) {
 			"data-gp": "agent-tab"
 		}, /* @__PURE__ */ React.createElement(StatusScreen, {
 			key: slug,
-			slug
+			slug,
+			again: signedIn
 		}), /* @__PURE__ */ React.createElement(ClaudePanel, {
 			key: `claude-${slug}`,
-			slug
+			slug,
+			onSignedIn: () => setSignedIn((n) => n + 1)
 		}));
 	};
 }
@@ -2123,6 +2295,17 @@ var CREATE_CSS = `
 .gp-step-state, .gp-step-note { color: var(--gp-muted); font-size: 12px; overflow-wrap: anywhere; min-width: 0; }
 .gp-login, .gp-refused { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--gp-line); border-radius: 4px; }
 .gp-address { margin: 0; overflow-wrap: anywhere; }
+.gp-guide { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.gp-guide a { color: inherit; text-decoration: underline; }
+.gp-way { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding-top: 12px; border-top: 1px solid var(--gp-line); }
+.gp-way h4 { margin: 0; font-size: 13px; font-weight: 600; }
+.gp-way ol { margin: 0; padding-left: 20px; list-style: decimal outside; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.gp-way li { min-width: 0; }
+.gp-way li > * + * { margin-top: 6px; }
+.gp-way p { margin: 0; overflow-wrap: anywhere; }
+.gp-os { color: var(--gp-muted); font-size: 12px; }
+.gp-refusal { display: flex; flex-direction: column; gap: 4px; }
+.gp-way .gp-input { max-width: 100%; }
 .gp-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .gp-create .gp-button { display: inline-flex; align-items: center; height: 28px; padding: 0 12px; border: 1px solid var(--gp-line); border-radius: 4px;
   background: transparent; color: var(--gp-ink); font: inherit; font-weight: 500; cursor: pointer; }

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Runs test/web/ghost-protocol.spec.mjs, status-screen.spec.mjs and create-form.spec.mjs against the real Buzz web build (headless Chromium,
-# the app's fixture relay), with the host's `spawn` replaced by a stub (the web build cannot start a process). The first scripts what
+# Runs test/web/ghost-protocol.spec.mjs, status-screen.spec.mjs, create-form.spec.mjs and claude-guide.spec.mjs against the real Buzz web
+# build (headless Chromium, the app's fixture relay), with the host's `spawn` replaced by a stub (the web build cannot start a process). The first scripts what
 # `docker version` prints. The second hands every call to the fake `docker` (test/fake-docker), which it runs in Node, so what the plugin
 # reads is what the fake printed. The third does the same and also streams stdin to the fake and its output back (test/web/pipe.mjs), for
-# the create form, which writes a Claude token and a login code. The specs find the fake through GHOST_PROTOCOL_DIR, which this script sets
-# to this plugin's folder.
+# the create form and (the fourth) the Claude guide, which write a Claude token and a login code; those two share test/web/agents-page.mjs.
+# The specs find the fake through GHOST_PROTOCOL_DIR, which this script sets to this plugin's folder.
 #
 #   plugins/ghost-protocol/test/run.sh /path/to/block/buzz-app/checkout [extra playwright args]
 #
@@ -22,6 +22,8 @@ cp "$here/test/web/fixture.tsx" "$app/tests/fixtures/ghost-protocol/fixture.tsx"
 cp "$here/test/web/ghost-protocol.spec.mjs" "$app/tests/browser/ghost-protocol.spec.mjs"
 cp "$here/test/web/status-screen.spec.mjs" "$app/tests/browser/ghost-protocol-status.spec.mjs"
 cp "$here/test/web/create-form.spec.mjs" "$app/tests/browser/ghost-protocol-create.spec.mjs"
+cp "$here/test/web/claude-guide.spec.mjs" "$app/tests/browser/ghost-protocol-claude-guide.spec.mjs"
+cp "$here/test/web/agents-page.mjs" "$app/tests/browser/ghost-protocol-agents-page.mjs"
 fixtures="$app/tests/browser/plugin-fixtures.tsx"
 (cd "$app" && git checkout -- tests/browser/plugin-fixtures.tsx)
 sed -i \
@@ -31,4 +33,4 @@ sed -i \
 cd "$app"
 export GHOST_PROTOCOL_DIR="$here"
 exec nice -n 10 pnpm exec playwright test --config tests/browser/playwright.config.mjs \
-  tests/browser/ghost-protocol.spec.mjs tests/browser/ghost-protocol-status.spec.mjs tests/browser/ghost-protocol-create.spec.mjs --project chromium --no-deps --workers=1 "$@"
+  tests/browser/ghost-protocol.spec.mjs tests/browser/ghost-protocol-status.spec.mjs tests/browser/ghost-protocol-create.spec.mjs tests/browser/ghost-protocol-claude-guide.spec.mjs --project chromium --no-deps --workers=1 "$@"

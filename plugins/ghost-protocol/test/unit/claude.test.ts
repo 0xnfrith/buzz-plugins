@@ -76,6 +76,42 @@ describe("signInWithToken", () => {
     expect(everywhere(r, result)).not.toContain(TOKEN);
   });
 
+  it("carries GHOST Protocol's own code and line with the refusal", async () => {
+    const { claude } = await waitingAgent("token-rejected");
+    expect(await signInWithToken(claude, "maple", TOKEN, SIGNAL)).toEqual({
+      ok: false,
+      message: "Claude did not accept that token. Make a new one with `claude setup-token` and paste it.",
+      said: { code: "claude-token-invalid", message: "The Claude token was not accepted." },
+    });
+  });
+
+  it("takes the token out of GHOST Protocol's words if they ever repeat it, and cuts a long line", async () => {
+    const repeated = await waitingAgent({ fail: { claudeToken: { code: "claude-token-invalid", message: `Refused ${TOKEN} just now` } } });
+    const first = await signInWithToken(repeated.claude, "maple", TOKEN, SIGNAL);
+    expect(JSON.stringify(first)).not.toContain(TOKEN);
+    expect(first).toMatchObject({ ok: false, said: { code: "claude-token-invalid", message: "Refused … just now" } });
+    const long = await waitingAgent({ fail: { claudeToken: { code: "claude-token-invalid", message: "x".repeat(500) } } });
+    const second = await signInWithToken(long.claude, "maple", TOKEN, SIGNAL);
+    expect(second.ok === false && second.said?.message).toBe(`${"x".repeat(200)}…`);
+  });
+
+  it("shows another code of GHOST Protocol's as it is, with the same advice", async () => {
+    const { claude } = await waitingAgent({ fail: { claudeToken: { code: "internal-error", message: "Something broke." } } });
+    expect(await signInWithToken(claude, "maple", TOKEN, SIGNAL)).toEqual({
+      ok: false,
+      message: "Claude did not accept that token. Make a new one with `claude setup-token` and paste it.",
+      said: { code: "internal-error", message: "Something broke." },
+    });
+  });
+
+  it("says nothing of GHOST Protocol when docker, not GHOST Protocol, ended the command", async () => {
+    const { r, claude } = await waitingAgent();
+    r.fake.use("daemon-down");
+    const result = await signInWithToken(claude, "maple", TOKEN, SIGNAL);
+    expect(result).toMatchObject({ ok: false });
+    expect(result.ok === false && result.said).toBeUndefined();
+  });
+
   it("says when docker cannot be started, or the caller has gone", async () => {
     const { claude } = await waitingAgent();
     expect(await signInWithToken({ start: () => Promise.reject(new Error("ENOENT")) }, "maple", TOKEN, SIGNAL)).toEqual({ ok: false, message: WORDS.docker });
@@ -109,7 +145,18 @@ describe("signInByAddress", () => {
   it("ends at Claude when the sign-in fails", async () => {
     const { claude } = await waitingAgent("login-fails");
     const result = await signInByAddress(claude, "maple", async () => CODE, SIGNAL);
-    expect(result).toEqual({ ok: false, message: "Claude did not accept the sign-in. Try again." });
+    expect(result).toEqual({
+      ok: false,
+      message: "Claude did not accept the sign-in. Try again.",
+      said: { code: "claude-login-failed", message: "The sign-in code was not accepted." },
+    });
+  });
+
+  it("takes the code out of GHOST Protocol's words if they ever repeat it", async () => {
+    const { claude } = await waitingAgent({ fail: { claudeLogin: { code: "claude-login-failed", message: `Code ${CODE} is wrong` } } });
+    const result = await signInByAddress(claude, "maple", async () => CODE, SIGNAL);
+    expect(JSON.stringify(result)).not.toContain(CODE);
+    expect(result).toMatchObject({ ok: false, said: { code: "claude-login-failed", message: "Code … is wrong" } });
   });
 
   it("ends the sign-in and stops the command when the person gives up", async () => {

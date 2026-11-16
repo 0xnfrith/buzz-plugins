@@ -6,15 +6,33 @@
 // type's form), so it runs from the agent's panel after the agent is made.
 import { commands } from "./commands";
 import { LIMITS, WORDS } from "./constants";
-import { unknownInterface } from "./protocol";
+import { unknownInterface, type Gp } from "./protocol";
 import { run, startRun, type StartDocker } from "./run";
 
-export type Result = Readonly<{ ok: true }> | Readonly<{ ok: false; message: string; stopped?: true }>;
+/** What GHOST Protocol said when it refused: its code and its one line. */
+export type Said = Readonly<{ code: string; message: string }>;
+
+/** `said` is there when GHOST Protocol itself refused, so the person can read its own words and code beside ours. */
+export type Result = Readonly<{ ok: true }> | Readonly<{ ok: false; message: string; stopped?: true; said?: Said }>;
 
 export type Claude = Readonly<{ start: StartDocker }>;
 
 const stopped = { ok: false, message: "Stopped.", stopped: true } as const;
-const fail = (message: string): Result => ({ ok: false, message });
+const fail = (message: string, said?: Said): Result => (said === undefined ? { ok: false, message } : { ok: false, message, said });
+
+/** The most of GHOST Protocol's own line that is shown: a long one is cut, so it cannot fill the panel. */
+const SAID_MAX = 200;
+
+/**
+ * GHOST Protocol's refusal as the person sees it. It never prints a secret, but this is the one place its words reach the screen
+ * from a command that was given one, so any piece of `secrets` that turns up in them is taken out before anything is shown.
+ */
+function saidBy(gp: Gp, secrets: readonly string[]): Said | undefined {
+  if (gp.error === undefined) return undefined;
+  const clean = (text: string) => secrets.filter((secret) => secret !== "").reduce((rest, secret) => rest.split(secret).join("…"), text);
+  const line = clean(gp.error.message).trim();
+  return { code: clean(gp.error.code).trim(), message: line.length > SAID_MAX ? `${line.slice(0, SAID_MAX)}…` : line };
+}
 
 /** Whether the agent has a Claude sign-in: `gp claude status`. */
 export async function isSignedIn(claude: Claude, slug: string, signal: AbortSignal): Promise<Readonly<{ ok: true; active: boolean }> | Extract<Result, { ok: false }>> {
@@ -36,7 +54,7 @@ export async function signInWithToken(claude: Claude, slug: string, token: strin
   if (outcome.kind === "timeout") return fail("GHOST Protocol did not answer in time.");
   if (unknownInterface(outcome.gp)) return fail(WORDS.unknownInterface);
   if (outcome.code !== 0 || outcome.gp.error || outcome.gp.values.get("CLAUDE") !== "active") {
-    return fail("Claude did not accept that token. Make a new one with `claude setup-token` and paste it.");
+    return fail("Claude did not accept that token. Make a new one with `claude setup-token` and paste it.", saidBy(outcome.gp, [text]));
   }
   return { ok: true };
 }
@@ -53,12 +71,15 @@ export async function signInByAddress(claude: Claude, slug: string, askCode: (ur
   let cancelled = false;
   let badAddress = false;
   let asked = false;
+  // The code only to scrub GHOST Protocol's words of it (saidBy): it is never kept anywhere else.
+  let given = "";
   let resolveRunning!: (running: Awaited<ReturnType<typeof startRun>>) => void;
   const running = new Promise<Awaited<ReturnType<typeof startRun>>>((resolve) => (resolveRunning = resolve));
   const answer = async (url: string) => {
     const process = await running;
     try {
       const code = await askCode(url, signal);
+      given = code;
       await process.end(`${code}\n`);
     } catch {
       cancelled = true;
@@ -92,6 +113,6 @@ export async function signInByAddress(claude: Claude, slug: string, askCode: (ur
   if (outcome.kind === "timeout") return fail("Signing in to Claude took too long. Try again.");
   if (cancelled) return fail("Signing in to Claude was cancelled.");
   if (unknownInterface(outcome.gp)) return fail(WORDS.unknownInterface);
-  if (outcome.code !== 0 || outcome.gp.error || outcome.gp.values.get("CLAUDE") !== "active") return fail("Claude did not accept the sign-in. Try again.");
+  if (outcome.code !== 0 || outcome.gp.error || outcome.gp.values.get("CLAUDE") !== "active") return fail("Claude did not accept the sign-in. Try again.", saidBy(outcome.gp, [given]));
   return { ok: true };
 }
