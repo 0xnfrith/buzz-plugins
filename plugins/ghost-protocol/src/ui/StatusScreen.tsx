@@ -7,7 +7,7 @@ import { React } from "../react";
 import type { Status } from "../status";
 import { updateByHand } from "../update-by-hand";
 import { CLAUDE_WORDS, OTHER_INTERFACE, REFUSED_NOT_MEMBER, RELAY_WORDS, STATE_WORDS, WORDS } from "../words";
-import { copyText } from "./copy";
+import { CopyBlock } from "./CopyBlock";
 
 /** The most of a text from GHOST Protocol that the screen shows: a long one is cut, so it cannot fill the page. */
 const SHOWN_MAX = 300;
@@ -40,24 +40,6 @@ const lineOf = (view: View | undefined, container: string): { text: string; prob
 
 type Job = "update" | "rollback" | "restart" | "stop";
 
-/** One command to run in a terminal, with a button that copies it. */
-function CopyBlock({ text }: { text: string }) {
-  const [result, setResult] = React.useState<"copied" | "failed">();
-  return (
-    <div className="gp-copy">
-      <code className="gp-code">{text}</code>
-      <button
-        type="button"
-        className="gp-button"
-        onClick={() => void copyText(text).then((copied) => setResult(copied ? "copied" : "failed"))}
-      >
-        {result === "copied" ? WORDS.copied : WORDS.copy}
-      </button>
-      {result === "failed" && <span role="alert">{WORDS.copyFailed}</span>}
-    </div>
-  );
-}
-
 function Facts({ status }: { status: Status }) {
   return (
     <dl className="gp-facts">
@@ -84,7 +66,8 @@ function Facts({ status }: { status: Status }) {
  * looks about every ten seconds for as long as it is on the page, and its calls end with it.
  */
 export function createStatusScreen(host: Host) {
-  return function StatusScreen({ slug }: { slug: string }) {
+  // `again` changes when something outside the screen (a sign-in in the same tab) has changed what it would show: it looks at once.
+  return function StatusScreen({ slug, again = 0 }: { slug: string; again?: number }) {
     const container = containerOf(slug);
     const [view, setView] = React.useState<View>();
     const [looks, setLooks] = React.useState(0);
@@ -107,7 +90,7 @@ export function createStatusScreen(host: Host) {
         abort.abort();
         clearTimeout(timer);
       };
-    }, [slug, looks]);
+    }, [slug, looks, again]);
 
     // The buttons' calls end with the screen too.
     const life = React.useRef<AbortController | undefined>(undefined);

@@ -19,6 +19,8 @@ export function createAgentTab(host: Host, book: Book) {
     const written = book.get(agent.pubkey);
     const slug = written ?? slugFromName(agent.name);
     const [guard, setGuard] = React.useState<Guard | "checking">("checking");
+    // Counts the sign-ins the agent has accepted: the status screen looks again at once for each, instead of at its next turn.
+    const [signedIn, setSignedIn] = React.useState(0);
     React.useEffect(() => {
       if (slug === undefined) return;
       const abort = new AbortController();
@@ -50,8 +52,8 @@ export function createAgentTab(host: Host, book: Book) {
     return (
       // `.gp-root` gives the status screen the page's tokens; `.gp-in-tab` takes its page-sized frame off it.
       <div className="gp-root gp-in-tab" data-gp="agent-tab">
-        <StatusScreen key={slug} slug={slug} />
-        <ClaudePanel key={`claude-${slug}`} slug={slug} />
+        <StatusScreen key={slug} slug={slug} again={signedIn} />
+        <ClaudePanel key={`claude-${slug}`} slug={slug} onSignedIn={() => setSignedIn((n) => n + 1)} />
       </div>
     );
   };

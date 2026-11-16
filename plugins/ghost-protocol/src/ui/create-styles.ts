@@ -30,6 +30,17 @@ export const CREATE_CSS = /* css */ `
 .gp-step-state, .gp-step-note { color: var(--gp-muted); font-size: 12px; overflow-wrap: anywhere; min-width: 0; }
 .gp-login, .gp-refused { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--gp-line); border-radius: 4px; }
 .gp-address { margin: 0; overflow-wrap: anywhere; }
+.gp-guide { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.gp-guide a { color: inherit; text-decoration: underline; }
+.gp-way { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding-top: 12px; border-top: 1px solid var(--gp-line); }
+.gp-way h4 { margin: 0; font-size: 13px; font-weight: 600; }
+.gp-way ol { margin: 0; padding-left: 20px; list-style: decimal outside; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.gp-way li { min-width: 0; }
+.gp-way li > * + * { margin-top: 6px; }
+.gp-way p { margin: 0; overflow-wrap: anywhere; }
+.gp-os { color: var(--gp-muted); font-size: 12px; }
+.gp-refusal { display: flex; flex-direction: column; gap: 4px; }
+.gp-way .gp-input { max-width: 100%; }
 .gp-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .gp-create .gp-button { display: inline-flex; align-items: center; height: 28px; padding: 0 12px; border: 1px solid var(--gp-line); border-radius: 4px;
   background: transparent; color: var(--gp-ink); font: inherit; font-weight: 500; cursor: pointer; }

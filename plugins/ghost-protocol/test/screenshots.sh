@@ -9,5 +9,5 @@
 set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 export GHOST_PROTOCOL_SHOTS="$here/screenshots"
-export GHOST_PROTOCOL_SPECS=tests/browser/ghost-protocol-screenshots.spec.mjs
+export GHOST_PROTOCOL_SPECS="tests/browser/ghost-protocol-screenshots.spec.mjs tests/browser/ghost-protocol-claude-guide-screenshots.spec.mjs"
 exec "$here/test/run.sh" "$@"
