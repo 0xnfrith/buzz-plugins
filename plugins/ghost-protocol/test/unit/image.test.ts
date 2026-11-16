@@ -100,10 +100,13 @@ describe("every command that names the image, with a manifest that pins another 
     ["the tag latest", `registry.example/ghost-protocol:latest@sha256:${DIGEST}`],
     ["a short digest", `registry.example/ghost-protocol:0.0.0@sha256:${"a".repeat(63)}`],
   ] as const) {
-    it(`refuses ${what}: there is no image, and no command that names it can be made`, async () => {
+    it(`refuses ${what}: there is no image, and no command that names it can be made, a docker run included`, async () => {
       const { IMAGE: loaded, commands } = await loadWith(image);
       expect(loaded).toBe("");
-      expect(() => commands.pull()).toThrow("does not begin with the words of");
+      expect(() => commands.pull()).toThrow("not pinned by tag and digest");
+      expect(() => commands.init("maple", "Maple", "wss://relay.example.com", "f".repeat(64))).toThrow("not pinned by tag and digest");
+      expect(() => commands.start("maple")).toThrow("not pinned by tag and digest");
+      expect(() => commands.startUpdater("maple")).toThrow("not pinned by tag and digest");
     });
   }
 });

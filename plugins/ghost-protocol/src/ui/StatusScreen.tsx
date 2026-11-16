@@ -202,6 +202,7 @@ export function createStatusScreen(host: Host) {
         {byHand && status && (
           <div className="gp-steps">
             <p>{WORDS.noUpdaterTitle}</p>
+            <p className="gp-note">{WORDS.noUpdaterDigest}</p>
             <ol>
               {updateByHand(slug, byHand.image, status.update.version).map((step) => (
                 <li key={step}>
@@ -209,7 +210,6 @@ export function createStatusScreen(host: Host) {
                 </li>
               ))}
             </ol>
-            <p className="gp-note">{WORDS.noUpdaterDigest}</p>
             <p className="gp-note">{WORDS.noUpdaterNote(`${container}-data`)}</p>
           </div>
         )}

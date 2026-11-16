@@ -532,8 +532,13 @@ test("Update shows the steps to update by hand, instead of the button, when the 
     "docker rm -f gp-maple",
     "docker run -d --name gp-maple --restart unless-stopped -v gp-maple-data:/data registry.example/ghost-protocol:0.1.1@sha256:<digest of that version>",
   ]);
-  // The image is pinned by digest, and the update's answer names only the version: the person is told where the digest goes.
-  await expect(steps.getByText("In steps 1 and 3, replace <digest of that version> with the sha256 digest of the new version's image.", { exact: false })).toBeVisible();
+  // The image is pinned by digest, and the update's answer names only the version: the person is told where the digest goes, before the
+  // steps and not after them, and that step 2 (which removes the container) waits for step 1.
+  const digestNote = steps.getByText("Before you run anything, replace <digest of that version> in steps 1 and 3 with the sha256 digest of the new version's image", { exact: false });
+  await expect(digestNote).toBeVisible();
+  await expect(digestNote).toContainText("Run step 2 only once step 1 has pulled the image without an error, because step 2 removes the container.");
+  expect(await steps.locator(":scope > *").evaluateAll((elements) => elements.map((element) => element.tagName))).toEqual(["P", "P", "OL", "P"]);
+  await expect(steps.locator(":scope > *").nth(1)).toContainText("replace <digest of that version> in steps 1 and 3");
   await expect(steps.getByText("Your data and sign-ins live in the volume gp-maple-data, so nothing is lost between steps 2 and 3.")).toBeVisible();
   // Each step has its own copy button.
   await expect(steps.getByRole("button", { name: "Copy", exact: true })).toHaveCount(3);

@@ -302,7 +302,7 @@ var WORDS$1 = {
 	noPreviousVersion: "There is no earlier version to roll back to.",
 	noUpdaterRollback: "This agent has no update helper, so it cannot roll back from here.",
 	noUpdaterTitle: "This agent has no update helper, so update it by hand. Run these three commands, one after the other:",
-	noUpdaterDigest: "In steps 1 and 3, replace <digest of that version> with the sha256 digest of the new version's image. The image is pinned by digest, so a tag that is moved later cannot change what runs.",
+	noUpdaterDigest: "Before you run anything, replace <digest of that version> in steps 1 and 3 with the sha256 digest of the new version's image: the image is pinned by digest, so a tag that is moved later cannot change what runs. Step 1 does not run until you have. Run step 2 only once step 1 has pulled the image without an error, because step 2 removes the container.",
 	noUpdaterNote: (volume) => `Your data and sign-ins live in the volume ${volume}, so nothing is lost between steps 2 and 3.`,
 	restarted: (container) => `Restarted ${container}.`,
 	stoppedNow: (container) => `Stopped ${container}.`,
@@ -475,17 +475,25 @@ function make(process, ...line) {
 		args: line.slice(fixed.length)
 	};
 }
+/**
+* The agent's image, pinned by tag and digest. An image that is not (constants.ts) is an empty name, and no command is built with an empty
+* name: not the pull, which would not begin with the manifest's words, and not a `docker run` either, which would get an empty image.
+*/
+function pinned() {
+	if (IMAGE === "") throw new Error("the agent's image is not pinned by tag and digest");
+	return IMAGE;
+}
 var commands = {
 	/** The agent's image. */
-	pull: () => make(PROCESS.pull, "pull", IMAGE),
+	pull: () => make(PROCESS.pull, "pull", pinned()),
 	/** Makes the agent's key in its data volume and prints its public key. The same volume gives the same key. */
-	init: (slug, name, relay, owner) => make(PROCESS.runInit, "run", "--rm", "-v", `${volumeOf(slug)}:/data`, IMAGE, "init", "--name", name, "--relay", relay, "--owner", owner),
+	init: (slug, name, relay, owner) => make(PROCESS.runInit, "run", "--rm", "-v", `${volumeOf(slug)}:/data`, pinned(), "init", "--name", name, "--relay", relay, "--owner", owner),
 	/** The container's state, or docker's "no such object" when it is not there. The helper's too: it is a container. */
 	state: (container) => make(PROCESS.inspectState, "inspect", "--format", "{{.State.Status}}", container),
 	/** The agent. */
-	start: (slug) => make(PROCESS.runAgent, "run", "-d", "--restart", "unless-stopped", "--name", containerOf(slug), "-v", `${volumeOf(slug)}:/data`, IMAGE),
+	start: (slug) => make(PROCESS.runAgent, "run", "-d", "--restart", "unless-stopped", "--name", containerOf(slug), "-v", `${volumeOf(slug)}:/data`, pinned()),
 	/** The update helper: the agent's own image and tag with another command, and the Docker socket. Only after a yes. */
-	startUpdater: (slug) => make(PROCESS.runUpdater, "run", "-d", "--restart", "unless-stopped", "-v", `${SOCKET}:${SOCKET}`, "--name", updaterOf(slug), IMAGE, ...UPDATER_COMMAND, "--target", containerOf(slug)),
+	startUpdater: (slug) => make(PROCESS.runUpdater, "run", "-d", "--restart", "unless-stopped", "-v", `${SOCKET}:${SOCKET}`, "--name", updaterOf(slug), pinned(), ...UPDATER_COMMAND, "--target", containerOf(slug)),
 	/** A container that exists and is not running. */
 	restart: (container) => make(PROCESS.restart, "restart", container),
 	/** The owner's attestation on stdin. */
@@ -2069,7 +2077,7 @@ function createStatusScreen(host) {
 		}, /* @__PURE__ */ React.createElement("p", null, "Your relay does not accept owner attestations. Ask its admin to turn them on, or to add this agent as a relay member."), /* @__PURE__ */ React.createElement("p", { className: "gp-label" }, WORDS$1.publicKey), /* @__PURE__ */ React.createElement(CopyBlock, { text: status.agentPubkey })), (buttons.update || buttons.rollback || buttons.restart || buttons.stop) && /* @__PURE__ */ React.createElement("div", { className: "gp-buttons" }, buttons.update && button("update", WORDS$1.buttons.update), buttons.rollback && button("rollback", WORDS$1.buttons.rollback, status?.previousVersion === null), buttons.restart && button("restart", WORDS$1.buttons.restart), buttons.stop && button("stop", WORDS$1.buttons.stop)), busy && /* @__PURE__ */ React.createElement("p", { role: "status" }, WORDS$1.working), outcome && /* @__PURE__ */ React.createElement("p", {
 			className: outcome.tone === "problem" ? "gp-problem" : void 0,
 			role: outcome.tone === "problem" ? "alert" : "status"
-		}, outcome.text), byHand && status && /* @__PURE__ */ React.createElement("div", { className: "gp-steps" }, /* @__PURE__ */ React.createElement("p", null, WORDS$1.noUpdaterTitle), /* @__PURE__ */ React.createElement("ol", null, updateByHand(slug, byHand.image, status.update.version).map((step) => /* @__PURE__ */ React.createElement("li", { key: step }, /* @__PURE__ */ React.createElement(CopyBlock, { text: step })))), /* @__PURE__ */ React.createElement("p", { className: "gp-note" }, WORDS$1.noUpdaterDigest), /* @__PURE__ */ React.createElement("p", { className: "gp-note" }, WORDS$1.noUpdaterNote(`${container}-data`))));
+		}, outcome.text), byHand && status && /* @__PURE__ */ React.createElement("div", { className: "gp-steps" }, /* @__PURE__ */ React.createElement("p", null, WORDS$1.noUpdaterTitle), /* @__PURE__ */ React.createElement("p", { className: "gp-note" }, WORDS$1.noUpdaterDigest), /* @__PURE__ */ React.createElement("ol", null, updateByHand(slug, byHand.image, status.update.version).map((step) => /* @__PURE__ */ React.createElement("li", { key: step }, /* @__PURE__ */ React.createElement(CopyBlock, { text: step })))), /* @__PURE__ */ React.createElement("p", { className: "gp-note" }, WORDS$1.noUpdaterNote(`${container}-data`))));
 	};
 }
 // src/ui/AgentTab.tsx
