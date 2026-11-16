@@ -1,0 +1,19 @@
+{
+  "id": "megatech.ghost-protocol",
+  "name": "GHOST Protocol",
+  "apiVersion": 1,
+  "description": "A first step towards running a GHOST Protocol agent in Docker on your computer. For now it only checks that Docker is installed and running, and shows its version. Needs Docker Desktop.",
+  "discovery": {
+    "category": "agents",
+    "tags": ["GHOST Protocol", "Docker", "Agents"]
+  },
+  "host": {
+    "processes": [
+      {
+        "id": "docker-version",
+        "program": "docker",
+        "args": ["version", "--format", "{{.Server.Version}}"]
+      }
+    ]
+  }
+}

@@ -51,6 +51,7 @@ jobs:
       artifacts: ${{ steps.match.outputs.artifacts }}
       artifacts-browser: ${{ steps.match.outputs.artifacts-browser }}
       beeper: ${{ steps.match.outputs.beeper }}
+      ghost-protocol: ${{ steps.match.outputs.ghost-protocol }}
       ghostty-terminal: ${{ steps.match.outputs.ghostty-terminal }}
       linear: ${{ steps.match.outputs.linear }}
       megatech-support: ${{ steps.match.outputs.megatech-support }}
@@ -120,6 +121,12 @@ jobs:
     if: ${{ needs.changes.outputs.beeper == 'true' }}
     uses: ./.github/workflows/beeper-tests.yml
 
+  ghost-protocol:
+    name: GHOST Protocol tests
+    needs: changes
+    if: ${{ needs.changes.outputs.ghost-protocol == 'true' }}
+    uses: ./.github/workflows/ghost-protocol-tests.yml
+
   ghostty-terminal:
     name: Ghostty terminal tests
     needs: changes
@@ -176,7 +183,7 @@ jobs:
     #     left without a job and no job without a row;
     #   - each test workflow did what its row said: passed when it was called ("true"), was skipped when it was not ("false").
     name: all-tests
-    needs: [changes, after-merge, agent-skills-highlighter, agent-stats, ai-sorter, artifacts, artifacts-browser, beeper, ghostty-terminal, linear, megatech-support, megatech-support-browser, merge-by-policy, plugin-assets, vim-tests, vim-latency]
+    needs: [changes, after-merge, agent-skills-highlighter, agent-stats, ai-sorter, artifacts, artifacts-browser, beeper, ghost-protocol, ghostty-terminal, linear, megatech-support, megatech-support-browser, merge-by-policy, plugin-assets, vim-tests, vim-latency]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
