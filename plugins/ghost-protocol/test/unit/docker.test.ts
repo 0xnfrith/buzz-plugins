@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Host, HostProcess, SpawnOptions } from "../../src/buzz";
-import { PROCESS_ID, TIMEOUT_MS, WORDS, checkDocker, textOf, versionOf } from "../../src/docker";
+import { KEPT_OF_GP, PROCESS_ID, TIMEOUT_MS, VERSION_ARGS, WORDS, checkDocker, runDocker, runnerFor, textOf, versionOf } from "../../src/docker";
 
 /**
  * A host whose `spawn` is a stub. `run` is the program that "docker" is: it gets the handlers the plugin passed, and decides what is
@@ -48,12 +48,15 @@ describe("checkDocker", () => {
     expect(await checkDocker(host)).toEqual({ state: "ready", version: "27.3.1" });
   });
 
-  it("spawns the declared process with only output handlers: no arguments, no working directory, no environment", async () => {
+  it("spawns the declared process with the version call's arguments and the output handlers: no working directory, no environment", async () => {
     const { host, calls } = prints("27.3.1\n");
     await checkDocker(host);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.id).toBe(PROCESS_ID);
-    expect(Object.keys(calls[0]?.options ?? {}).sort()).toEqual(["onStderr", "onStdout"]);
+    expect(PROCESS_ID).toBe("docker");
+    expect(calls[0]?.options?.args).toEqual(["version", "--format", "{{.Server.Version}}"]);
+    expect(calls[0]?.options?.args).toEqual([...VERSION_ARGS]);
+    expect(Object.keys(calls[0]?.options ?? {}).sort()).toEqual(["args", "onStderr", "onStdout"]);
     // `spawn` is a method that reads the calling plugin from its receiver: it must be called on the host.
     expect(calls[0]?.receiver).toBe(host);
   });
@@ -187,5 +190,85 @@ describe("the words", () => {
     expect(textOf("ready")).toBe("Docker is running");
     expect(textOf("checking")).toBe("Checking Docker…");
     expect(textOf("unsupported")).toBe(WORDS.unsupported);
+  });
+});
+
+describe("runDocker", () => {
+  it("ends with the exit code and both streams, whole", async () => {
+    const { host, calls } = stubHost((options, exit) => {
+      options.onStdout?.("out ");
+      options.onStderr?.("err");
+      options.onStdout?.("put");
+      exit(3);
+    });
+    expect(await runDocker(host, ["exec", "gp-x", "gp", "status", "--json"])).toEqual({ kind: "exit", code: 3, stdout: "out put", stderr: "err" });
+    expect(calls[0]?.options?.args).toEqual(["exec", "gp-x", "gp", "status", "--json"]);
+  });
+
+  it("ends with a null code when a signal ended the process", async () => {
+    expect(await runDocker(prints("x", null).host, ["version"])).toEqual({ kind: "exit", code: null, stdout: "x", stderr: "" });
+  });
+
+  it("says unavailable when there is no docker to start, or it does not answer in time, and unsupported when there is no spawn", async () => {
+    expect(await runDocker({ spawn: () => Promise.reject(new Error("no docker")) }, ["version"])).toEqual({ kind: "unavailable" });
+    expect(await runDocker({}, ["version"])).toEqual({ kind: "unsupported" });
+  });
+
+  it("keeps stdout up to the length asked for and stderr up to 4096, so a runaway process cannot grow either", async () => {
+    const { host } = stubHost((options, exit) => {
+      for (let at = 0; at < 200; at++) {
+        options.onStdout?.("o".repeat(1024));
+        options.onStderr?.("e".repeat(1024));
+      }
+      exit(0);
+    });
+    const small = await runDocker(host, ["x"]);
+    expect(small).toMatchObject({ kind: "exit" });
+    if (small?.kind === "exit") {
+      expect(small.stdout.length).toBe(4096);
+      expect(small.stderr.length).toBe(4096);
+    }
+    const large = await runDocker(host, ["x"], { keep: KEPT_OF_GP });
+    if (large?.kind === "exit") {
+      expect(large.stdout.length).toBe(KEPT_OF_GP);
+      expect(large.stderr.length).toBe(4096);
+    }
+    expect(KEPT_OF_GP).toBe(65_536);
+  });
+});
+
+describe("runnerFor", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("runs a call for the host, stops it with the signal, and keeps what a GHOST Protocol call prints", async () => {
+    const { host, calls } = prints("{}\n");
+    const run = runnerFor(host, new AbortController().signal);
+    expect(await run(["exec", "gp-x", "gp", "status", "--json"])).toEqual({ kind: "exit", code: 0, stdout: "{}\n", stderr: "" });
+    expect(calls[0]?.receiver).toBe(host);
+    const abort = new AbortController();
+    const { host: silent, killed } = stubHost(() => {});
+    const pending = runnerFor(silent, abort.signal)(["x"]);
+    await vi.advanceTimersByTimeAsync(10);
+    abort.abort();
+    expect(await pending).toBeUndefined();
+    expect(killed).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives a call fifteen seconds unless it is given another time", async () => {
+    const { host, killed } = stubHost(() => {});
+    const run = runnerFor(host, new AbortController().signal);
+    const slow = run(["x"]);
+    await vi.advanceTimersByTimeAsync(TIMEOUT_MS - 1);
+    expect(killed).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await slow).toEqual({ kind: "unavailable" });
+    const { host: other, killed: otherKilled } = stubHost(() => {});
+    const longer = runnerFor(other, new AbortController().signal)(["x"], 60_000);
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(otherKilled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await longer).toEqual({ kind: "unavailable" });
+    expect(otherKilled).toHaveBeenCalledTimes(1);
   });
 });

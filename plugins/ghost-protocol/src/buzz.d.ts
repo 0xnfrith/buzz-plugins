@@ -3,8 +3,9 @@
 // package built from its own repository; this copy keeps the build reproducible from this repository alone.
 import type * as ReactNamespace from "react";
 
-/** What `spawn` takes of its options. `args` would follow the arguments the manifest declares; this plugin never passes any. */
+/** What `spawn` takes of its options. `args` follow the arguments the manifest declares (none, for this plugin's `docker`). */
 export type SpawnOptions = Readonly<{
+  args?: readonly string[];
   onStdout?(data: string): void;
   onStderr?(data: string): void;
 }>;

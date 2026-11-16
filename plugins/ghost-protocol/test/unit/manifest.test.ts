@@ -21,8 +21,8 @@ const processProblems = (value: { host?: { processes?: { id: string; program: st
 };
 
 describe("manifest.json", () => {
-  it("declares exactly one process, the bare program `docker`, with its arguments fixed: `version --format {{.Server.Version}}`", () => {
-    expect(manifest.host.processes).toEqual([{ id: "docker-version", program: "docker", args: ["version", "--format", "{{.Server.Version}}"] }]);
+  it("declares exactly one process, the bare program `docker`, with no argument fixed: the plugin gives them when it asks (src/commands.ts)", () => {
+    expect(manifest.host.processes).toEqual([{ id: "docker", program: "docker" }]);
     // The id the code spawns is the one declared.
     expect(manifest.host.processes.map(({ id }) => id)).toEqual([PROCESS_ID]);
   });
@@ -36,7 +36,7 @@ describe("manifest.json", () => {
 
   it("asks Buzz for a process and nothing else: no commands, network origins, files, bundled program or other grants", () => {
     expect(Object.keys(manifest.host)).toEqual(["processes"]);
-    expect(Object.keys(manifest.host.processes[0] ?? {}).sort()).toEqual(["args", "id", "program"]);
+    expect(Object.keys(manifest.host.processes[0] ?? {}).sort()).toEqual(["id", "program"]);
     expect(Object.keys(manifest).sort()).toEqual(["apiVersion", "description", "discovery", "host", "id", "name"]);
   });
 

@@ -44,12 +44,15 @@ test("shows the Docker server's version when `docker version` exits 0 and prints
   await shot(page, "01-version");
 });
 
-test("asks the host for the declared process and nothing else: its id, no arguments, called on the host", async ({ page, app }) => {
+test("asks the host for the declared process and nothing else: its id, the version call's arguments, called on the host", async ({ page, app }) => {
   await arrange(page, app);
   await expect(root(page).locator("dd")).toHaveText("27.3.1");
   const { calls } = await gp(page);
-  // One call. Its process id is the manifest's, and only the two output handlers were passed: no arguments, no directory, no environment.
-  expect(calls).toEqual([{ id: "docker-version", options: ["onStderr", "onStdout"], onHost: true, declared: true }]);
+  // One call, for the page's check of Docker. Its process id is the manifest's, and only the arguments and the two output handlers were
+  // passed: no directory, no environment. The status screen asks nothing until an agent is named.
+  expect(calls).toEqual([
+    { id: "docker", options: ["args", "onStderr", "onStdout"], args: ["version", "--format", "{{.Server.Version}}"], onHost: true, declared: true },
+  ]);
 });
 
 test("shows the Docker Desktop text when `docker version` exits non-zero", async ({ page, app }) => {

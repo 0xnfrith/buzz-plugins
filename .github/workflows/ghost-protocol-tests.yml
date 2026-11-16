@@ -3,8 +3,10 @@
 # headless Chromium against block/buzz-app's own production web build, the way plugins/ghost-protocol/test/run.sh runs it by hand.
 #
 # What the browser suite cannot cover: the web build has no `ctx.host.spawn` (it throws "Processes require an installed desktop plugin"),
-# so the suite replaces it with a stub that scripts what `docker version` prints and how it exits. It proves the page, the one screen for
-# each way the command can end, and that the plugin asks the host for the declared process and nothing else. It does not run `docker`, the
+# so the suite replaces it with a stub. The page's own check of Docker scripts what `docker version` prints and how it exits; the status
+# screen's spec hands every call to the fake `docker` (plugins/ghost-protocol/test/fake-docker), which runs in Node, so what the plugin reads
+# is what the fake printed. Together they prove the page, the one screen for each way a command can end and for each state of the status,
+# and that the plugin asks the host for the declared process and nothing else. They do not run a real `docker` or GHOST Protocol, the
 # desktop app or the Git importer: a run in the desktop app is not built yet (AGENTS.md), and the plugin's first real check is a run on a
 # real Mac.
 name: GHOST Protocol tests
@@ -93,9 +95,10 @@ jobs:
         run: plugins/ghost-protocol/test/fake-docker-tests.sh
 
   browser:
-    # plugins/ghost-protocol/test/web/ghost-protocol.spec.mjs in headless Chromium against block/buzz-app's own production web build, at
-    # BUZZ_APP_REF. test/run.sh copies the committed plugin, a wrapper that points the host's `spawn` at a stub, and the spec into the app
-    # checkout. No docker, network, key or token is used.
+    # plugins/ghost-protocol/test/web/ghost-protocol.spec.mjs and status-screen.spec.mjs in headless Chromium against block/buzz-app's own
+    # production web build, at BUZZ_APP_REF. test/run.sh copies the committed plugin, a wrapper that points the host's `spawn` at a stub, and
+    # the specs into the app checkout; the second spec runs the fake `docker` from this folder (GHOST_PROTOCOL_DIR) in Node. No real docker,
+    # network, key or token is used.
     name: GHOST Protocol browser tests
     runs-on: ubuntu-24.04
     timeout-minutes: 30 # the tests take a few minutes; the set-up is most of it

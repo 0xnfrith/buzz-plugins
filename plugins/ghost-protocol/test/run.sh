@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Runs test/web/ghost-protocol.spec.mjs against the real Buzz web build (headless Chromium, the app's fixture relay), with the host's
-# `spawn` replaced by a stub (the web build cannot start a process).
+# Runs test/web/ghost-protocol.spec.mjs and test/web/status-screen.spec.mjs against the real Buzz web build (headless Chromium, the app's
+# fixture relay), with the host's `spawn` replaced by a stub (the web build cannot start a process). The first scripts what `docker version`
+# prints; the second hands every call to the fake `docker` (test/fake-docker), which it runs in Node, so what the plugin reads is what the
+# fake printed. The specs find the fake through GHOST_PROTOCOL_DIR, which this script sets to this plugin's folder.
 #
 #   plugins/ghost-protocol/test/run.sh /path/to/block/buzz-app/checkout [extra playwright args]
 #
@@ -16,6 +18,7 @@ mkdir -p "$app/tests/fixtures/ghost-protocol"
 cp "$here/plugin.js" "$here/manifest.json" "$app/tests/fixtures/ghost-protocol/"
 cp "$here/test/web/fixture.tsx" "$app/tests/fixtures/ghost-protocol/fixture.tsx"
 cp "$here/test/web/ghost-protocol.spec.mjs" "$app/tests/browser/ghost-protocol.spec.mjs"
+cp "$here/test/web/status-screen.spec.mjs" "$app/tests/browser/ghost-protocol-status.spec.mjs"
 fixtures="$app/tests/browser/plugin-fixtures.tsx"
 (cd "$app" && git checkout -- tests/browser/plugin-fixtures.tsx)
 sed -i \
@@ -23,5 +26,6 @@ sed -i \
   -e '/^  { manifest: { ...shortcutManifest, apiVersion: 1 }, module: shortcutCounter },/a \  ghostProtocolFixture,' \
   "$fixtures"
 cd "$app"
+export GHOST_PROTOCOL_DIR="$here"
 exec nice -n 10 pnpm exec playwright test --config tests/browser/playwright.config.mjs \
-  tests/browser/ghost-protocol.spec.mjs --project chromium --no-deps --workers=1 "$@"
+  tests/browser/ghost-protocol.spec.mjs tests/browser/ghost-protocol-status.spec.mjs --project chromium --no-deps --workers=1 "$@"

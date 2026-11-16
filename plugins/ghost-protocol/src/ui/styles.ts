@@ -30,4 +30,21 @@ export const CSS = /* css */ `
   background: transparent; color: var(--gp-ink); font: inherit; font-weight: 500; cursor: pointer; }
 .gp-button:hover:not(:disabled) { background: var(--gp-hover); }
 .gp-button:disabled { opacity: 0.5; cursor: default; }
+.gp-form { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; }
+.gp-input { width: 100%; max-width: 320px; height: 28px; padding: 0 8px; border: 1px solid var(--gp-line); border-radius: 4px;
+  background: transparent; color: var(--gp-ink); font: inherit; font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; }
+.gp-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.gp-problem { color: var(--text-danger, var(--gp-ink)); overflow-wrap: anywhere; }
+.gp-agent p { margin: 0; overflow-wrap: anywhere; }
+.gp-agent h2 { text-transform: none; letter-spacing: 0.02em; }
+.gp-agent .gp-facts dd { font-family: inherit; }
+.gp-agent .gp-facts dd.gp-mono { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; }
+.gp-refused { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 10px 12px; border: 1px solid var(--gp-line);
+  border-radius: 4px; width: 100%; }
+.gp-label { color: var(--gp-muted); }
+.gp-steps { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; }
+.gp-steps ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.gp-copy { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.gp-code { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; user-select: all;
+  padding: 2px 6px; border: 1px solid var(--gp-line); border-radius: 4px; }
 `;
