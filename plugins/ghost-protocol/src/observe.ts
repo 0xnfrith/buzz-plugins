@@ -110,7 +110,7 @@ export async function observe(run: Runner, slug: string, before: Memory, now: nu
 }
 
 /**
- * The image the container was made from, as Docker prints it (`registry/ghost-protocol:1.2.3`), or undefined when it cannot be read.
+ * The image the container was made from, as Docker prints it (`registry/ghost-protocol:1.2.3@sha256:<64 hex>`, or without the digest for a container someone started by hand), or undefined when it cannot be read.
  * Resolves with `undefined` as well when the caller left first.
  */
 export async function imageOf(run: Runner, slug: string): Promise<string | undefined> {

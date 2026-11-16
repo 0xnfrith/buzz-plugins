@@ -528,10 +528,12 @@ test("Update shows the steps to update by hand, instead of the button, when the 
   const steps = agent(page).locator(".gp-steps");
   await expect(steps.getByText("This agent has no update helper, so update it by hand. Run these three commands, one after the other:")).toBeVisible();
   await expect(steps.locator("li code")).toHaveText([
-    "docker pull registry.example/ghost-protocol:0.1.1",
+    "docker pull registry.example/ghost-protocol:0.1.1@sha256:<digest of that version>",
     "docker rm -f gp-maple",
-    "docker run -d --name gp-maple --restart unless-stopped -v gp-maple-data:/data registry.example/ghost-protocol:0.1.1",
+    "docker run -d --name gp-maple --restart unless-stopped -v gp-maple-data:/data registry.example/ghost-protocol:0.1.1@sha256:<digest of that version>",
   ]);
+  // The image is pinned by digest, and the update's answer names only the version: the person is told where the digest goes.
+  await expect(steps.getByText("In steps 1 and 3, replace <digest of that version> with the sha256 digest of the new version's image.", { exact: false })).toBeVisible();
   await expect(steps.getByText("Your data and sign-ins live in the volume gp-maple-data, so nothing is lost between steps 2 and 3.")).toBeVisible();
   // Each step has its own copy button.
   await expect(steps.getByRole("button", { name: "Copy", exact: true })).toHaveCount(3);

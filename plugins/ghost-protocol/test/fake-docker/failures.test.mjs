@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { assertGpFailure, parseGp } from "./contract.mjs";
-import { IMAGE, createAgent, gp, gpInput, initArgs, pullArgs, runningAgent, startArgs, status, statusArgs, versionArgs, withFake } from "./support.mjs";
+import { BARE_TAG, IMAGE, createAgent, gp, gpInput, imageOfVersion, initArgs, literal, pullArgs, runningAgent, startArgs, status, statusArgs, versionArgs, withFake } from "./support.mjs";
 
 let fake;
 afterEach(() => fake?.cleanup());
@@ -127,7 +127,7 @@ describe("a pull that fails", () => {
   });
 
   for (const [preset, pattern] of [
-    ["pull-not-found", /^Error response from daemon: manifest for registry\.example\/ghost-protocol:0\.0\.0 not found: manifest unknown/],
+    ["pull-not-found", new RegExp(`^Error response from daemon: manifest for ${literal(IMAGE)} not found: manifest unknown`)],
     ["pull-unauthorized", /^Error response from daemon: pull access denied for registry\.example\/ghost-protocol, repository does not exist or may require 'docker login'/],
     ["pull-offline", /^Error response from daemon: Get "https:\/\/registry\.example\/v2\/": dial tcp: lookup registry\.example .* no such host/],
   ]) {
@@ -235,9 +235,18 @@ describe("a command the interface does not list is refused: exit 64, 'fake-docke
 
   const refused = [
     ["an image without a tag", pullArgs("registry.example/ghost-protocol")],
-    ["the tag latest", pullArgs("registry.example/ghost-protocol:latest")],
-    ["an image that is not ghost-protocol", pullArgs("registry.example/other:1.0.0")],
+    ["a bare tag, with no digest", pullArgs(BARE_TAG)],
+    ["a bare tag, in init", initArgs("maple", { image: BARE_TAG })],
+    ["a bare tag, in a start", startArgs("maple", BARE_TAG)],
+    ["the tag latest, even with a digest", pullArgs(imageOfVersion("latest"))],
+    ["an image that is not ghost-protocol", pullArgs(imageOfVersion("1.0.0").replace("/ghost-protocol:", "/other:"))],
     ["an image pinned by digest only", pullArgs("registry.example/ghost-protocol@sha256:" + "a".repeat(64))],
+    ["a digest of 63 hex digits", pullArgs(`${BARE_TAG}@sha256:${"a".repeat(63)}`)],
+    ["a digest of 65 hex digits", pullArgs(`${BARE_TAG}@sha256:${"a".repeat(65)}`)],
+    ["a digest in upper case", pullArgs(`${BARE_TAG}@sha256:${"A".repeat(64)}`)],
+    ["a digest that is not hex", pullArgs(`${BARE_TAG}@sha256:${"g".repeat(64)}`)],
+    ["a digest of another kind", pullArgs(`${BARE_TAG}@sha512:${"a".repeat(64)}`)],
+    ["something after the digest", pullArgs(`${IMAGE}:extra`)],
     ["more than one image", ["pull", IMAGE, IMAGE]],
     ["a volume that is not gp-<slug>-data:/data", initArgs("maple").map((arg) => (arg === "gp-maple-data:/data" ? "maple-data:/data" : arg))],
     ["init without --owner", initArgs().slice(0, -2)],

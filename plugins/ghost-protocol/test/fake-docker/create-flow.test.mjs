@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { HEX64, assertGpFailure, assertGpSuccess, parseGp } from "./contract.mjs";
 import { attestationTag, ownerKey } from "./index.mjs";
-import { IMAGE, OWNER, RELAY, attest, createAgent, gp, gpInput, initArgs, ok, pullArgs, startArgs, status, statusArgs, versionArgs, withFake } from "./support.mjs";
+import { DIGEST, IMAGE, OWNER, RELAY, attest, imageOfVersion, createAgent, gp, gpInput, initArgs, ok, pullArgs, startArgs, status, statusArgs, versionArgs, withFake } from "./support.mjs";
 
 let fake;
 beforeEach(() => {
@@ -35,9 +35,9 @@ describe("2. fetch", () => {
     const result = await fake.run(pullArgs());
     assert.equal(result.code, 0);
     const lines = result.stdout.trimEnd().split("\n");
-    assert.equal(lines[0], "0.0.0: Pulling from ghost-protocol");
+    assert.equal(lines[0], `sha256:${DIGEST}: Pulling from ghost-protocol`);
     assert.ok(lines.some((line) => /^[0-9a-f]{12}: Pull complete$/.test(line)));
-    assert.match(lines.find((line) => line.startsWith("Digest: ")), /^Digest: sha256:[0-9a-f]{64}$/);
+    assert.equal(lines.find((line) => line.startsWith("Digest: ")), `Digest: sha256:${DIGEST}`);
     assert.equal(lines.at(-2), `Status: Downloaded newer image for ${IMAGE}`);
     assert.equal(lines.at(-1), IMAGE);
     assert.deepEqual(parseGp(result.stdout).order, [], "docker's own output has no GP_ lines");
@@ -50,9 +50,18 @@ describe("2. fetch", () => {
   });
 
   test("the registry path in front of ghost-protocol can be longer", async () => {
-    const result = await fake.run(pullArgs("ghcr.io/example/ghost-protocol:1.2.3-rc.1"));
+    const result = await fake.run(pullArgs(imageOfVersion("1.2.3-rc.1", "ghcr.io/example")));
     assert.equal(result.code, 0);
-    assert.match(result.stdout, /^1\.2\.3-rc\.1: Pulling from example\/ghost-protocol\n/);
+    assert.match(result.stdout, /^sha256:[0-9a-f]{64}: Pulling from example\/ghost-protocol\n/);
+  });
+
+  test("the digest given is the digest that is pulled and printed, whatever it is", async () => {
+    const image = `registry.example/ghost-protocol:0.0.0@sha256:${"b".repeat(64)}`;
+    const result = await fake.run(pullArgs(image));
+    assert.equal(result.code, 0);
+    assert.match(result.stdout, new RegExp(`\nDigest: sha256:${"b".repeat(64)}\n`));
+    assert.equal(result.stdout.trimEnd().split("\n").at(-1), image);
+    assert.deepEqual(Object.keys(fake.state().images), [image]);
   });
 });
 
@@ -82,7 +91,7 @@ describe("3. provision", () => {
   });
 
   test("the version it prints follows the tag of the image given", async () => {
-    const { gp: out } = await ok(fake, initArgs("maple", { image: "registry.example/ghost-protocol:2.4.6" }));
+    const { gp: out } = await ok(fake, initArgs("maple", { image: imageOfVersion("2.4.6") }));
     assert.equal(out.values.VERSION, "2.4.6");
   });
 
@@ -93,7 +102,7 @@ describe("3. provision", () => {
 
   test("an image that is not pulled yet is pulled by `run`, and says so on stderr, as docker does", async () => {
     const result = await fake.run(initArgs());
-    assert.match(result.stderr, /^Unable to find image 'registry\.example\/ghost-protocol:0\.0\.0' locally\n/);
+    assert.ok(result.stderr.startsWith(`Unable to find image '${IMAGE}' locally\n`), result.stderr);
     assert.equal(result.code, 0);
   });
 });

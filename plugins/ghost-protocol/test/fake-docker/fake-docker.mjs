@@ -9,17 +9,17 @@
 // `GP_INTERFACE=<n>` first, `GP_<KEY>=<value>` lines for the plugin, lines for people between them, and a failure as a non-zero exit with
 // `GP_ERROR=<code>` and `GP_ERROR_MESSAGE=<one line>` on stdout.
 import { createHash } from "node:crypto";
+import { IMAGE, pinnedImage } from "./image.mjs";
 import { FAILURES, loadScenario } from "./scenario.mjs";
 import { finishCall, readState, startCall, withState } from "./store.mjs";
 
 const REFUSED = 64; // what the fake exits with when it refuses a command the interface does not list
 const SOCKET = "unix:///var/run/docker.sock";
 const FIXED_TIME = "2026-01-01T00:00:00.000000000Z"; // docker's timestamps, fixed so that two runs print the same text
-const IMAGE = /^(?<repository>[a-z0-9]+(?:[.-][a-z0-9]+)*(?::[0-9]+)?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*)\/ghost-protocol:(?<tag>[0-9A-Za-z][0-9A-Za-z._+-]*)$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 
-// The update helper: a second, long-lived container that swaps the agent's image. It runs the agent's own image and exact tag with a different
-// command, and the plugin starts it after the agent's container, only when the user said yes to self-update. GHOST Protocol has not fixed the
+// The update helper: a second, long-lived container that swaps the agent's image. It runs the agent's own image, exact tag and digest, with a
+// different command, and the plugin starts it after the agent's container, only when the user said yes to self-update. GHOST Protocol has not fixed the
 // command and its arguments: UPDATER_COMMAND is the one place to set them. While it is null, any command words are taken.
 const UPDATER_COMMAND = null;
 const DOCKER_SOCKET_MOUNT = "/var/run/docker.sock:/var/run/docker.sock";
@@ -114,7 +114,7 @@ const oneLine = (text) => !/[\r\n\0]/.test(text);
 function parseImage(reference) {
   const match = IMAGE.exec(reference ?? "");
   // The reference is not shown: a secret given in an image's place would be printed.
-  if (!match) throw new Refused("that is not <registry>/ghost-protocol:<exact version> (the interface pins an exact version tag)");
+  if (!match) throw new Refused("that is not <registry>/ghost-protocol:<exact version>@sha256:<64 hex digits> (the interface pins the image by version tag and digest)");
   if (match.groups.tag === "latest") throw new Refused("the image must carry an exact version, not latest");
   return { reference, name: "ghost-protocol", ...match.groups };
 }
@@ -327,11 +327,11 @@ function pullLines(image) {
   const layers = [1, 2].map((n) => sha256(`${image.reference}:${n}`).slice(0, 12));
   const path = [...image.repository.split("/").slice(1), image.name].join("/");
   return [
-    `${image.tag}: Pulling from ${path}`,
+    `sha256:${image.digest}: Pulling from ${path}`, // a pull by digest is announced by its digest, not by its tag
     ...layers.map((layer) => `${layer}: Pulling fs layer`),
     ...layers.map((layer) => `${layer}: Download complete`),
     ...layers.map((layer) => `${layer}: Pull complete`),
-    `Digest: sha256:${sha256(image.reference)}`,
+    `Digest: sha256:${image.digest}`,
   ];
 }
 
@@ -411,6 +411,7 @@ async function dockerRun(ctx) {
       running: true,
       connectingLeft: scenario.connectingPolls,
       previousVersion: null,
+      previousImage: null,
       update: null,
       transition: null,
     };
@@ -707,7 +708,10 @@ function advance(state, container, name, scenario) {
   container.previousVersion = t.kind === "update" ? t.from : null;
   container.update = t.kind === "update" ? { available: false, version: null } : { available: true, version: t.from };
   container.version = t.to;
-  container.image = container.image.replace(/:[^:/]+$/, `:${t.to}`); // the agent's container runs the new image; the helper keeps the one it was started with
+  // The agent's container runs the new image, or the one it ran before when it goes back; the helper keeps the one it was started with.
+  const before = container.image;
+  container.image = t.kind === "rollback" && container.previousImage ? container.previousImage : pinnedImage(IMAGE.exec(before).groups.repository, t.to);
+  container.previousImage = t.kind === "update" ? before : null;
   state.images[container.image] = { tag: t.to, name: "ghost-protocol" };
   container.transition = null;
   return "running";

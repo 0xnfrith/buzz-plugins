@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { assertStatusShape, parseGp } from "./contract.mjs";
 import { BIN_DIR, PRESET_NAMES, attestationTag, createFakeDocker } from "./index.mjs";
 import { STEPS } from "./scenario.mjs";
-import { OWNER, attest, createAgent, gp, gpInput, initArgs, runningAgent, startArgs, startHelperArgs, status, statusArgs, versionArgs, withFake } from "./support.mjs";
+import { IMAGE, OWNER, attest, createAgent, gp, gpInput, initArgs, runningAgent, startArgs, startHelperArgs, status, statusArgs, versionArgs, withFake } from "./support.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 let fake;
@@ -133,10 +133,10 @@ describe("the call log", () => {
     fake = withFake();
     await runningAgent(fake);
     const logged = (first) => fake.calls().find((call) => call.argv[0] === first && (first !== "run" || call.argv.includes("init"))).argv;
-    assert.deepEqual(logged("pull"), ["pull", "registry.example/ghost-protocol:0.0.0"]);
-    assert.deepEqual(logged("run"), ["run", "--rm", "-v", "gp-maple-data:/data", "registry.example/ghost-protocol:0.0.0", "init", "--name", "Maple", "--relay", "wss://relay.example.com", "--owner", OWNER]);
+    assert.deepEqual(logged("pull"), ["pull", IMAGE]);
+    assert.deepEqual(logged("run"), ["run", "--rm", "-v", "gp-maple-data:/data", IMAGE, "init", "--name", "Maple", "--relay", "wss://relay.example.com", "--owner", OWNER]);
     const helper = fake.calls().find((call) => call.argv.includes("gp-maple.updater") && call.argv[0] === "run").argv;
-    assert.deepEqual(helper, ["run", "-d", "--name", "gp-maple.updater", "--restart", "unless-stopped", "-v", "/var/run/docker.sock:/var/run/docker.sock", "registry.example/ghost-protocol:0.0.0", "<not logged>", "--target", "gp-maple"]);
+    assert.deepEqual(helper, ["run", "-d", "--name", "gp-maple.updater", "--restart", "unless-stopped", "-v", "/var/run/docker.sock:/var/run/docker.sock", IMAGE, "<not logged>", "--target", "gp-maple"]);
     assert.deepEqual(fake.calls().find((call) => call.argv[0] === "exec").argv, ["exec", "-i", "gp-maple", "gp", "auth-tag", "set"]);
   });
 
@@ -330,7 +330,7 @@ describe("what the fake needs", () => {
   });
 
   test("it imports nothing but node: modules and its own files", () => {
-    for (const name of ["fake-docker.mjs", "scenario.mjs", "store.mjs", "index.mjs", "contract.mjs"]) {
+    for (const name of ["fake-docker.mjs", "scenario.mjs", "store.mjs", "image.mjs", "index.mjs", "contract.mjs"]) {
       for (const [, specifier] of readFileSync(join(HERE, name), "utf8").matchAll(/^import .* from "([^"]+)";$/gm)) {
         assert.ok(specifier.startsWith("node:") || specifier.startsWith("./"), `${name} imports ${specifier}`);
       }

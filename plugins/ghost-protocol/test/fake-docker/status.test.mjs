@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { RELAYS, STATES, STATUS_KEYS, assertGpFailure, assertGpSuccess, assertStatusShape } from "./contract.mjs";
-import { RELAY, createAgent, attest, gp, gpInput, runningAgent, status, statusArgs, withFake } from "./support.mjs";
+import { RELAY, createAgent, attest, gp, gpInput, imageOfVersion, runningAgent, status, statusArgs, withFake } from "./support.mjs";
 
 let fake;
 afterEach(() => fake?.cleanup());
@@ -177,15 +177,16 @@ describe("update and way back", () => {
 
   test("the agent's container runs the new image after an update and the old one after a rollback; the helper keeps the one it was started with", async () => {
     const image = async (name) => (await fake.run(["inspect", "-f", "{{.Config.Image}}", name])).stdout.trim();
-    assert.equal(await image("gp-maple"), "registry.example/ghost-protocol:0.0.0");
+    assert.equal(await image("gp-maple"), imageOfVersion("0.0.0"));
     await fake.run(gp("maple", "update", "request"));
     await polls(3);
-    assert.equal(await image("gp-maple"), "registry.example/ghost-protocol:0.1.1");
-    assert.equal(await image("gp-maple.updater"), "registry.example/ghost-protocol:0.0.0");
-    assert.equal(fake.state().images["registry.example/ghost-protocol:0.1.1"].name, "ghost-protocol");
+    assert.equal(await image("gp-maple"), imageOfVersion("0.1.1"), "the new image has its own tag and its own digest");
+    assert.notEqual(imageOfVersion("0.1.1").split("@")[1], imageOfVersion("0.0.0").split("@")[1]);
+    assert.equal(await image("gp-maple.updater"), imageOfVersion("0.0.0"));
+    assert.equal(fake.state().images[imageOfVersion("0.1.1")].name, "ghost-protocol");
     await fake.run(gp("maple", "update", "rollback"));
     await polls(3);
-    assert.equal(await image("gp-maple"), "registry.example/ghost-protocol:0.0.0");
+    assert.equal(await image("gp-maple"), imageOfVersion("0.0.0"));
   });
 
   test("without an update, `request` is no-update-available; without a previous version, `rollback` is no-previous-version", async () => {
@@ -204,6 +205,25 @@ describe("update and way back", () => {
     assertGpFailure(await fake.run(gp("maple", "update", "request")), "update-failed");
     fake.tweak({ fail: { updateRequest: false, updateRollback: { code: "disk-full", message: "No room to go back." } } });
     assertGpFailure(await fake.run(gp("maple", "update", "rollback")), "disk-full");
+  });
+});
+
+describe("a roll back puts back the image the agent had, digest included", () => {
+  // A digest the fake did not make up, so that giving back a digest made up for the version would be a different image.
+  const started = `registry.example/ghost-protocol:0.0.0@sha256:${"b".repeat(64)}`;
+  const image = async (name) => (await fake.run(["inspect", "-f", "{{.Config.Image}}", name])).stdout.trim();
+
+  test("the update swaps to the new version's image, and the roll back goes back to the one the agent started with", async () => {
+    fake = withFake("update-available");
+    fake.seed({ image: started });
+    assert.equal(await image("gp-maple"), started);
+    await fake.run(gp("maple", "update", "request"));
+    await polls(3);
+    assert.equal(await image("gp-maple"), imageOfVersion("0.1.1"));
+    await fake.run(gp("maple", "update", "rollback"));
+    await polls(3);
+    assert.equal(await image("gp-maple"), started);
+    assert.equal(await image("gp-maple.updater"), started, "the helper kept the one it was started with throughout");
   });
 });
 

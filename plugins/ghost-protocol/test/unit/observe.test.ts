@@ -513,7 +513,9 @@ describe("what a button that was accepted does to what the screen knows", () => 
 describe("imageOf", () => {
   it("is the image the container was made from", async () => {
     const { run } = agent({}, { condition: "running", version: "0.0.5" });
-    expect(await imageOf(run, "maple")).toBe("registry.example/ghost-protocol:0.0.5");
+    const { imageOfVersion } = await import("../fake-docker/index.mjs");
+    expect(await imageOf(run, "maple")).toBe(imageOfVersion("0.0.5"));
+    expect(imageOfVersion("0.0.5")).toMatch(/^registry\.example\/ghost-protocol:0\.0\.5@sha256:[0-9a-f]{64}$/);
   });
 
   it("is nothing when the container is not there, or Docker is not", async () => {
@@ -524,6 +526,6 @@ describe("imageOf", () => {
   });
 
   it("is nothing when the call failed, whatever it printed", async () => {
-    for (const code of [1, 2, 125, null]) expect(await imageOf(scripted(exit(code, "registry.example/ghost-protocol:0.0.0\n")).run, "maple"), String(code)).toBeUndefined();
+    for (const code of [1, 2, 125, null]) expect(await imageOf(scripted(exit(code, `registry.example/ghost-protocol:0.0.0@sha256:${"a".repeat(64)}\n`)).run, "maple"), String(code)).toBeUndefined();
   });
 });

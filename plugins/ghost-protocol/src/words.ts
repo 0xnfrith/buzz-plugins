@@ -66,6 +66,7 @@ export const WORDS = {
   noPreviousVersion: "There is no earlier version to roll back to.",
   noUpdaterRollback: "This agent has no update helper, so it cannot roll back from here.",
   noUpdaterTitle: "This agent has no update helper, so update it by hand. Run these three commands, one after the other:",
+  noUpdaterDigest: "In steps 1 and 3, replace <digest of that version> with the sha256 digest of the new version's image. The image is pinned by digest, so a tag that is moved later cannot change what runs.",
   noUpdaterNote: (volume: string) => `Your data and sign-ins live in the volume ${volume}, so nothing is lost between steps 2 and 3.`,
   restarted: (container: string) => `Restarted ${container}.`,
   stoppedNow: (container: string) => `Stopped ${container}.`,

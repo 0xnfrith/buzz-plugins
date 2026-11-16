@@ -1,8 +1,14 @@
 // Shared by the fake's tests: the arguments of the commands as the note gives them, and the whole create flow.
-import { createFakeDocker, attestationTag, ownerKey } from "./index.mjs";
+import { createFakeDocker, attestationTag, imageOfVersion, ownerKey } from "./index.mjs";
 import { assertGpSuccess } from "./contract.mjs";
 
-export const IMAGE = "registry.example/ghost-protocol:0.0.0";
+// The one image of the interface, pinned: tag and digest. BARE_TAG is the same without the digest, which the fake refuses.
+export const IMAGE = imageOfVersion("0.0.0");
+export const DIGEST = IMAGE.slice(IMAGE.indexOf("@sha256:") + "@sha256:".length);
+export const BARE_TAG = IMAGE.slice(0, IMAGE.indexOf("@"));
+export { imageOfVersion };
+/** A string as a pattern that matches only itself. */
+export const literal = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 export const RELAY = "wss://relay.example.com";
 export const OWNER = ownerKey();
 

@@ -25,7 +25,7 @@ var manifest_default = {
 			{
 				"id": "pull",
 				"program": "docker",
-				"args": ["pull", "registry.invalid/ghost-protocol:0.0.0"]
+				"args": ["pull", "registry.invalid/ghost-protocol:0.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000"]
 			},
 			{
 				"id": "run-init",
@@ -302,6 +302,7 @@ var WORDS$1 = {
 	noPreviousVersion: "There is no earlier version to roll back to.",
 	noUpdaterRollback: "This agent has no update helper, so it cannot roll back from here.",
 	noUpdaterTitle: "This agent has no update helper, so update it by hand. Run these three commands, one after the other:",
+	noUpdaterDigest: "In steps 1 and 3, replace <digest of that version> with the sha256 digest of the new version's image. The image is pinned by digest, so a tag that is moved later cannot change what runs.",
 	noUpdaterNote: (volume) => `Your data and sign-ins live in the volume ${volume}, so nothing is lost between steps 2 and 3.`,
 	restarted: (container) => `Restarted ${container}.`,
 	stoppedNow: (container) => `Stopped ${container}.`,
@@ -315,15 +316,26 @@ var WORDS$1 = {
 };
 // src/gp/constants.ts
 /**
-* The agent's one image: `<registry>/ghost-protocol:<exact tag>`, as the `pull` process in manifest.json names it (that is the only place
-* it is written, so the review shows the image the plugin may pull and the code runs the same one). GHOST Protocol sends the registry
-* path and the first version with its first release candidate; until then the manifest holds a name that can never resolve (`.invalid` is
-* reserved for that), so Create ends at the pull with "Docker could not download GHOST Protocol" and never runs anything else.
+* The image's form: a registry (with a port, if it has one) and a path ending in `ghost-protocol`, a tag that is not `latest`, and a sha256
+* digest of 64 lower-case hex digits. A bare tag, a bare digest, a short or upper-case digest and anything after the digest are not it.
 */
-var IMAGE = (manifest_default.host.processes.find((process) => process.id === "pull")?.args ?? [])[1] ?? "";
+var PINNED_IMAGE = /^(?!.*\/ghost-protocol:latest@)[a-z0-9]+(?:[.-][a-z0-9]+)*(?::[0-9]+)?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*\/ghost-protocol:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}@sha256:[0-9a-f]{64}$/;
 /**
-* What the update helper runs, after the image and before `--target gp-<slug>`: the agent's own image with a different command. GP fixes
-* the command and its arguments in the interface note; this is a placeholder until it does.
+* The agent's one image, pinned: `<registry>/ghost-protocol:<exact tag>@sha256:<64 lower-case hex>`, as the `pull` process in manifest.json
+* names it (that is the only place it is written, so the review shows the image the plugin may pull and the code runs the same one). The
+* tag tells a person which version it is; the digest is what Docker checks, and a tag can be moved after it was tested where a digest
+* cannot. A bare tag and a bare digest are refused: the image is then an empty name, so the pull does not begin with the words the manifest
+* declares and Create stops before it runs anything. GHOST Protocol sends the registry path, the first version and its digest with its
+* first release; until then the manifest holds a placeholder (version 0.0.0, a digest of zeros) on a name that can never resolve
+* (`.invalid` is reserved for that), so Create ends at the pull with "Docker could not download GHOST Protocol".
+*/
+var IMAGE = pinnedOrNothing((manifest_default.host.processes.find((process) => process.id === "pull")?.args ?? [])[1]);
+function pinnedOrNothing(image) {
+	return image !== void 0 && PINNED_IMAGE.test(image) ? image : "";
+}
+/**
+* What the update helper runs, after the image and before `--target gp-<slug>`: the agent's own image with a different command, which
+* GHOST Protocol has fixed as `updater --target gp-<slug>`.
 */
 var UPDATER_COMMAND = ["updater"];
 var CLAUDE_LEADS = "token";
@@ -1876,7 +1888,7 @@ async function observe(run, slug, before, now) {
 	};
 }
 /**
-* The image the container was made from, as Docker prints it (`registry/ghost-protocol:1.2.3`), or undefined when it cannot be read.
+* The image the container was made from, as Docker prints it (`registry/ghost-protocol:1.2.3@sha256:<64 hex>`, or without the digest for a container someone started by hand), or undefined when it cannot be read.
 * Resolves with `undefined` as well when the caller left first.
 */
 async function imageOf(run, slug) {
@@ -1885,20 +1897,30 @@ async function imageOf(run, slug) {
 	const image = ran.stdout.trim();
 	return image === "" ? void 0 : image;
 }
+var DIGEST_PLACEHOLDER = "<digest of that version>";
 var NAME = /^[a-z0-9][a-z0-9._/:-]*$/;
 var TAG = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
-/** The image's name without its tag (`registry.example.com:5000/team/ghost-protocol` from `…/ghost-protocol:1.2.3`), when it is safe. */
+var DIGEST = /@sha256:[0-9a-f]{64}$/;
+/**
+* The image's name without its tag or its digest (`registry.example.com:5000/team/ghost-protocol` from
+* `…/ghost-protocol:1.2.3@sha256:<64 hex>`), when it is safe.
+*/
 function imageNameOf(image) {
 	if (image === void 0) return void 0;
-	const colon = image.lastIndexOf(":");
-	const name = colon > image.lastIndexOf("/") ? image.slice(0, colon) : image;
+	const pinned = image.replace(DIGEST, "");
+	const colon = pinned.lastIndexOf(":");
+	const name = colon > pinned.lastIndexOf("/") ? pinned.slice(0, colon) : pinned;
 	return NAME.test(name) ? name : void 0;
 }
 var versionIfSafe = (version) => version !== null && version !== void 0 && TAG.test(version) ? version : void 0;
-/** The three commands, in order: pull the new version, remove the container, start it again on the same data volume. */
+/**
+* The three commands, in order: pull the new version, remove the container, start it again on the same data volume. The image is pinned
+* by digest like the agent's own, but GHOST Protocol's answer to an update names only the new version, so its digest is shown as a
+* placeholder, for the person to fill in from what GHOST Protocol published for that version.
+*/
 function updateByHand(slug, image, newVersion) {
 	const container = containerOf(slug);
-	const reference = `${imageNameOf(image) ?? "<agent image>"}:${versionIfSafe(newVersion) ?? "<new version>"}`;
+	const reference = `${imageNameOf(image) ?? "<agent image>"}:${versionIfSafe(newVersion) ?? "<new version>"}@sha256:${DIGEST_PLACEHOLDER}`;
 	return [
 		`docker pull ${reference}`,
 		`docker rm -f ${container}`,
@@ -2047,7 +2069,7 @@ function createStatusScreen(host) {
 		}, /* @__PURE__ */ React.createElement("p", null, "Your relay does not accept owner attestations. Ask its admin to turn them on, or to add this agent as a relay member."), /* @__PURE__ */ React.createElement("p", { className: "gp-label" }, WORDS$1.publicKey), /* @__PURE__ */ React.createElement(CopyBlock, { text: status.agentPubkey })), (buttons.update || buttons.rollback || buttons.restart || buttons.stop) && /* @__PURE__ */ React.createElement("div", { className: "gp-buttons" }, buttons.update && button("update", WORDS$1.buttons.update), buttons.rollback && button("rollback", WORDS$1.buttons.rollback, status?.previousVersion === null), buttons.restart && button("restart", WORDS$1.buttons.restart), buttons.stop && button("stop", WORDS$1.buttons.stop)), busy && /* @__PURE__ */ React.createElement("p", { role: "status" }, WORDS$1.working), outcome && /* @__PURE__ */ React.createElement("p", {
 			className: outcome.tone === "problem" ? "gp-problem" : void 0,
 			role: outcome.tone === "problem" ? "alert" : "status"
-		}, outcome.text), byHand && status && /* @__PURE__ */ React.createElement("div", { className: "gp-steps" }, /* @__PURE__ */ React.createElement("p", null, WORDS$1.noUpdaterTitle), /* @__PURE__ */ React.createElement("ol", null, updateByHand(slug, byHand.image, status.update.version).map((step) => /* @__PURE__ */ React.createElement("li", { key: step }, /* @__PURE__ */ React.createElement(CopyBlock, { text: step })))), /* @__PURE__ */ React.createElement("p", { className: "gp-note" }, WORDS$1.noUpdaterNote(`${container}-data`))));
+		}, outcome.text), byHand && status && /* @__PURE__ */ React.createElement("div", { className: "gp-steps" }, /* @__PURE__ */ React.createElement("p", null, WORDS$1.noUpdaterTitle), /* @__PURE__ */ React.createElement("ol", null, updateByHand(slug, byHand.image, status.update.version).map((step) => /* @__PURE__ */ React.createElement("li", { key: step }, /* @__PURE__ */ React.createElement(CopyBlock, { text: step })))), /* @__PURE__ */ React.createElement("p", { className: "gp-note" }, WORDS$1.noUpdaterDigest), /* @__PURE__ */ React.createElement("p", { className: "gp-note" }, WORDS$1.noUpdaterNote(`${container}-data`))));
 	};
 }
 // src/ui/AgentTab.tsx

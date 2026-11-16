@@ -209,6 +209,7 @@ export function createStatusScreen(host: Host) {
                 </li>
               ))}
             </ol>
+            <p className="gp-note">{WORDS.noUpdaterDigest}</p>
             <p className="gp-note">{WORDS.noUpdaterNote(`${container}-data`)}</p>
           </div>
         )}
