@@ -423,7 +423,7 @@ for (const mode of ["dark", "light"]) {
   test(`${mode} theme: the message's own text stays at 4.5:1 or better on the highlight, in its worst frame, and on the card's plate`, async ({ page, app }) => {
     await arrange(page, app);
     await say(page, "read /brainstorming please");
-    await expect(tokens(page)).toHaveCount(1);
+    await shown(page, 1);
     await page.evaluate((value) => (document.documentElement.dataset.colorMode = value), mode);
     await token(page, "brainstorming").hover();
     await expect(card(page)).toBeVisible();
