@@ -1,7 +1,8 @@
 # The key-latency budget of the Vim mode plugin (plugins/vim/test/budget.spec.mjs): the time from a key press to the next
 # painted frame, on every surface, in headless Chromium against block/buzz-app's own production web build. A row fails its job
-# when its p99 is over 50 ms in all three attempts; the p95 target (16 ms) is reported in the job summary (the spec writes the
-# table to $GITHUB_STEP_SUMMARY), not enforced.
+# when it is over its limit in all three attempts: p99 over 50 ms or, for a known row (listed in budget.baseline.json), p95 over
+# max(50, its control's p95 + 30) or p50 over its control's p50 + 25; the p95 target (16 ms) is reported in the job summary (the
+# spec writes the table to $GITHUB_STEP_SUMMARY), not enforced.
 #
 # The tests are run in shards, one job per surface, so that one slow runner cannot fail the gate on its own and the wait is the
 # longest surface rather than the sum of them. The shards are told apart by the titles of the spec's tests (`--grep`), so the spec

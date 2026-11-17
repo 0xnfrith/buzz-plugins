@@ -4,8 +4,8 @@
 #   plugins/vim/test/budget.sh /path/to/block/buzz-app/checkout [playwright args]
 #
 # Installs the plugin in the checkout's fixture app the way perf.sh does, runs plugins/vim/test/budget.spec.mjs, and leaves the
-# table in BUDGET_OUT.md and BUDGET_OUT.json (default /tmp/vim-budget.md and .json). Exit status: non-zero when a row's p99 is
-# over 50 ms in every attempt. Settings come from BUDGET_* variables (see the head of the spec). BUDGET_PLUGIN=/path/plugin.js
+# table in BUDGET_OUT.md and BUDGET_OUT.json (default /tmp/vim-budget.md and .json). Exit status: non-zero when a row is over
+# its limit in every attempt (p99 over 50 ms; for a known row, p95 against its control: see the head of the spec). Settings come from BUDGET_* variables (see the head of the spec). BUDGET_PLUGIN=/path/plugin.js
 # measures another build of the plugin (the one on main, to compare with a branch). Nothing else may be running: the numbers
 # are milliseconds, and on a small machine another program (the app itself) is enough to double them.
 set -euo pipefail

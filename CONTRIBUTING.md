@@ -16,7 +16,7 @@ A key that the plugin handles must answer fast, in a channel with thousands of m
 
 | | Limit | What happens |
 | --- | --- | --- |
-| Gate | p99 ≤ 50 ms | The `Key latency budget` job fails the pull request. A row has to be over the limit in all three attempts to fail (a real regression repeats, a stall of the machine does not). |
+| Gate | p99 ≤ 50 ms. A row listed in `plugins/vim/test/budget.baseline.json` (its control is slow too) is read at p95: p95 ≤ max(50, its control's p95 + 30) ms and p50 ≤ its control's p50 + 25 ms | The `Key latency budget` job fails the pull request. A row has to be over the limit in all three attempts to fail (a real regression repeats, a stall of the machine does not). |
 | Target | p95 ≤ 16 ms (one frame) | Reported in the job summary, with the rows that are over it marked. It does not block. |
 
 Run the suite on your own machine before you push, with nothing else running (on a small machine another program is enough to double the numbers): `plugins/vim/test/budget.sh PATH_TO_BLOCK_BUZZ_APP_CHECKOUT`. Local numbers are for comparing your branch with `main` (`BUDGET_PLUGIN` measures another build of the plugin); the gate is the CI job's, on its own runner, and a local run can go red on rows that are green there. A new row must be valid: the suite fails a row whose presses do not move anything, or do not have the focus on the row's surface, because its numbers would say nothing about the key. If your change makes a key slower than it was, the table shows where the time went (`script`, `style`, `layout`, in milliseconds per press), and `BUDGET_TRACE=full` shows it per handler of the plugin.
