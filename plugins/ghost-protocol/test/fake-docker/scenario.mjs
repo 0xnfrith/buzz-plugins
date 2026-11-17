@@ -7,6 +7,7 @@
 // Every key is documented in README.md.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { digestOf, pinnedImage } from "./image.mjs";
 
 export const DEFAULTS = {
   docker: "ok", // ok | missing | daemon-down | permission-denied
@@ -19,7 +20,7 @@ export const DEFAULTS = {
   loginCode: null, // the code `gp claude login` wants; null accepts any non-empty line
   relay: "connected", // what the status says once the agent has tried to connect: connected | refused-not-member | unreachable
   connectingPolls: 1, // status calls that say `connecting` before `running`
-  update: { available: false, version: null }, // what the status says about an update
+  update: { available: false, version: null }, // what the status says about an update; with `image` and `digest` too, as GHOST Protocol gives them (note 15f)
   updateStartPolls: 0, // status calls that still say `running` after `gp update request` (the agent finishes its task first)
   updatingPolls: 2, // status calls that say `updating`
   updateGapPolls: 0, // status calls, during the update, for which gp-<slug> is not there (the helper swaps it): a number or "forever"
@@ -47,6 +48,9 @@ export const FAILURES = {
 
 const STATUS_ERROR = { code: "crashed", message: "The agent stopped unexpectedly." };
 
+// The update on offer in the presets: 0.1.1, pinned the way GHOST Protocol's release check does (note 15f) on the registry the seeded agents use.
+const PINNED_OFFER = { available: true, version: "0.1.1", image: pinnedImage("registry.example", "0.1.1"), digest: `sha256:${digestOf("registry.example", "0.1.1")}` };
+
 export const PRESETS = {
   ok: {},
   "docker-missing": { docker: "missing" },
@@ -63,6 +67,11 @@ export const PRESETS = {
   "relay-refuses": { relay: "refused-not-member" },
   "relay-unreachable": { relay: "unreachable" },
   "update-available": { update: { available: true, version: "0.1.1" } },
+  // The status's `update` with the image pinned by digest (note 15f), without `image` and `digest` (an older GHOST Protocol: the preset above),
+  // with both `null` (an offer made by hand in a test), and with an `image` that is not a pinned image of the version on offer.
+  "update-pinned": { update: PINNED_OFFER },
+  "update-image-null": { update: { available: true, version: "0.1.1", image: null, digest: null } },
+  "update-image-malformed": { update: { ...PINNED_OFFER, image: "registry.example/ghost-protocol:0.1.1" } },
   "update-gap": { update: { available: true, version: "0.1.1" }, updateGapPolls: 2 },
   "update-gap-stopped": { update: { available: true, version: "0.1.1" }, updateGapPolls: 2, updateGapKind: "stopped" },
   "update-never-returns": { update: { available: true, version: "0.1.1" }, updateGapPolls: "forever" },
@@ -142,9 +151,11 @@ function validate(scenario) {
   if (scenario.updateGapPolls !== "forever" && !count(scenario.updateGapPolls)) bad("updateGapPolls", 'a whole number, 0 or more, or "forever"', scenario.updateGapPolls);
 
   const update = scenario.update;
-  if (!isObject(update) || Object.keys(update).some((key) => !["available", "version"].includes(key))) bad("update", "{ available, version }", update);
+  if (!isObject(update) || Object.keys(update).some((key) => !["available", "version", "image", "digest"].includes(key))) bad("update", "{ available, version, image?, digest? }", update);
   if (typeof update.available !== "boolean") bad("update.available", "true or false", update.available);
   if (update.version !== null && !text(update.version)) bad("update.version", "a version, or null", update.version);
+  // `image` and `digest` are what the status prints, whatever they are: a test gives a malformed one on purpose. Left out, the status has no such key.
+  for (const key of ["image", "digest"]) if (Object.hasOwn(update, key) && update[key] !== null && !text(update[key])) bad(`update.${key}`, "a non-empty string, or null", update[key]);
 
   if (scenario.statusOverride !== null && !isObject(scenario.statusOverride)) bad("statusOverride", "an object, or null", scenario.statusOverride);
 

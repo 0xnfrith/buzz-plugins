@@ -2,6 +2,7 @@
 // written over several lines, so all of stdout is parsed. Its `interface` field carries the number of the interface it speaks; this
 // plugin knows one. A `GP_<KEY>=<value>` line before or after the object (the first line, `GP_INTERFACE=1`, of GHOST Protocol's other
 // commands, if it ever prints it here) is not part of it: no line of a JSON object begins that way.
+import { PINNED_IMAGE } from "./gp/constants";
 
 /** The interface number this plugin was written for. */
 export const INTERFACE = 1;
@@ -15,6 +16,17 @@ export type Relay = (typeof RELAYS)[number];
 export const CLAUDES = ["active", "not-active"] as const;
 export type Claude = (typeof CLAUDES)[number];
 
+/**
+ * What `update.image` of the status is worth (GHOST Protocol's interface, note 15f). With an update on offer GHOST Protocol gives the image
+ * of that version pinned by digest, `<registry>/ghost-protocol:<version>@sha256:<64 hex>`, and `digest` (`sha256:<64 hex>`).
+ * - `pinned`: it is that, for the version on offer, and the same digest as `update.digest`. Nothing else is `pinned`.
+ * - `none`: the keys are not there (an older GHOST Protocol, or nothing on offer), or are `null` (an offer made by hand in a test).
+ * - `refused`: there is an `image` that is not a pinned image for the version on offer. The plugin shows no command for it.
+ */
+export type UpdateImage = Readonly<{ kind: "pinned"; image: string }> | Readonly<{ kind: "none" }> | Readonly<{ kind: "refused" }>;
+
+export const NO_UPDATE_IMAGE: UpdateImage = { kind: "none" };
+
 export type Status = Readonly<{
   state: State;
   version: string;
@@ -23,7 +35,7 @@ export type Status = Readonly<{
   relayUrl: string;
   relay: Relay;
   claude: Claude;
-  update: Readonly<{ available: boolean; version: string | null }>;
+  update: Readonly<{ available: boolean; version: string | null; image: UpdateImage }>;
   previousVersion: string | null;
   error: Readonly<{ code: string; message: string }> | null;
 }>;
@@ -42,6 +54,22 @@ const isObject = (value: unknown): value is Record<string, unknown> => typeof va
 const isOneOf = <T extends string>(list: readonly T[], value: unknown): value is T => typeof value === "string" && (list as readonly string[]).includes(value);
 const isText = (value: unknown): value is string => typeof value === "string" && value !== "";
 const isTextOrNull = (value: unknown): value is string | null => value === null || typeof value === "string";
+
+/**
+ * `image` and `digest` of the status's `update`, as they were printed (`undefined` when the key is not there). The rule is the one the
+ * agent's own image has (`PINNED_IMAGE`): a registry, a path ending in `ghost-protocol`, a tag that is not `latest`, and a sha256 digest of 64
+ * lower-case hex digits, alone. On top of it, the same two checks GHOST Protocol makes before it names an image: the tag is the version on
+ * offer, and the digest is the one in `digest`. Without them the steps would pull another version than the screen says is on offer.
+ */
+export function updateImageOf(version: string | null, image: unknown, digest: unknown): UpdateImage {
+  if (image === undefined || image === null) return NO_UPDATE_IMAGE;
+  if (typeof image !== "string" || !PINNED_IMAGE.test(image) || version === null) return { kind: "refused" };
+  const at = image.lastIndexOf("@");
+  const reference = image.slice(0, at);
+  if (reference.slice(reference.lastIndexOf(":") + 1) !== version) return { kind: "refused" };
+  if (digest !== undefined && digest !== null && digest !== image.slice(at + 1)) return { kind: "refused" };
+  return { kind: "pinned", image };
+}
 
 /** Reads the whole of stdout as a status. */
 export function readStatus(stdout: string): StatusRead {
@@ -68,7 +96,7 @@ export function readStatus(stdout: string): StatusRead {
       relayUrl,
       relay,
       claude,
-      update: { available: update.available, version: update.version },
+      update: { available: update.available, version: update.version, image: updateImageOf(update.version, update.image, update.digest) },
       previousVersion,
       error: error === null ? null : { code: error.code as string, message: error.message as string },
     },

@@ -694,6 +694,29 @@ async function gpClaude(ctx, name, action) {
   return 0;
 }
 
+/**
+ * The scenario's update on offer as the status prints it: `image` and `digest` only when the scenario has the keys (an older GHOST Protocol
+ * has none). The version the container already runs is not on offer, as GHOST Protocol has it (an agent started by hand on the new image).
+ */
+function offerOf({ available, version, ...pins }, current) {
+  if (available && version === current) return { available: false, version: null };
+  return { available, version, ...("image" in pins && { image: pins.image }), ...("digest" in pins && { digest: pins.digest }) };
+}
+
+/** The offer after a way back: `version`, the one it left, with the image it ran as `before`, pinned, when the scenario's GHOST Protocol gives images. */
+function offerAfterRollback(scenario, version, before) {
+  const offer = { available: true, version };
+  if (!("image" in scenario.update)) return offer;
+  if (scenario.update.image === null) return { ...offer, image: null, digest: null };
+  return { ...offer, image: before, digest: `sha256:${IMAGE.exec(before).groups.digest}` };
+}
+
+/** The image an update to `version` runs: the one the offer named when it is a pinned image of that version, else none (the fake makes one up). */
+function offeredImage(update) {
+  const match = typeof update.image === "string" ? IMAGE.exec(update.image) : null;
+  return match && match.groups.tag === update.version && update.digest === `sha256:${match.groups.digest}` ? update.image : undefined;
+}
+
 /** One status call moves an update on by one step: the answers `running`, `updating`, then the swap is over. */
 function advance(state, container, name, scenario) {
   const t = container.transition;
@@ -706,11 +729,14 @@ function advance(state, container, name, scenario) {
     return "updating";
   }
   container.previousVersion = t.kind === "update" ? t.from : null;
-  container.update = t.kind === "update" ? { available: false, version: null } : { available: true, version: t.from };
   container.version = t.to;
-  // The agent's container runs the new image, or the one it ran before when it goes back; the helper keeps the one it was started with.
+  // The agent's container runs the new image (the one the offer named, when it was pinned for that version), or the one it ran before when
+  // it goes back; the helper keeps the one it was started with.
   const before = container.image;
-  container.image = t.kind === "rollback" && container.previousImage ? container.previousImage : pinnedImage(IMAGE.exec(before).groups.repository, t.to);
+  // After an update nothing is on offer: no `image` or `digest` keys (note 15f.1). After a way back the version it left is on offer again,
+  // pinned as before (15f.2) when the scenario's GHOST Protocol gives images: the image the container ran, which is that version's.
+  container.update = t.kind === "update" ? { available: false, version: null } : offerAfterRollback(scenario, t.from, before);
+  container.image = t.kind === "rollback" && container.previousImage ? container.previousImage : t.image ?? pinnedImage(IMAGE.exec(before).groups.repository, t.to);
   container.previousImage = t.kind === "update" ? before : null;
   state.images[container.image] = { tag: t.to, name: "ghost-protocol" };
   container.transition = null;
@@ -737,7 +763,7 @@ function statusOf(state, container, name, scenario) {
     relay_url: volume.relay,
     relay: tried ? scenario.relay : "unreachable",
     claude: volume.claude,
-    update: container.update ?? { available: scenario.update.available, version: scenario.update.version },
+    update: container.update ?? offerOf(scenario.update, container.version),
     previous_version: container.previousVersion ?? null,
     error: null,
   };
@@ -777,7 +803,7 @@ function gpUpdate(ctx, name, action) {
     if (action === "request") {
       const update = container.update ?? scenario.update;
       if (!update.available) throw new GpError("no-update-available", "There is no update to install.");
-      container.transition = { ...t, kind: "update", to: update.version };
+      container.transition = { ...t, kind: "update", to: update.version, image: offeredImage(update) };
     } else {
       if (!container.previousVersion) throw new GpError("no-previous-version", "There is no earlier version to go back to.");
       container.transition = { ...t, kind: "rollback", to: container.previousVersion };

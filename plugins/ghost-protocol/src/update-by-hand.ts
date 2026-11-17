@@ -1,7 +1,11 @@
 // The steps for updating an agent by hand, shown instead of the Update button when `gp update request` answers `no-updater`: the agent
-// has no update helper, because its user said no to self-update at install. The wording is provisional: GHOST Protocol's side fixes the
-// final text, and this file is the one place it lives.
+// has no update helper, because its user said no to self-update at install. This file is the one place the commands live.
+//
+// With an update on offer, GHOST Protocol gives the new version's image pinned by digest (`update.image`, note 15f), and the pull and the run
+// use it whole. When it gives none (an older GHOST Protocol, or an offer made by hand in a test), the steps are the tag-only ones with the
+// digest left as a placeholder. When it gives an image that is not a pinned one, there are no steps: a command made from it would be a bad one.
 import { containerOf } from "./commands";
+import type { UpdateImage } from "./status";
 
 /** Shown where the real value is not known. */
 export const IMAGE_PLACEHOLDER = "<agent image>";
@@ -32,17 +36,40 @@ export function imageNameOf(image: string | undefined): string | undefined {
 export const versionIfSafe = (version: string | null | undefined): string | undefined =>
   version !== null && version !== undefined && TAG.test(version) ? version : undefined;
 
-/**
- * The three commands, in order: pull the new version, remove the container, start it again on the same data volume. The image is pinned
- * by digest like the agent's own, but GHOST Protocol's answer to an update names only the new version, so its digest is shown as a
- * placeholder, for the person to fill in from what GHOST Protocol published for that version.
- */
-export function updateByHand(slug: string, image: string | undefined, newVersion: string | null | undefined): readonly string[] {
+/** The three commands, in order: pull the new version, remove the container, start it again on the same data volume. */
+const commands = (slug: string, reference: string): readonly string[] => {
   const container = containerOf(slug);
-  const reference = `${imageNameOf(image) ?? IMAGE_PLACEHOLDER}:${versionIfSafe(newVersion) ?? VERSION_PLACEHOLDER}@sha256:${DIGEST_PLACEHOLDER}`;
   return [
     `docker pull ${reference}`,
     `docker rm -f ${container}`,
     `docker run -d --name ${container} --restart unless-stopped -v ${container}-data:/data ${reference}`,
   ];
+};
+
+/** What the steps for an update by hand are, for the update on offer. */
+export type ByHand =
+  /** The image GHOST Protocol named, whole, in the pull and the run. */
+  | Readonly<{ kind: "pinned"; steps: readonly string[] }>
+  /** GHOST Protocol named no image: the container's image name and the new version, and a placeholder for the digest. */
+  | Readonly<{ kind: "placeholder"; steps: readonly string[] }>
+  /** GHOST Protocol named an image that is not pinned for this version: no commands. */
+  | Readonly<{ kind: "refused" }>;
+
+/**
+ * The steps for the update on offer (`version` and `image` of the status's `update`). `containerImage` is the image the container was made
+ * from, read only for the placeholder steps. Where it or the version is not known the placeholder steps show a placeholder for it.
+ */
+export function updateByHand(slug: string, containerImage: string | undefined, offer: Readonly<{ version: string | null; image: UpdateImage }>): ByHand {
+  if (offer.image.kind === "pinned") return { kind: "pinned", steps: commands(slug, offer.image.image) };
+  if (offer.image.kind === "refused") return { kind: "refused" };
+  // The image is pinned by digest like the agent's own, but this GHOST Protocol named only the new version, so the digest of that version is
+  // a placeholder, for the person to fill in from what GHOST Protocol published for it.
+  const reference = `${imageNameOf(containerImage) ?? IMAGE_PLACEHOLDER}:${versionIfSafe(offer.version) ?? VERSION_PLACEHOLDER}@sha256:${DIGEST_PLACEHOLDER}`;
+  return { kind: "placeholder", steps: commands(slug, reference) };
+}
+
+/** Whether two offers are the same update: the same version, and the same image (or none, or a refused one). */
+export function sameOffer(a: Readonly<{ version: string | null; image: UpdateImage }>, b: Readonly<{ version: string | null; image: UpdateImage }>): boolean {
+  if (a.version !== b.version || a.image.kind !== b.image.kind) return false;
+  return a.image.kind !== "pinned" || (b.image.kind === "pinned" && a.image.image === b.image.image);
 }

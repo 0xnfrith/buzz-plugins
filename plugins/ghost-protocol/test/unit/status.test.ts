@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { gpLines, readStatus, CLAUDES, RELAYS, STATES, INTERFACE } from "../../src/status";
+import { gpLines, readStatus, updateImageOf, CLAUDES, RELAYS, STATES, INTERFACE } from "../../src/status";
 import { makeFake, type FakeDocker } from "./support/fake-host";
 // @ts-expect-error plain JavaScript, with its own types that the plugin's type check does not include
-import { attestationTag } from "../fake-docker/index.mjs";
+import { attestationTag, imageOfVersion } from "../fake-docker/index.mjs";
 
 const KEY = "a".repeat(64);
 // The shape of GHOST Protocol's own example of a status, whole.
@@ -41,7 +41,7 @@ describe("readStatus", () => {
         relayUrl: "wss://relay.example.com",
         relay: "connected",
         claude: "active",
-        update: { available: false, version: null },
+        update: { available: false, version: null, image: { kind: "none" } },
         previousVersion: null,
         error: null,
       },
@@ -140,6 +140,104 @@ describe("readStatus", () => {
   });
 });
 
+// Note 15f: with an update on offer, `update` also carries `image`, that version pinned by digest, and `digest`.
+describe("readStatus, on the image of the update on offer", () => {
+  const HEX = "ab".repeat(32);
+  const PINNED = `registry.example/ghost-protocol:0.1.1@sha256:${HEX}`;
+  const offer = (more: Record<string, unknown>) => ({ available: true, version: "0.1.1", ...more });
+  const imageOf = (update: Record<string, unknown>) => {
+    const read = readStatus(json({ update }));
+    if (read.kind !== "status") throw new Error(`the status was not read: ${read.kind}`);
+    return read.status.update.image;
+  };
+
+  it("is pinned for the image GHOST Protocol names, with its digest, whole", () => {
+    expect(imageOf(offer({ image: PINNED, digest: `sha256:${HEX}` }))).toEqual({ kind: "pinned", image: PINNED });
+    // The digest field may be left out of an image that is pinned all the same.
+    expect(imageOf(offer({ image: PINNED }))).toEqual({ kind: "pinned", image: PINNED });
+    expect(imageOf(offer({ image: PINNED, digest: null }))).toEqual({ kind: "pinned", image: PINNED });
+  });
+
+  it("takes a registry with a port and a path, and a tag with a dot, a dash and an underscore", () => {
+    const image = `registry.example:5000/team/sub-team/ghost-protocol:1.0.0-rc_1@sha256:${HEX}`;
+    expect(imageOf({ available: true, version: "1.0.0-rc_1", image, digest: `sha256:${HEX}` })).toEqual({ kind: "pinned", image });
+  });
+
+  it("is none where GHOST Protocol names no image: the keys are not there, or null (an older one, or an offer made by hand in a test)", () => {
+    expect(imageOf({ available: true, version: "0.1.1" })).toEqual({ kind: "none" });
+    expect(imageOf(offer({ image: null, digest: null }))).toEqual({ kind: "none" });
+    expect(imageOf(offer({ image: null }))).toEqual({ kind: "none" });
+    expect(imageOf({ available: false, version: null })).toEqual({ kind: "none" });
+  });
+
+  it("is refused for an image that is not the pinned form, whatever it is", () => {
+    const bad = [
+      "registry.example/ghost-protocol:0.1.1",
+      "registry.example/ghost-protocol",
+      `registry.example/ghost-protocol@sha256:${HEX}`,
+      `registry.example/ghost-protocol:latest@sha256:${HEX}`,
+      `registry.example/ghost-protocol:0.1.1@sha256:${HEX.slice(1)}`,
+      `registry.example/ghost-protocol:0.1.1@sha256:${HEX}a`,
+      `registry.example/ghost-protocol:0.1.1@sha256:${HEX.toUpperCase()}`,
+      `registry.example/ghost-protocol:0.1.1@sha256:${"g".repeat(64)}`,
+      `registry.example/ghost-protocol:0.1.1@sha512:${HEX}`,
+      `registry.example/ghost-protocol:0.1.1@${HEX}`,
+      `${PINNED} `,
+      ` ${PINNED}`,
+      `${PINNED}\n`,
+      `${PINNED};rm -rf ~`,
+      `${PINNED} && echo hi`,
+      `${PINNED}@sha256:${HEX}`,
+      `registry.example/ghost-protocol:0.1.1@sha256:${HEX}\nregistry.example/ghost-protocol:0.1.1@sha256:${HEX}`,
+      "$(whoami)/ghost-protocol:0.1.1@sha256:" + HEX,
+      "`id`/ghost-protocol:0.1.1@sha256:" + HEX,
+      "reg/Ghost-Protocol:0.1.1@sha256:" + HEX,
+      "registry.example/other:0.1.1@sha256:" + HEX,
+      "-evil/ghost-protocol:0.1.1@sha256:" + HEX,
+      "registry.example/ghost-protocol:0.1.1|x@sha256:" + HEX,
+      "",
+      "not an image",
+    ];
+    for (const image of bad) expect(imageOf(offer({ image, digest: `sha256:${HEX}` })), JSON.stringify(image)).toEqual({ kind: "refused" });
+    // With the digest field the very text the image ends in, so that the check of the digest field cannot be what refuses it, nor with no digest field at all.
+    for (const image of bad) {
+      const digest = image.includes("@") ? image.slice(image.lastIndexOf("@") + 1) : undefined;
+      expect(imageOf(offer({ image, digest })), `${JSON.stringify(image)} with its own digest`).toEqual({ kind: "refused" });
+      expect(imageOf(offer({ image })), `${JSON.stringify(image)} without a digest`).toEqual({ kind: "refused" });
+    }
+  });
+
+  it("is refused for an image of another version than the one on offer, or when no version is on offer", () => {
+    expect(imageOf(offer({ image: PINNED.replace(":0.1.1@", ":0.1.2@"), digest: `sha256:${HEX}` }))).toEqual({ kind: "refused" });
+    expect(imageOf(offer({ image: PINNED.replace(":0.1.1@", ":0.1.10@"), digest: `sha256:${HEX}` }))).toEqual({ kind: "refused" });
+    expect(imageOf(offer({ version: "0.1", image: PINNED, digest: `sha256:${HEX}` }))).toEqual({ kind: "refused" });
+    expect(imageOf(offer({ version: null, image: PINNED, digest: `sha256:${HEX}` }))).toEqual({ kind: "refused" });
+    expect(imageOf({ available: false, version: null, image: PINNED })).toEqual({ kind: "refused" });
+  });
+
+  it("is refused when the digest field is not the digest of the image, or is not a string or null", () => {
+    expect(imageOf(offer({ image: PINNED, digest: `sha256:${"cd".repeat(32)}` }))).toEqual({ kind: "refused" });
+    expect(imageOf(offer({ image: PINNED, digest: HEX }))).toEqual({ kind: "refused" });
+    expect(imageOf(offer({ image: PINNED, digest: "" }))).toEqual({ kind: "refused" });
+    for (const digest of [5, true, {}, [`sha256:${HEX}`]]) expect(imageOf(offer({ image: PINNED, digest })), JSON.stringify(digest)).toEqual({ kind: "refused" });
+  });
+
+  it("is refused for an image that is not a string", () => {
+    for (const image of [5, true, {}, [PINNED], { image: PINNED }]) expect(imageOf(offer({ image, digest: `sha256:${HEX}` })), JSON.stringify(image)).toEqual({ kind: "refused" });
+  });
+
+  it("never makes the status unreadable: the state and the rest are read all the same", () => {
+    const read = readStatus(json({ update: offer({ image: "not an image", digest: 5 }), state: "running", previous_version: "0.0.9" }));
+    expect(read).toMatchObject({ kind: "status", status: { state: "running", update: { available: true, version: "0.1.1", image: { kind: "refused" } }, previousVersion: "0.0.9" } });
+  });
+
+  it("is the one rule of updateImageOf", () => {
+    expect(updateImageOf("0.1.1", PINNED, `sha256:${HEX}`)).toEqual({ kind: "pinned", image: PINNED });
+    expect(updateImageOf("0.1.1", undefined, undefined)).toEqual({ kind: "none" });
+    expect(updateImageOf("0.1.1", "x", undefined)).toEqual({ kind: "refused" });
+  });
+});
+
 describe("readStatus, on what the fake docker prints", () => {
   it("reads every state of a new agent as it walks to running", async () => {
     const fake = fakeWith({});
@@ -177,10 +275,25 @@ describe("readStatus, on what the fake docker prints", () => {
   it("reads an update on offer, and an unknown interface number", async () => {
     const offer = fakeWith("update-available");
     offer.seed({ condition: "running" });
-    expect(readStatus(await statusFrom(offer))).toMatchObject({ kind: "status", status: { update: { available: true, version: "0.1.1" } } });
+    expect(readStatus(await statusFrom(offer))).toMatchObject({ kind: "status", status: { update: { available: true, version: "0.1.1", image: { kind: "none" } } } });
     const other = fakeWith("unknown-interface");
     other.seed({ condition: "running" });
     expect(readStatus(await statusFrom(other))).toEqual({ kind: "other-interface" });
+  });
+
+  it("reads the update image of each preset: pinned, none for a GHOST Protocol that names none or null, refused for a bare tag", async () => {
+    const imageOfPreset = async (scenario: unknown) => {
+      const fake = fakeWith(scenario);
+      fake.seed({ condition: "running" });
+      const read = readStatus(await statusFrom(fake));
+      if (read.kind !== "status") throw new Error(read.kind);
+      return read.status.update.image;
+    };
+    expect(await imageOfPreset("update-pinned")).toEqual({ kind: "pinned", image: imageOfVersion("0.1.1") });
+    expect(await imageOfPreset("update-available")).toEqual({ kind: "none" });
+    expect(await imageOfPreset("update-image-null")).toEqual({ kind: "none" });
+    expect(await imageOfPreset("update-image-malformed")).toEqual({ kind: "refused" });
+    expect(await imageOfPreset({})).toEqual({ kind: "none" });
   });
 
   it("reads the status however the fake prints it: over several lines, on one, or after GP_INTERFACE", async () => {

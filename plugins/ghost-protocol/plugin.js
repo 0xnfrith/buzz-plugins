@@ -303,6 +303,10 @@ var WORDS$1 = {
 	noUpdaterRollback: "This agent has no update helper, so it cannot roll back from here.",
 	noUpdaterTitle: "This agent has no update helper, so update it by hand. Run these three commands, one after the other:",
 	noUpdaterDigest: "Before you run anything, replace <digest of that version> in steps 1 and 3 with the sha256 digest of the new version's image: the image is pinned by digest, so a tag that is moved later cannot change what runs. Step 1 does not run until you have. Run step 2 only once step 1 has pulled the image without an error, because step 2 removes the container.",
+	noUpdaterPinned: "The image is pinned by digest, so a tag that is moved later cannot change what runs. Run step 2 only once step 1 has pulled the image without an error, because step 2 removes the container.",
+	noUpdaterRefusedTitle: "This agent has no update helper, so update it by hand.",
+	noUpdaterRefused: "GHOST Protocol named an image for this update that is not pinned by digest, so this plugin shows no commands for it. Nothing was run.",
+	noUpdaterChanged: "The update on offer has changed since these steps were shown. They are still for the earlier one: leave this screen and open it again to see the new one.",
 	noUpdaterNote: (volume) => `Your data and sign-ins live in the volume ${volume}, so nothing is lost between steps 2 and 3.`,
 	restarted: (container) => `Restarted ${container}.`,
 	stoppedNow: (container) => `Stopped ${container}.`,
@@ -483,7 +487,7 @@ function pinned() {
 	if (IMAGE === "") throw new Error("the agent's image is not pinned by tag and digest");
 	return IMAGE;
 }
-var commands = {
+var commands$1 = {
 	/** The agent's image. */
 	pull: () => make(PROCESS.pull, "pull", pinned()),
 	/** Makes the agent's key in its data volume and prints its public key. The same volume gives the same key. */
@@ -719,7 +723,7 @@ function saidBy(gp, secrets) {
 }
 /** Whether the agent has a Claude sign-in: `gp claude status`. */
 async function isSignedIn(claude, slug, signal) {
-	const outcome = await run(claude.start, commands.claudeStatus(slug), {
+	const outcome = await run(claude.start, commands$1.claudeStatus(slug), {
 		timeoutMs: LIMITS.quick,
 		signal
 	});
@@ -745,7 +749,7 @@ async function isSignedIn(claude, slug, signal) {
 async function signInWithToken(claude, slug, token, signal) {
 	const text = token.trim();
 	if (text === "" || /\s/.test(text)) return fail("Paste a Claude setup token first (run claude setup-token in a terminal).");
-	const outcome = await run(claude.start, commands.claudeToken(slug), {
+	const outcome = await run(claude.start, commands$1.claudeToken(slug), {
 		stdin: `${text}\n`,
 		timeoutMs: LIMITS.quick,
 		signal
@@ -786,7 +790,7 @@ async function signInByAddress(claude, slug, askCode, signal) {
 		badAddress = true;
 		await (await running).kill();
 	};
-	const started = await startRun(claude.start, commands.claudeLogin(slug), {
+	const started = await startRun(claude.start, commands$1.claudeLogin(slug), {
 		signal,
 		timeoutMs: LIMITS.login,
 		onLine(line) {
@@ -840,7 +844,7 @@ function checkInterface(d, step, exit) {
 }
 /** Whether a container is there, and running. docker's "no such object" is its answer for a missing one, in whatever case it writes it. */
 async function whereIs(d, step, container, signal) {
-	const exit = await docker(d, step, commands.state(container), signal, { timeoutMs: LIMITS.quick });
+	const exit = await docker(d, step, commands$1.state(container), signal, { timeoutMs: LIMITS.quick });
 	if (exit.code === 0) {
 		const status = exit.stdout.trim().toLowerCase();
 		return status === "running" || status === "restarting" ? "running" : "stopped";
@@ -855,7 +859,7 @@ async function ensureRunning(d, step, container, create, what, signal) {
 		d.progress.set(step, "done", "Already running");
 		return;
 	}
-	const exit = await docker(d, step, where === "missing" ? create : commands.restart(container), signal, { timeoutMs: LIMITS.start });
+	const exit = await docker(d, step, where === "missing" ? create : commands$1.restart(container), signal, { timeoutMs: LIMITS.start });
 	if (exit.code !== 0) {
 		const why = lastLine(exit.stderr);
 		stop(d, step, `Docker could not start ${what}${why === "" ? "." : `: ${why}`}`);
@@ -875,7 +879,7 @@ async function provision(d, input) {
 	if (checked.state !== "ready") stop(d, "docker", checked.state === "unsupported" ? WORDS$2.unsupported : WORDS.docker);
 	d.progress.set("docker", "done", `Docker ${checked.version}`);
 	d.progress.set("pull", "running");
-	const pulled = await docker(d, "pull", commands.pull(), signal, {
+	const pulled = await docker(d, "pull", commands$1.pull(), signal, {
 		timeoutMs: LIMITS.pull,
 		onLine: (line) => d.progress.set("pull", "running", line.length > 120 ? `${line.slice(0, 119)}…` : line)
 	});
@@ -886,7 +890,7 @@ async function provision(d, input) {
 	d.progress.set("pull", "done");
 	d.progress.set("init", "running");
 	if (await whereIs(d, "init", containerOf(slug), signal) !== "missing") stop(d, "init", `A GHOST Protocol agent with the name "${containerOf(slug)}" is already on this computer. Choose another name, or remove it with: docker rm -f ${containerOf(slug)}`);
-	const made = await docker(d, "init", commands.init(slug, nameForInit(name, slug), community, owner), signal, { timeoutMs: LIMITS.init });
+	const made = await docker(d, "init", commands$1.init(slug, nameForInit(name, slug), community, owner), signal, { timeoutMs: LIMITS.init });
 	checkInterface(d, "init", made);
 	const pubkey = made.gp.values.get("AGENT_PUBKEY");
 	if (made.code !== 0 || made.gp.error) {
@@ -907,14 +911,14 @@ async function activate(d, input) {
 	if (slug === void 0) throw new CreateError("Give the agent a name with at least one letter or number, as docker names are made of them.");
 	d.progress.resume({ skipUpdater: !selfUpdate });
 	d.progress.set("start", "running");
-	await ensureRunning(d, "start", containerOf(slug), commands.start(slug), "the agent", signal);
+	await ensureRunning(d, "start", containerOf(slug), commands$1.start(slug), "the agent", signal);
 	if (selfUpdate) {
 		d.progress.set("updater", "running");
-		await ensureRunning(d, "updater", updaterOf(slug), commands.startUpdater(slug), "the update helper", signal);
+		await ensureRunning(d, "updater", updaterOf(slug), commands$1.startUpdater(slug), "the update helper", signal);
 	}
 	d.progress.set("tag", "running");
 	if (auth.length !== 4 || auth.some((part) => typeof part !== "string")) stop(d, "tag", "Buzz did not give a well-formed attestation. Try again.");
-	const tagged = await docker(d, "tag", commands.authTagSet(slug), signal, {
+	const tagged = await docker(d, "tag", commands$1.authTagSet(slug), signal, {
 		stdin: `${JSON.stringify(auth)}\n`,
 		timeoutMs: LIMITS.quick
 	});
@@ -965,7 +969,7 @@ async function waitUntilRunning(d, slug, pubkey, signal, atNeedsClaude) {
 	const deadline = d.now() + LIMITS.running;
 	let last = "GHOST Protocol did not answer.";
 	for (;;) {
-		const exit = await docker(d, "wait", commands.status(slug), signal, { timeoutMs: LIMITS.quick });
+		const exit = await docker(d, "wait", commands$1.status(slug), signal, { timeoutMs: LIMITS.quick });
 		const read = exit.code === 0 ? parseStatus(exit.stdout) : void 0;
 		if (read && read.interface !== 1) stop(d, "wait", WORDS.unknownInterface);
 		const status = read?.status;
@@ -993,13 +997,13 @@ async function waitUntilRunning(d, slug, pubkey, signal, atNeedsClaude) {
 * removed. `-f` makes a missing container exit 0; a volume that is not there is docker's "no such volume".
 */
 async function remove(start, slug, signal) {
-	const gone = await run(start, commands.remove(slug), {
+	const gone = await run(start, commands$1.remove(slug), {
 		timeoutMs: LIMITS.start,
 		signal
 	});
 	if (gone.kind === "aborted") throw new CreateError("Stopped.");
 	if (gone.kind !== "exit" || gone.code !== 0) throw new CreateError(gone.kind === "cannot-start" ? WORDS.docker : `Docker could not remove the agent's container${gone.kind === "exit" && lastLine(gone.stderr) ? `: ${lastLine(gone.stderr)}` : "."}`);
-	const data = await run(start, commands.removeData(slug), {
+	const data = await run(start, commands$1.removeData(slug), {
 		timeoutMs: LIMITS.start,
 		signal
 	});
@@ -1390,12 +1394,31 @@ var RELAYS = [
 	"unreachable"
 ];
 var CLAUDES = ["active", "not-active"];
+var NO_UPDATE_IMAGE = { kind: "none" };
 var PUBKEY = /^[0-9a-fA-F]{64}$/;
 var GP_LINE = /^GP_[A-Z][A-Z0-9_]*=/;
 var isObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 var isOneOf = (list, value) => typeof value === "string" && list.includes(value);
 var isText = (value) => typeof value === "string" && value !== "";
 var isTextOrNull = (value) => value === null || typeof value === "string";
+/**
+* `image` and `digest` of the status's `update`, as they were printed (`undefined` when the key is not there). The rule is the one the
+* agent's own image has (`PINNED_IMAGE`): a registry, a path ending in `ghost-protocol`, a tag that is not `latest`, and a sha256 digest of 64
+* lower-case hex digits, alone. On top of it, the same two checks GHOST Protocol makes before it names an image: the tag is the version on
+* offer, and the digest is the one in `digest`. Without them the steps would pull another version than the screen says is on offer.
+*/
+function updateImageOf(version, image, digest) {
+	if (image === void 0 || image === null) return NO_UPDATE_IMAGE;
+	if (typeof image !== "string" || !PINNED_IMAGE.test(image) || version === null) return { kind: "refused" };
+	const at = image.lastIndexOf("@");
+	const reference = image.slice(0, at);
+	if (reference.slice(reference.lastIndexOf(":") + 1) !== version) return { kind: "refused" };
+	if (digest !== void 0 && digest !== null && digest !== image.slice(at + 1)) return { kind: "refused" };
+	return {
+		kind: "pinned",
+		image
+	};
+}
 /** Reads the whole of stdout as a status. */
 function readStatus(stdout) {
 	let json;
@@ -1423,7 +1446,8 @@ function readStatus(stdout) {
 			claude,
 			update: {
 				available: update.available,
-				version: update.version
+				version: update.version,
+				image: updateImageOf(update.version, update.image, update.digest)
 			},
 			previousVersion,
 			error: error === null ? null : {
@@ -2096,19 +2120,34 @@ function imageNameOf(image) {
 	return NAME.test(name) ? name : void 0;
 }
 var versionIfSafe = (version) => version !== null && version !== void 0 && TAG.test(version) ? version : void 0;
-/**
-* The three commands, in order: pull the new version, remove the container, start it again on the same data volume. The image is pinned
-* by digest like the agent's own, but GHOST Protocol's answer to an update names only the new version, so its digest is shown as a
-* placeholder, for the person to fill in from what GHOST Protocol published for that version.
-*/
-function updateByHand(slug, image, newVersion) {
+/** The three commands, in order: pull the new version, remove the container, start it again on the same data volume. */
+var commands = (slug, reference) => {
 	const container = containerOf(slug);
-	const reference = `${imageNameOf(image) ?? "<agent image>"}:${versionIfSafe(newVersion) ?? "<new version>"}@sha256:${DIGEST_PLACEHOLDER}`;
 	return [
 		`docker pull ${reference}`,
 		`docker rm -f ${container}`,
 		`docker run -d --name ${container} --restart unless-stopped -v ${container}-data:/data ${reference}`
 	];
+};
+/**
+* The steps for the update on offer (`version` and `image` of the status's `update`). `containerImage` is the image the container was made
+* from, read only for the placeholder steps. Where it or the version is not known the placeholder steps show a placeholder for it.
+*/
+function updateByHand(slug, containerImage, offer) {
+	if (offer.image.kind === "pinned") return {
+		kind: "pinned",
+		steps: commands(slug, offer.image.image)
+	};
+	if (offer.image.kind === "refused") return { kind: "refused" };
+	return {
+		kind: "placeholder",
+		steps: commands(slug, `${imageNameOf(containerImage) ?? "<agent image>"}:${versionIfSafe(offer.version) ?? "<new version>"}@sha256:${DIGEST_PLACEHOLDER}`)
+	};
+}
+/** Whether two offers are the same update: the same version, and the same image (or none, or a refused one). */
+function sameOffer(a, b) {
+	if (a.version !== b.version || a.image.kind !== b.image.kind) return false;
+	return a.image.kind !== "pinned" || b.image.kind === "pinned" && a.image.image === b.image.image;
 }
 // src/ui/StatusScreen.tsx
 /** The most of a text from GHOST Protocol that the screen shows: a long one is cut, so it cannot fill the page. */
@@ -2210,13 +2249,19 @@ function createStatusScreen(host) {
 			setOutcome(void 0);
 			const done = job === "update" || job === "rollback" ? await askToUpdate(run, slug, job) : await askDocker(run, slug, job);
 			if (done === void 0 || signal.aborted) return;
-			const byHandNow = done.noUpdater === true && job === "update";
-			const image = byHandNow ? await imageOf(run, slug) : void 0;
+			const offer = done.noUpdater === true && job === "update" && status !== void 0 ? {
+				version: status.update.version,
+				image: status.update.image
+			} : void 0;
+			const image = offer?.image.kind === "none" ? await imageOf(run, slug) : void 0;
 			if (signal.aborted) return;
-			if (byHandNow) setByHand({ image });
+			if (offer !== void 0) setByHand({
+				steps: updateByHand(slug, image, offer),
+				offer
+			});
 			memory.current = afterButton(memory.current, job, done.tone === "ok", status?.version);
 			setWorking(void 0);
-			setOutcome(byHandNow ? void 0 : done);
+			setOutcome(offer !== void 0 ? void 0 : done);
 			setLooks((n) => n + 1);
 		};
 		const { text, problem } = lineOf(view, container);
@@ -2247,7 +2292,13 @@ function createStatusScreen(host) {
 		}, /* @__PURE__ */ React.createElement("p", null, "Your relay does not accept owner attestations. Ask its admin to turn them on, or to add this agent as a relay member."), /* @__PURE__ */ React.createElement("p", { className: "gp-label" }, WORDS$1.publicKey), /* @__PURE__ */ React.createElement(CopyBlock, { text: status.agentPubkey })), (buttons.update || buttons.rollback || buttons.restart || buttons.stop) && /* @__PURE__ */ React.createElement("div", { className: "gp-buttons" }, buttons.update && button("update", WORDS$1.buttons.update), buttons.rollback && button("rollback", WORDS$1.buttons.rollback, status?.previousVersion === null), buttons.restart && button("restart", WORDS$1.buttons.restart), buttons.stop && button("stop", WORDS$1.buttons.stop)), busy && /* @__PURE__ */ React.createElement("p", { role: "status" }, WORDS$1.working), outcome && /* @__PURE__ */ React.createElement("p", {
 			className: outcome.tone === "problem" ? "gp-problem" : void 0,
 			role: outcome.tone === "problem" ? "alert" : "status"
-		}, outcome.text), byHand && status && /* @__PURE__ */ React.createElement("div", { className: "gp-steps" }, /* @__PURE__ */ React.createElement("p", null, WORDS$1.noUpdaterTitle), /* @__PURE__ */ React.createElement("p", { className: "gp-note" }, WORDS$1.noUpdaterDigest), /* @__PURE__ */ React.createElement("ol", null, updateByHand(slug, byHand.image, status.update.version).map((step) => /* @__PURE__ */ React.createElement("li", { key: step }, /* @__PURE__ */ React.createElement(CopyBlock, { text: step })))), /* @__PURE__ */ React.createElement("p", { className: "gp-note" }, WORDS$1.noUpdaterNote(`${container}-data`))));
+		}, outcome.text), byHand && /* @__PURE__ */ React.createElement("div", { className: "gp-steps" }, /* @__PURE__ */ React.createElement("p", null, byHand.steps.kind === "refused" ? WORDS$1.noUpdaterRefusedTitle : WORDS$1.noUpdaterTitle), byHand.steps.kind === "refused" ? /* @__PURE__ */ React.createElement("p", {
+			className: "gp-problem",
+			role: "alert"
+		}, WORDS$1.noUpdaterRefused) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("p", { className: "gp-note" }, byHand.steps.kind === "pinned" ? WORDS$1.noUpdaterPinned : WORDS$1.noUpdaterDigest), /* @__PURE__ */ React.createElement("ol", null, byHand.steps.steps.map((step) => /* @__PURE__ */ React.createElement("li", { key: step }, /* @__PURE__ */ React.createElement(CopyBlock, { text: step })))), /* @__PURE__ */ React.createElement("p", { className: "gp-note" }, WORDS$1.noUpdaterNote(`${container}-data`))), status?.update.available === true && !sameOffer(byHand.offer, status.update) && /* @__PURE__ */ React.createElement("p", {
+			className: "gp-note",
+			role: "status"
+		}, WORDS$1.noUpdaterChanged)));
 	};
 }
 // src/ui/AgentTab.tsx
