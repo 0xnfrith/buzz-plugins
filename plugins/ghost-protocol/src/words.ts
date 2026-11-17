@@ -68,6 +68,11 @@ export const WORDS = {
   noUpdaterTitle: "This agent has no update helper, so update it by hand. Run these three commands, one after the other:",
   noUpdaterDigest:
     "Before you run anything, replace <digest of that version> in steps 1 and 3 with the sha256 digest of the new version's image: the image is pinned by digest, so a tag that is moved later cannot change what runs. Step 1 does not run until you have. Run step 2 only once step 1 has pulled the image without an error, because step 2 removes the container.",
+  noUpdaterPinned:
+    "The image is pinned by digest, so a tag that is moved later cannot change what runs. Run step 2 only once step 1 has pulled the image without an error, because step 2 removes the container.",
+  noUpdaterRefusedTitle: "This agent has no update helper, so update it by hand.",
+  noUpdaterRefused: "GHOST Protocol named an image for this update that is not pinned by digest, so this plugin shows no commands for it. Nothing was run.",
+  noUpdaterChanged: "The update on offer has changed since these steps were shown. They are still for the earlier one: leave this screen and open it again to see the new one.",
   noUpdaterNote: (volume: string) => `Your data and sign-ins live in the volume ${volume}, so nothing is lost between steps 2 and 3.`,
   restarted: (container: string) => `Restarted ${container}.`,
   stoppedNow: (container: string) => `Stopped ${container}.`,

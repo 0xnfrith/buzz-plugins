@@ -9,7 +9,7 @@ import { pathToFileURL } from "node:url";
 import { test, expect } from "./fixture.mjs";
 import { chooseColorMode, closeSettings, openPage, openSettings, selectSettingsSection } from "./navigation.mjs";
 
-const { createFakeDocker } = await import(pathToFileURL(join(process.env.GHOST_PROTOCOL_DIR, "test/fake-docker/index.mjs")).href);
+const { createFakeDocker, imageOfVersion } = await import(pathToFileURL(join(process.env.GHOST_PROTOCOL_DIR, "test/fake-docker/index.mjs")).href);
 
 const SHOTS = process.env.SHOTS;
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
@@ -549,6 +549,162 @@ test("Update shows the steps to update by hand, instead of the button, when the 
   await pass(page, fake, 10_000, STATUS, 3);
   await expect(steps.locator("li code")).toHaveCount(3);
   await expect(button(page, "Restart")).toBeEnabled();
+});
+
+// ---- the update by hand, with the image GHOST Protocol names for the update -----------------------------------------------
+
+const INSPECT_IMAGE = "inspect --format {{.Config.Image}} gp-maple";
+const PLACEHOLDER = /<digest of that version>|<agent image>|<new version>/;
+const NEWER = `registry.example/ghost-protocol:0.2.0@sha256:${"e".repeat(64)}`;
+const offering = (more) => ({ selfUpdate: "no", update: { available: true, version: "0.1.1", ...more } });
+
+/** Presses Update on an agent without an update helper, and gives the steps' block. */
+async function pressUpdate(page) {
+  await show(page);
+  await button(page, "Update").click();
+  await expect(button(page, "Update")).toHaveCount(0);
+  const steps = agent(page).locator(".gp-steps");
+  await expect(steps).toBeVisible();
+  return steps;
+}
+
+test("Update shows the steps with the image GHOST Protocol names for the update, whole, in the pull and in the run", async ({ page, app }) => {
+  await page.setViewportSize({ width: 1300, height: 1000 });
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: app.origin });
+  const fake = await arrange(page, app, { scenario: "update-pinned,no-self-update" });
+  const image = imageOfVersion("0.1.1");
+  expect(image).toMatch(/^registry\.example\/ghost-protocol:0\.1\.1@sha256:[0-9a-f]{64}$/);
+  const steps = await pressUpdate(page);
+  await expect(steps.locator("li code")).toHaveText([
+    `docker pull ${image}`,
+    "docker rm -f gp-maple",
+    `docker run -d --name gp-maple --restart unless-stopped -v gp-maple-data:/data ${image}`,
+  ]);
+  // Nothing is left for the person to fill in, and the note that said to fill the digest in is gone. What stays is why step 2 waits for step 1.
+  await expect(steps).not.toContainText(PLACEHOLDER);
+  await expect(steps).not.toContainText("replace <digest");
+  const note = steps.getByText("The image is pinned by digest, so a tag that is moved later cannot change what runs.", { exact: false });
+  await expect(note).toBeVisible();
+  await expect(note).toContainText("Run step 2 only once step 1 has pulled the image without an error, because step 2 removes the container.");
+  expect(await steps.locator(":scope > *").evaluateAll((elements) => elements.map((element) => element.tagName))).toEqual(["P", "P", "OL", "P"]);
+  await expect(steps.getByText("Your data and sign-ins live in the volume gp-maple-data, so nothing is lost between steps 2 and 3.")).toBeVisible();
+  // The copy box of the pull holds the whole image.
+  // (A button reads "Copied" for a moment after it is pressed, so each is found by its step.)
+  await steps.locator("li").nth(0).getByRole("button").click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`docker pull ${image}`);
+  await steps.locator("li").nth(2).getByRole("button").click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`docker run -d --name gp-maple --restart unless-stopped -v gp-maple-data:/data ${image}`);
+  // The image says all of it: the container's own image is not read, and no command was refused.
+  expect(countOf(fake, INSPECT_IMAGE)).toBe(0);
+  await expect(fact(page, "Update")).toHaveText("Version 0.1.1 is available");
+  await shot(page, "22-update-by-hand-pinned");
+});
+
+test("Update shows the steps with the placeholder where GHOST Protocol names no image: null, as an offer made by hand has it", async ({ page, app }) => {
+  const fake = await arrange(page, app, { scenario: "update-image-null,no-self-update" });
+  const steps = await pressUpdate(page);
+  await expect(steps.locator("li code")).toHaveText([
+    "docker pull registry.example/ghost-protocol:0.1.1@sha256:<digest of that version>",
+    "docker rm -f gp-maple",
+    "docker run -d --name gp-maple --restart unless-stopped -v gp-maple-data:/data registry.example/ghost-protocol:0.1.1@sha256:<digest of that version>",
+  ]);
+  await expect(steps.getByText("Before you run anything, replace <digest of that version> in steps 1 and 3", { exact: false })).toBeVisible();
+  // Without an image of its own, the name of the registry comes from the container.
+  expect(countOf(fake, INSPECT_IMAGE)).toBe(1);
+});
+
+// Each is an image GHOST Protocol must not give and the plugin must not use: no command is made from it, and nothing is run.
+const MALFORMED = [
+  ["a bare tag", { image: "registry.example/ghost-protocol:0.1.1" }],
+  ["a tag that is not the version on offer", { image: `registry.example/ghost-protocol:0.1.2@sha256:${"a".repeat(64)}`, digest: `sha256:${"a".repeat(64)}` }],
+  ["a digest that is not the digest field", { image: `registry.example/ghost-protocol:0.1.1@sha256:${"a".repeat(64)}`, digest: `sha256:${"b".repeat(64)}` }],
+  ["latest", { image: `registry.example/ghost-protocol:latest@sha256:${"a".repeat(64)}`, digest: `sha256:${"a".repeat(64)}` }],
+  ["a digest of 63 hex digits", { image: `registry.example/ghost-protocol:0.1.1@sha256:${"a".repeat(63)}`, digest: `sha256:${"a".repeat(63)}` }],
+  ["a command after the image", { image: `registry.example/ghost-protocol:0.1.1@sha256:${"a".repeat(64)}; rm -rf ~`, digest: `sha256:${"a".repeat(64)}` }],
+];
+for (const [what, more] of MALFORMED) {
+  test(`Update shows no command, and says so, when GHOST Protocol names an image that is ${what}`, async ({ page, app }) => {
+    await page.setViewportSize({ width: 1300, height: 1000 });
+    const fake = await arrange(page, app, { scenario: offering(more) });
+    const steps = await pressUpdate(page);
+    await expect(steps.getByText("This agent has no update helper, so update it by hand.", { exact: true })).toBeVisible();
+    const refusal = steps.getByRole("alert");
+    await expect(refusal).toHaveText("GHOST Protocol named an image for this update that is not pinned by digest, so this plugin shows no commands for it. Nothing was run.");
+    // No step, no copy box, no `docker` word, and not the bad value either.
+    await expect(steps.locator("li")).toHaveCount(0);
+    await expect(steps.getByRole("button")).toHaveCount(0);
+    await expect(agent(page)).not.toContainText("docker pull");
+    await expect(agent(page)).not.toContainText("docker run");
+    await expect(agent(page)).not.toContainText("rm -rf");
+    await expect(agent(page)).not.toContainText("sha256:");
+    expect(await steps.locator(":scope > *").evaluateAll((elements) => elements.map((element) => element.tagName))).toEqual(["P", "P"]);
+    // The rest of the screen is as it was: the status is read, and Restart and Stop work.
+    await expect(fact(page, "State")).toHaveText("Running");
+    await expect(fact(page, "Update")).toHaveText("Version 0.1.1 is available");
+    await expect(button(page, "Restart")).toBeEnabled();
+    expect(countOf(fake, INSPECT_IMAGE)).toBe(0);
+    expect(fake.calls().filter((call) => call.argv[0] === "pull" || call.argv[0] === "run")).toEqual([]);
+  });
+}
+
+test("the steps stay as they were when a newer update is offered, and a note says so", async ({ page, app }) => {
+  await page.setViewportSize({ width: 1300, height: 1000 });
+  const fake = await arrange(page, app, { scenario: "update-pinned,no-self-update" });
+  const image = imageOfVersion("0.1.1");
+  const steps = await pressUpdate(page);
+  const written = [`docker pull ${image}`, "docker rm -f gp-maple", `docker run -d --name gp-maple --restart unless-stopped -v gp-maple-data:/data ${image}`];
+  await expect(steps.locator("li code")).toHaveText(written);
+  await expect(steps.getByText("The update on offer has changed", { exact: false })).toHaveCount(0);
+  // Between step 1 and step 3 a newer version is offered. The next look reads it, and the facts follow it; the steps do not.
+  fake.tweak({ update: { version: "0.2.0", image: NEWER, digest: `sha256:${"e".repeat(64)}` } });
+  const looks = countOf(fake, STATUS);
+  await pass(page, fake, 10_000, STATUS, looks + 1);
+  await expect(fact(page, "Update")).toHaveText("Version 0.2.0 is available");
+  await expect(steps.locator("li code")).toHaveText(written);
+  const changed = steps.getByText("The update on offer has changed since these steps were shown. They are still for the earlier one: leave this screen and open it again to see the new one.", { exact: true });
+  await expect(changed).toBeVisible();
+  await expect(steps).not.toContainText("0.2.0");
+  // The same version offered again with another image is a change too: the steps keep the image they were made with.
+  const ANOTHER = `registry.example/ghost-protocol:0.1.1@sha256:${"d".repeat(64)}`;
+  fake.tweak({ update: { version: "0.1.1", image: ANOTHER, digest: `sha256:${"d".repeat(64)}` } });
+  await pass(page, fake, 10_000, STATUS, looks + 2);
+  await expect(fact(page, "Update")).toHaveText("Version 0.1.1 is available");
+  await expect(changed).toBeVisible();
+  await expect(steps.locator("li code")).toHaveText(written);
+  await expect(steps).not.toContainText("d".repeat(64));
+  // The offer that was first shown is no longer a change.
+  fake.tweak({ update: { version: "0.1.1", image, digest: `sha256:${image.split("@sha256:")[1]}` } });
+  await pass(page, fake, 10_000, STATUS, looks + 3);
+  await expect(fact(page, "Update")).toHaveText("Version 0.1.1 is available");
+  await expect(changed).toHaveCount(0);
+  await expect(steps.locator("li code")).toHaveText(written);
+});
+
+test("the steps stay on the screen when step 2 removes the container, and after step 3 starts it again", async ({ page, app }) => {
+  await page.setViewportSize({ width: 1300, height: 1000 });
+  const fake = await arrange(page, app, { scenario: "update-pinned,no-self-update" });
+  const image = imageOfVersion("0.1.1");
+  const steps = await pressUpdate(page);
+  const written = [`docker pull ${image}`, "docker rm -f gp-maple", `docker run -d --name gp-maple --restart unless-stopped -v gp-maple-data:/data ${image}`];
+  await expect(steps.locator("li code")).toHaveText(written);
+  // Step 1, then step 2: the container is gone, and the next look says so. The steps do not go with it.
+  expect((await fake.run(["pull", image])).code).toBe(0);
+  expect((await fake.run(["rm", "-f", "gp-maple"])).code).toBe(0);
+  let looks = countOf(fake, STATUS);
+  await pass(page, fake, 10_000, STATUS, looks + 1);
+  await expect(headline(page)).toHaveText("There is no container gp-maple.");
+  await expect(steps.locator("li code")).toHaveText(written);
+  await expect(steps.getByRole("button", { name: "Copy", exact: true })).toHaveCount(3);
+  await shot(page, "23-update-by-hand-container-gone");
+  // Step 3: the new version runs, nothing is on offer, and the steps are still the ones the person followed.
+  const started = await fake.run(["run", "-d", "--name", "gp-maple", "--restart", "unless-stopped", "-v", "gp-maple-data:/data", image]);
+  expect(started.code, started.stderr).toBe(0);
+  looks = countOf(fake, STATUS);
+  await pass(page, fake, 10_000, STATUS, looks + 1);
+  await expect(fact(page, "Version")).toHaveText("0.1.1");
+  await expect(fact(page, "Update")).toHaveText("No update is available");
+  await expect(steps.locator("li code")).toHaveText(written);
+  await expect(steps.getByText("The update on offer has changed", { exact: false })).toHaveCount(0);
 });
 
 test("Roll back asks the container to go back, and the screen follows it to the old version", async ({ page, app }) => {

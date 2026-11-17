@@ -1,6 +1,7 @@
 // The rules of the plugin's interface note that the fake's output must follow, as code. The fake's own tests hold every command to
 // them; a test of the plugin can use them to check what it reads. Sections named below are the note's.
 import assert from "node:assert/strict";
+import { IMAGE } from "./image.mjs";
 
 /** Section 8: the values `state`, `relay` and `claude` take. */
 export const STATES = ["needs-claude", "needs-auth-tag", "connecting", "running", "updating", "error"];
@@ -61,9 +62,35 @@ export function assertStatusShape(status) {
   assert.match(status.relay_url, /^wss?:\/\//);
   assert.ok(RELAYS.includes(status.relay), `relay ${status.relay}`);
   assert.ok(CLAUDE.includes(status.claude), `claude ${status.claude}`);
-  assert.deepEqual(Object.keys(status.update), ["available", "version"]);
-  assert.equal(typeof status.update.available, "boolean");
-  assert.ok(status.update.version === null || typeof status.update.version === "string");
+  assertUpdateShape(status.update);
   assert.ok(status.previous_version === null || typeof status.previous_version === "string");
   assert.ok(status.error === null || (typeof status.error.code === "string" && typeof status.error.message === "string"));
+}
+
+/**
+ * The update on offer: `update` is `{available: false, version: null}` with nothing on offer. With a version on offer it is
+ * `{available: true, version}` (a GHOST Protocol that gives no image), or also `image` and `digest`: the image of that version pinned by
+ * digest, `<registry>/ghost-protocol:<version>@<digest>`, and `sha256:<64 hex>`. Both are `null` only for a version offered by hand in a test.
+ */
+export function assertUpdateShape(update) {
+  assert.equal(typeof update.available, "boolean");
+  assert.ok(update.version === null || typeof update.version === "string");
+  if (!update.available) {
+    assert.deepEqual(update, { available: false, version: null }, "with nothing on offer, update has no image or digest");
+    return;
+  }
+  assert.equal(typeof update.version, "string", "an update on offer has a version");
+  if (!("image" in update) && !("digest" in update)) return;
+  assert.deepEqual(Object.keys(update), ["available", "version", "image", "digest"]);
+  if (update.image === null || update.digest === null) {
+    assert.deepEqual([update.image, update.digest], [null, null], "image and digest are null together");
+    return;
+  }
+  assert.equal(typeof update.image, "string");
+  assert.match(update.digest, /^sha256:[0-9a-f]{64}$/);
+  const match = IMAGE.exec(update.image);
+  assert.ok(match, `update.image ${update.image} is a pinned image`);
+  assert.notEqual(match.groups.tag, "latest", "update.image is not latest");
+  assert.equal(match.groups.tag, update.version, "update.image is the version on offer");
+  assert.equal(`sha256:${match.groups.digest}`, update.digest, "update.digest is the digest of update.image");
 }
