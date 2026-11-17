@@ -2,7 +2,8 @@
 // update available, an unknown interface number, and an update that walks through `updating` (with or without the gap of the swap).
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, test } from "node:test";
-import { RELAYS, STATES, STATUS_KEYS, assertGpFailure, assertGpSuccess, assertStatusShape } from "./contract.mjs";
+import { RELAYS, STATES, STATUS_KEYS, assertGpFailure, assertGpSuccess, assertStatusShape, assertUpdateShape } from "./contract.mjs";
+import { pinnedImage } from "./image.mjs";
 import { RELAY, createAgent, attest, gp, gpInput, imageOfVersion, runningAgent, status, statusArgs, withFake } from "./support.mjs";
 
 let fake;
@@ -205,6 +206,160 @@ describe("update and way back", () => {
     assertGpFailure(await fake.run(gp("maple", "update", "request")), "update-failed");
     fake.tweak({ fail: { updateRequest: false, updateRollback: { code: "disk-full", message: "No room to go back." } } });
     assertGpFailure(await fake.run(gp("maple", "update", "rollback")), "disk-full");
+  });
+});
+
+// With an update on offer the status's `update` also carries the image pinned by digest, and its digest.
+describe("the update image, pinned by digest", () => {
+  const NEW = imageOfVersion("0.1.1");
+  const NEW_DIGEST = `sha256:${NEW.split("@sha256:")[1]}`;
+  const image = async (name) => (await fake.run(["inspect", "-f", "{{.Config.Image}}", name])).stdout.trim();
+  // A digest the fake did not make up: what the offer names is not what the fake would have made up for the version.
+  const OTHER_DIGEST = `sha256:${"c".repeat(64)}`;
+  const OFFERED = pinnedImage("registry.example", "0.1.1", "c".repeat(64));
+  const offering = (more) => ({ update: { available: true, version: "0.1.1", ...more } });
+
+  test("with nothing on offer, update has no image or digest keys", async () => {
+    fake = withFake();
+    await runningAgent(fake);
+    const { update } = await status(fake);
+    assert.deepEqual(update, { available: false, version: null });
+    assertStatusShape(await status(fake));
+  });
+
+  test("update-pinned: the offer names the new version's image, pinned, and its digest, after `version`, in the interface's order", async () => {
+    fake = withFake("update-pinned");
+    await runningAgent(fake);
+    const seen = await status(fake);
+    assert.deepEqual(seen.update, { available: true, version: "0.1.1", image: NEW, digest: NEW_DIGEST });
+    assert.deepEqual(Object.keys(seen.update), ["available", "version", "image", "digest"]);
+    assert.match(seen.update.image, /^registry\.example\/ghost-protocol:0\.1\.1@sha256:[0-9a-f]{64}$/);
+    assertStatusShape(seen);
+  });
+
+  test("update-available (a GHOST Protocol that gives no image): the keys are not there at all", async () => {
+    fake = withFake("update-available");
+    await runningAgent(fake);
+    const seen = await status(fake);
+    assert.deepEqual(seen.update, { available: true, version: "0.1.1" });
+    assert.ok(!("image" in seen.update) && !("digest" in seen.update));
+    assertStatusShape(seen);
+  });
+
+  test("update-image-null (an offer made by hand in a test): image and digest are null", async () => {
+    fake = withFake("update-image-null");
+    await runningAgent(fake);
+    const seen = await status(fake);
+    assert.deepEqual(seen.update, { available: true, version: "0.1.1", image: null, digest: null });
+    assertStatusShape(seen);
+  });
+
+  test("update-image-malformed prints an image that is not pinned just as it is, and the contract refuses it", async () => {
+    fake = withFake("update-image-malformed");
+    await runningAgent(fake);
+    const seen = await status(fake);
+    assert.equal(seen.update.image, "registry.example/ghost-protocol:0.1.1", "a bare tag, with the digest of the version in its own field");
+    assert.equal(seen.update.digest, NEW_DIGEST);
+    assert.throws(() => assertStatusShape(seen), /pinned image/);
+  });
+
+  test("any malformed image can be given, and is printed as given (the scenario checks only that it is a string or null)", async () => {
+    const bad = [
+      "registry.example/ghost-protocol:latest@sha256:" + "a".repeat(64), `registry.example/ghost-protocol:0.1.1@sha256:${"a".repeat(63)}`,
+      `registry.example/ghost-protocol:0.1.2@sha256:${"a".repeat(64)}`, `registry.example/ghost-protocol:0.1.1@sha256:${"a".repeat(64)};rm -rf ~`, "not an image at all",
+    ];
+    fake = withFake();
+    await runningAgent(fake);
+    for (const wrong of bad) {
+      fake.use(offering({ image: wrong, digest: NEW_DIGEST }));
+      assert.equal((await status(fake)).update.image, wrong);
+    }
+  });
+
+  test("the contract (assertUpdateShape) takes the three shapes of an offer and refuses everything else", () => {
+    const pinned = { available: true, version: "0.1.1", image: NEW, digest: NEW_DIGEST };
+    for (const fine of [{ available: false, version: null }, { available: true, version: "0.1.1" }, pinned, { ...pinned, image: null, digest: null }]) assertUpdateShape(fine);
+    const bad = [
+      { available: false, version: null, image: null, digest: null }, { available: false, version: null, image: NEW, digest: NEW_DIGEST },
+      { available: true, version: null }, { available: true, version: "0.1.1", image: NEW },
+      { available: true, version: "0.1.1", digest: NEW_DIGEST }, { ...pinned, image: null }, { ...pinned, digest: null },
+      { ...pinned, image: NEW.split("@")[0] }, { ...pinned, version: "0.1.2" }, { ...pinned, digest: OTHER_DIGEST },
+      { ...pinned, digest: NEW_DIGEST.toUpperCase() }, { ...pinned, digest: NEW_DIGEST.slice(0, -1) }, { ...pinned, image: `${NEW};x` },
+      { ...pinned, image: pinnedImage("registry.example", "latest", NEW.split("@sha256:")[1]), version: "latest" },
+      { available: true, version: "0.1.1", digest: NEW_DIGEST, image: NEW }, { ...pinned, extra: 1 },
+    ];
+    for (const wrong of bad) assert.throws(() => assertUpdateShape(wrong), JSON.stringify(wrong));
+  });
+
+  test("an update runs the image the offer named, digest included, and leaves nothing on offer, without the keys", async () => {
+    fake = withFake(offering({ image: OFFERED, digest: OTHER_DIGEST }));
+    await runningAgent(fake);
+    assert.equal((await status(fake)).update.image, OFFERED);
+    await fake.run(gp("maple", "update", "request"));
+    const seen = await polls(3);
+    assert.equal(await image("gp-maple"), OFFERED, "the new container runs exactly the image the status named, not one the fake made up");
+    assert.deepEqual(seen[2].update, { available: false, version: null });
+    assertStatusShape(seen[2]);
+  });
+
+  test("the version the container already runs is not on offer: an agent started by hand on the offered image has nothing on offer, without the keys", async () => {
+    fake = withFake("update-pinned");
+    await runningAgent(fake);
+    assert.equal((await status(fake)).update.available, true);
+    await fake.run(["rm", "-f", "gp-maple"]);
+    const started = await fake.run(["run", "-d", "--name", "gp-maple", "--restart", "unless-stopped", "-v", "gp-maple-data:/data", NEW]);
+    assert.equal(started.code, 0, started.stderr);
+    const seen = await status(fake);
+    assert.equal(seen.version, "0.1.1");
+    assert.deepEqual(seen.update, { available: false, version: null });
+    assertStatusShape(seen);
+  });
+
+  test("a roll back offers the version it left again, pinned as before: the image the agent ran", async () => {
+    fake = withFake(offering({ image: OFFERED, digest: OTHER_DIGEST }));
+    await runningAgent(fake);
+    await fake.run(gp("maple", "update", "request"));
+    await polls(3);
+    await fake.run(gp("maple", "update", "rollback"));
+    const seen = await polls(3);
+    assert.deepEqual(seen[2].update, { available: true, version: "0.1.1", image: OFFERED, digest: OTHER_DIGEST });
+    assertStatusShape(seen[2]);
+    await fake.run(gp("maple", "update", "request"));
+    await polls(3);
+    assert.equal(await image("gp-maple"), OFFERED, "and that offer is the image the update runs");
+  });
+
+  test("a roll back follows what the scenario's GHOST Protocol gives: no keys, or null, as the update did", async () => {
+    for (const [scenario, expected] of [
+      ["update-available", { available: true, version: "0.1.1" }],
+      ["update-image-null", { available: true, version: "0.1.1", image: null, digest: null }],
+    ]) {
+      fake = withFake(scenario);
+      await runningAgent(fake);
+      await fake.run(gp("maple", "update", "request"));
+      await polls(3);
+      await fake.run(gp("maple", "update", "rollback"));
+      const seen = await polls(3);
+      assert.deepEqual(seen[2].update, expected, scenario);
+      assertStatusShape(seen[2]);
+      fake.cleanup();
+    }
+  });
+
+  test("an image that is not a pinned image of the version, or whose digest is not the digest field, is not run: the fake makes one up", async () => {
+    for (const wrong of [
+      offering({ image: "registry.example/ghost-protocol:0.1.1", digest: NEW_DIGEST }),
+      offering({ image: pinnedImage("registry.example", "0.1.2", "c".repeat(64)), digest: OTHER_DIGEST }),
+      offering({ image: OFFERED, digest: NEW_DIGEST }),
+      offering({ image: null, digest: null }),
+    ]) {
+      fake = withFake(wrong);
+      await runningAgent(fake);
+      await fake.run(gp("maple", "update", "request"));
+      await polls(3);
+      assert.equal(await image("gp-maple"), NEW, JSON.stringify(wrong.update));
+      fake.cleanup();
+    }
   });
 });
 

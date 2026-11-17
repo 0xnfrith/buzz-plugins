@@ -10,7 +10,8 @@ export interface Scenario {
   loginCode?: string | null;
   relay?: "connected" | "refused-not-member" | "unreachable";
   connectingPolls?: number;
-  update?: { available: boolean; version: string | null };
+  /** `image` and `digest` are what the status prints for them, whatever they are (a test gives a malformed one on purpose); left out, the status has no such key. */
+  update?: { available: boolean; version: string | null; image?: string | null; digest?: string | null };
   updateStartPolls?: number;
   updatingPolls?: number;
   updateGapPolls?: number | "forever";
@@ -29,7 +30,7 @@ export interface Scenario {
 export type Preset =
   | "ok" | "docker-missing" | "daemon-down" | "permission-denied" | "pull-not-found" | "pull-unauthorized" | "pull-offline" | "init-fails"
   | "bad-auth-tag" | "claude-signed-in" | "login-fails" | "token-rejected" | "relay-refuses" | "relay-unreachable" | "update-available"
-  | "no-self-update" | "docker-29-wording" | "update-gap" | "update-gap-stopped" | "update-never-returns" | "unknown-interface" | "status-error" | "status-compact-with-preamble";
+  | "update-pinned" | "update-image-null" | "update-image-malformed" | "no-self-update" | "docker-29-wording" | "update-gap" | "update-gap-stopped" | "update-never-returns" | "unknown-interface" | "status-error" | "status-compact-with-preamble";
 
 /** A preset name, several joined with commas, or an object. */
 export type ScenarioInput = Preset | (string & {}) | Scenario;

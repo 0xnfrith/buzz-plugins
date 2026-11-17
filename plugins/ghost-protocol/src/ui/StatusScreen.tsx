@@ -5,7 +5,7 @@ import { runnerFor } from "../docker";
 import { NOTHING_YET, POLL_MS, afterButton, imageOf, observe, type Memory, type View } from "../observe";
 import { React } from "../react";
 import type { Status } from "../status";
-import { updateByHand } from "../update-by-hand";
+import { sameOffer, updateByHand, type ByHand } from "../update-by-hand";
 import { CLAUDE_WORDS, OTHER_INTERFACE, REFUSED_NOT_MEMBER, RELAY_WORDS, STATE_WORDS, WORDS } from "../words";
 import { CopyBlock } from "./CopyBlock";
 
@@ -102,8 +102,10 @@ export function createStatusScreen(host: Host) {
 
     const [working, setWorking] = React.useState<Job>();
     const [outcome, setOutcome] = React.useState<Outcome>();
-    // The agent has no update helper: the Update button gives way to the steps, with the image the container was made from.
-    const [byHand, setByHand] = React.useState<{ image: string | undefined }>();
+    // The agent has no update helper: the Update button gives way to the steps, made once, from the update on offer when the button was
+    // pressed. They stay as they were for as long as the screen is open: a newer offer does not change a step the person is part way
+    // through, and the steps do not go when step 2 removes the container and the status cannot be read for a while.
+    const [byHand, setByHand] = React.useState<{ steps: ByHand; offer: Pick<Status["update"], "version" | "image"> }>();
 
     const press = async (job: Job) => {
       const signal = life.current?.signal;
@@ -113,17 +115,18 @@ export function createStatusScreen(host: Host) {
       setOutcome(undefined);
       const done = job === "update" || job === "rollback" ? await askToUpdate(run, slug, job) : await askDocker(run, slug, job);
       if (done === undefined || signal.aborted) return;
-      // Only an update goes by hand: with the image the container was made from, the steps name the real one.
-      const byHandNow = done.noUpdater === true && job === "update";
-      const image = byHandNow ? await imageOf(run, slug) : undefined;
+      // Only an update goes by hand. The image GHOST Protocol named for the update is the whole of the pull and the run. Only without one do
+      // the steps name the image the container was made from, which is then read from Docker.
+      const offer = done.noUpdater === true && job === "update" && status !== undefined ? { version: status.update.version, image: status.update.image } : undefined;
+      const image = offer?.image.kind === "none" ? await imageOf(run, slug) : undefined;
       if (signal.aborted) return;
-      if (byHandNow) setByHand({ image });
+      if (offer !== undefined) setByHand({ steps: updateByHand(slug, image, offer), offer });
       // An update or a roll back that was taken is under way, until a status with another version says it is over; a stop or a restart
       // that was taken ends any update, so the next look says what it finds.
       memory.current = afterButton(memory.current, job, done.tone === "ok", status?.version);
       setWorking(undefined);
       // The steps say it all when the agent has no update helper.
-      setOutcome(byHandNow ? undefined : done);
+      setOutcome(offer !== undefined ? undefined : done);
       setLooks((n) => n + 1);
     };
 
@@ -182,18 +185,31 @@ export function createStatusScreen(host: Host) {
             {outcome.text}
           </p>
         )}
-        {byHand && status && (
+        {byHand && (
           <div className="gp-steps">
-            <p>{WORDS.noUpdaterTitle}</p>
-            <p className="gp-note">{WORDS.noUpdaterDigest}</p>
-            <ol>
-              {updateByHand(slug, byHand.image, status.update.version).map((step) => (
-                <li key={step}>
-                  <CopyBlock text={step} />
-                </li>
-              ))}
-            </ol>
-            <p className="gp-note">{WORDS.noUpdaterNote(`${container}-data`)}</p>
+            <p>{byHand.steps.kind === "refused" ? WORDS.noUpdaterRefusedTitle : WORDS.noUpdaterTitle}</p>
+            {byHand.steps.kind === "refused" ? (
+              <p className="gp-problem" role="alert">
+                {WORDS.noUpdaterRefused}
+              </p>
+            ) : (
+              <>
+                <p className="gp-note">{byHand.steps.kind === "pinned" ? WORDS.noUpdaterPinned : WORDS.noUpdaterDigest}</p>
+                <ol>
+                  {byHand.steps.steps.map((step) => (
+                    <li key={step}>
+                      <CopyBlock text={step} />
+                    </li>
+                  ))}
+                </ol>
+                <p className="gp-note">{WORDS.noUpdaterNote(`${container}-data`)}</p>
+              </>
+            )}
+            {status?.update.available === true && !sameOffer(byHand.offer, status.update) && (
+              <p className="gp-note" role="status">
+                {WORDS.noUpdaterChanged}
+              </p>
+            )}
           </div>
         )}
       </section>

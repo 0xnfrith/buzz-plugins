@@ -64,6 +64,8 @@ describe("choosing a scenario", () => {
       { delayMs: { pull: -1 } }, { connectingPolls: -1 }, { updatingPolls: 1.5 }, { updateGapPolls: "for ever" }, { statusFormat: "pretty-printed" },
       { statusPreamble: "yes" }, { logLines: 1 }, { dockerStyle: "docker29" }, { loginCode: "" }, { update: { available: "yes", version: null } },
       { update: { avalable: true, version: "1" } }, { statusOverride: "running" }, { dockerVersion: "" },
+      { update: { available: true, version: "1", image: 5 } }, { update: { available: true, version: "1", image: "" } }, { update: { available: true, version: "1", digest: {} } },
+      { update: { available: true, version: "1", digest: false } },
     ];
     for (const typo of typos) assert.throws(() => fake.use(typo), /the scenario has a bad value|a key the fake does not know/, JSON.stringify(typo));
     assert.equal(JSON.parse(readFileSync(join(fake.stateDir, "scenario.json"), "utf8")).dockerVersion, "3.0.0");
@@ -77,6 +79,10 @@ describe("choosing a scenario", () => {
       fail: { init: { code: "x" }, claudeToken: true, updateRollback: false }, hang: STEPS, delayMs: Object.fromEntries(STEPS.map((step) => [step, 1])),
       loginCode: "123", update: { available: true, version: "2.0.0" }, statusOverride: { future_field: { a: 1 } },
     });
+    // The image of the update on offer and its digest are printed as given, a malformed one too, and null.
+    for (const update of [{ image: null, digest: null }, { image: "not an image", digest: "sha256:abc" }, { image: "registry.example/ghost-protocol:2.0.0" }]) {
+      fake.use({ update: { available: true, version: "2.0.0", ...update } });
+    }
   });
 
   test("the same mistake made straight in the environment is a refusal: exit 64, and the message names it", async () => {
