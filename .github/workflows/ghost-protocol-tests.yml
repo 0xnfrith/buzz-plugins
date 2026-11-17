@@ -6,9 +6,11 @@
 # so the suite replaces it with a stub. The page's own check of Docker scripts what `docker version` prints and how it exits; the status
 # screen's spec hands every call to the fake `docker` (plugins/ghost-protocol/test/fake-docker), which runs in Node, so what the plugin reads
 # is what the fake printed. Together they prove the page, the one screen for each way a command can end and for each state of the status,
-# and that the plugin asks the host for the declared process and nothing else. They do not run a real `docker` or GHOST Protocol, the
-# desktop app or the Git importer: a run in the desktop app is not built yet (AGENTS.md), and the plugin's first real check is a run on a
-# real Mac.
+# and that the plugin asks the host for the declared process and nothing else. They do not run a real `docker` or GHOST Protocol, and they
+# register the plugin from a fixture, so they do not run the Git importer, the loader or the install review. The `install` job does: it adds
+# the plugin through Buzz's own "Add a plugin" dialog (plugins/ghost-protocol/test/install), with Buzz's `buzzodz-plugins` crate behind the
+# plugin commands, and holds the review, the start-up and the page's place in Search and the sidebar to the committed manifest.json. Neither
+# is a run in the desktop app, which is not built yet (AGENTS.md), and the plugin's first real check is a run on a real Mac.
 name: GHOST Protocol tests
 
 on:
@@ -137,5 +139,102 @@ jobs:
         with:
           name: ghost-protocol-browser-test-results
           path: buzz-app/test-results
+          if-no-files-found: ignore
+          retention-days: 14
+
+  install:
+    # plugins/ghost-protocol/test/install: the plugin installed the way a person does, not registered from a fixture. In Buzz's own
+    # production web build (headless Chromium, at BUZZ_APP_REF), Settings -> Manage plugins -> Add reads this repository on GitHub with the
+    # Git importer of Buzz's `buzzodz-plugins` crate (built here from the same checkout of block/buzz-app; plugins/ghost-protocol/test/install/
+    # bridge.rs only passes the browser's plugin commands to it), the review is held to manifest.json, Buzz's own loader starts the plugin, and
+    # its page must be in Search and in the Messages sidebar's page block. Then the same check runs on copies of the plugin that are broken one
+    # way each, and the job fails unless every one of them fails where it should (breaks.sh). It reads GitHub, so it needs the network: an error
+    # that says it could not reach GitHub fails the job, after one more try of the clone, and is never skipped.
+    #
+    # What it cannot cover: the desktop app itself (the Tauri window and commands of src-tauri, macOS, signature enforcement, the managed
+    # plugin policy), and anything the plugin does through the host (`ctx.host.spawn`, `runCommand`), because the page is never opened here.
+    name: GHOST Protocol install check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The commit the importer will read from GitHub: a pull request's own head, not GitHub's merge of it with main. The spec, the bridge
+          # and the manifest the review is held to then all come from the commit the plugin is installed from. A commit id, not text a
+          # person wrote, so it is safe here.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Which branch the importer reads
+        id: source
+        # The branch names reach the script only through the environment, quoted, never as text in the script.
+        env:
+          EVENT: ${{ github.event_name }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          PULL_REQUEST_BRANCH: ${{ github.event.pull_request.head.ref }}
+          MERGE_QUEUE_BRANCH: ${{ github.event.merge_group.head_ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          case "$EVENT" in
+            pull_request)
+              # The importer reads a branch of this repository on GitHub; a fork's branch is not there.
+              if [ "$HEAD_REPOSITORY" != "$GITHUB_REPOSITORY" ]; then
+                echo "::error::This pull request comes from $HEAD_REPOSITORY. The install check reads the head commit from $GITHUB_REPOSITORY on GitHub, so a fork's head is not supported: open the pull request from a branch of this repository."
+                exit 1
+              fi
+              branch=$PULL_REQUEST_BRANCH ;;
+            merge_group) branch=${MERGE_QUEUE_BRANCH#refs/heads/} ;;
+            *) branch=$REF_NAME ;;
+          esac
+          echo "reference=$branch" >>"$GITHUB_OUTPUT"
+      - name: BUZZ_APP_REF is defined, and the same, in every workflow that builds the app
+        run: .github/check-app-ref.sh
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: block/buzz-app
+          ref: ${{ env.BUZZ_APP_REF }}
+          path: buzz-app
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: pnpm, as the app pins it
+        run: |
+          corepack enable
+          corepack prepare "$(node -p "require('./buzz-app/package.json').packageManager")" --activate
+      - name: Install the app's dependencies (frozen lockfile)
+        working-directory: buzz-app
+        run: pnpm install --frozen-lockfile
+      - name: Install Chromium
+        working-directory: buzz-app
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Rust toolchain, the one the app pins, without its extra components
+        run: |
+          channel=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' buzz-app/rust-toolchain.toml)
+          [ -n "$channel" ] || { echo "::error::buzz-app/rust-toolchain.toml names no channel"; exit 1; }
+          rustup toolchain install "$channel" --profile minimal
+          echo "RUSTUP_TOOLCHAIN=$channel" >>"$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: buzz-app
+          key: ghost-protocol-install
+          # Only a push to main saves the cache; a pull request restores it.
+          save-if: ${{ github.event_name == 'push' }}
+      - name: Install check, from GitHub
+        env:
+          INSTALL_REFERENCE: ${{ steps.source.outputs.reference }}
+        run: plugins/ghost-protocol/test/install/run.sh buzz-app
+      - name: Install check on broken copies of the plugin
+        # Runs whether or not the step above did: it reads a folder on disk, not GitHub, and its answer does not depend on it.
+        if: ${{ !cancelled() }}
+        env:
+          INSTALL_ARTIFACTS: ${{ runner.temp }}/install-check-results
+        run: plugins/ghost-protocol/test/install/breaks.sh buzz-app
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure()
+        with:
+          name: ghost-protocol-install-check-results
+          path: |
+            buzz-app/test-results
+            ${{ runner.temp }}/install-check-results
           if-no-files-found: ignore
           retention-days: 14
