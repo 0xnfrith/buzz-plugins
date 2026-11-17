@@ -664,9 +664,17 @@ test("the steps stay as they were when a newer update is offered, and a note say
   const changed = steps.getByText("The update on offer has changed since these steps were shown. They are still for the earlier one: leave this screen and open it again to see the new one.", { exact: true });
   await expect(changed).toBeVisible();
   await expect(steps).not.toContainText("0.2.0");
-  // The same version offered again with another image changes it too; the offer that was first shown is no longer a change.
-  fake.tweak({ update: { version: "0.1.1", image, digest: `sha256:${image.split("@sha256:")[1]}` } });
+  // The same version offered again with another image is a change too: the steps keep the image they were made with.
+  const ANOTHER = `registry.example/ghost-protocol:0.1.1@sha256:${"d".repeat(64)}`;
+  fake.tweak({ update: { version: "0.1.1", image: ANOTHER, digest: `sha256:${"d".repeat(64)}` } });
   await pass(page, fake, 10_000, STATUS, looks + 2);
+  await expect(fact(page, "Update")).toHaveText("Version 0.1.1 is available");
+  await expect(changed).toBeVisible();
+  await expect(steps.locator("li code")).toHaveText(written);
+  await expect(steps).not.toContainText("d".repeat(64));
+  // The offer that was first shown is no longer a change.
+  fake.tweak({ update: { version: "0.1.1", image, digest: `sha256:${image.split("@sha256:")[1]}` } });
+  await pass(page, fake, 10_000, STATUS, looks + 3);
   await expect(fact(page, "Update")).toHaveText("Version 0.1.1 is available");
   await expect(changed).toHaveCount(0);
   await expect(steps.locator("li code")).toHaveText(written);
