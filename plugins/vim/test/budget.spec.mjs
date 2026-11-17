@@ -354,6 +354,8 @@ const measureRow = async (page, cdp, surface, row, rowsOfSurface, id, defined, c
   await row.before?.(page);
   const parts = row.pair ?? [row];
   const known = (part) => (part.control ? undefined : BASELINE[`${id} ${part.key}`]);
+  // Which parts are known rows, worked out once: the figure kept for an attempt, the verdict on it and `readAt` in the JSON share it.
+  const isKnown = parts.map((part) => !!known(part));
   // A row with a part that presses F9 or F10 runs every attempt with the ones its own `before` put in the page. The control it is read against
   // puts its own there, and they must not reach the next attempt: the F9 of the first press of a branch's pill (the page closing the thread)
   // was the other row's (the page pressing a pill that was gone) in the second attempt, a TypeError on each of its 35 presses.
@@ -371,14 +373,14 @@ const measureRow = async (page, cdp, surface, row, rowsOfSurface, id, defined, c
       expect(await page.evaluate(() => window.__controlsOf), `attempt ${attempt} of "${names}" runs with the F9 and F10 of its own before`).toBe(ownControls);
     }
     last = await attemptRow(page, cdp, surface, id, row, checked);
-    attempts.push(last.map((entry, index) => entry[readAt(!!known(parts[index]))]));
+    attempts.push(last.map((entry, index) => entry[readAt(isKnown[index])]));
     const limit = [];
     const control = [];
     const over = [];
     for (const [index, part] of parts.entries()) {
       const { max, past, reference } = part.control
         ? { max: Infinity, past: false, reference: null }
-        : await judge(last[index], !!known(part), async () => {
+        : await judge(last[index], isKnown[index], async () => {
             const name = known(part).control;
             const def = defined.find((candidate) => (candidate.pair ?? [candidate]).some((one) => one.key === name));
             await def.before?.(page);
@@ -400,10 +402,10 @@ const measureRow = async (page, cdp, surface, row, rowsOfSurface, id, defined, c
   }
   for (const [index, entry] of last.entries()) {
     entry.control = !!parts[index].control;
-    entry.known = !!known(parts[index]);
+    entry.known = isKnown[index];
     entry.why = known(parts[index])?.why;
     entry.controlRow = known(parts[index])?.control;
-    entry.readAt = readAt(entry.known);
+    entry.readAt = readAt(isKnown[index]);
     entry.attempts = attempts.map((figures) => figures[index]);
     entry.limits = limits.map((one) => (one[index] === Infinity ? null : one[index]));
     entry.controlP95 = controls.map((one) => one[index]?.p95 ?? null);
