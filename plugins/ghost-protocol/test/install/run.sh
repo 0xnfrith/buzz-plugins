@@ -16,6 +16,9 @@
 #                      importer reads has to be the one this checkout is at, so the checkout must be a pushed commit at the tip of that
 #                      branch. This needs the network.
 #   folder             the folder $INSTALL_FOLDER, as the folder picker would answer. breaks.sh uses this for copies it has broken.
+# The Add dialog has no field for a commit (its Branch field takes a branch or a tag, and the importer refuses a commit id there), so the commit the
+# importer read is checked after the clone. On a push to a branch that other merges also reach, a [commit] failure can mean the branch moved during
+# the run: run it again.
 # Either way the review is held to the manifest.json in this repository's plugins/ghost-protocol, as committed.
 #
 # $INSTALL_BRIDGE names an already built bridge; without it the script builds one (build-bridge.sh, `cargo build --locked`).
@@ -36,13 +39,16 @@ case $source_kind in
     export INSTALL_REFERENCE=${INSTALL_REFERENCE:-$(git -C "$repo" symbolic-ref --short -q HEAD || true)}
     [ -n "$INSTALL_REFERENCE" ] || { echo "::error::INSTALL_REFERENCE is the branch the importer reads, and this checkout is on no branch" >&2; exit 1; }
     export INSTALL_FOLDER_PATH=plugins/ghost-protocol
-    INSTALL_EXPECTED_COMMIT=$(git -C "$repo" rev-parse HEAD)
-    export INSTALL_EXPECTED_COMMIT
+    checked_out=$(git -C "$repo" rev-parse HEAD)
     # The importer reads GitHub, so a file here that differs from the commit is a plugin the importer will not install.
     if [ -n "$(git -C "$repo" status --porcelain --untracked-files=no -- plugins/ghost-protocol)" ]; then
-      echo "::error::plugins/ghost-protocol differs from the commit $INSTALL_EXPECTED_COMMIT; the importer reads the commit, not this folder" >&2
+      echo "::error::plugins/ghost-protocol differs from the commit $checked_out; the importer reads the commit, not this folder" >&2
       exit 1
     fi
+    # The commit the importer must have read. Only breaks.sh sets INSTALL_COMMIT_OVERRIDE, to a commit that is not this checkout's, to show
+    # that the check fails at [commit] when the two differ.
+    INSTALL_EXPECTED_COMMIT=${INSTALL_COMMIT_OVERRIDE:-$checked_out}
+    export INSTALL_EXPECTED_COMMIT
     ;;
   folder)
     [ -n "${INSTALL_FOLDER:-}" ] && [ -f "$INSTALL_FOLDER/plugin.js" ] || { echo "INSTALL_FOLDER names a folder with plugin.js and manifest.json" >&2; exit 2; }

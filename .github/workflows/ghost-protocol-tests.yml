@@ -166,6 +166,10 @@ jobs:
           persist-credentials: false
       - name: Which branch the importer reads
         id: source
+        # The Add dialog has no field for a commit, and its Branch field takes a branch or a tag but not a commit id, so the importer reads the tip of
+        # a branch, and the spec asserts afterwards that this is the commit checked out above ([commit]). For a pull request the branch is its own
+        # head, which only a push to it moves (and that cancels this run). For a push to main it is main: if another merge lands while this job
+        # runs, the run for the earlier commit fails at [commit], and the way out is to run it again.
         # The branch names reach the script only through the environment, quoted, never as text in the script.
         env:
           EVENT: ${{ github.event_name }}
@@ -224,9 +228,11 @@ jobs:
           INSTALL_REFERENCE: ${{ steps.source.outputs.reference }}
         run: plugins/ghost-protocol/test/install/run.sh buzz-app
       - name: Install check on broken copies of the plugin
-        # Runs whether or not the step above did: it reads a folder on disk, not GitHub, and its answer does not depend on it.
+        # Runs whether or not the step above did: its answer does not depend on it. All but two of its cases read a folder on disk; those two
+        # (the host that never resolves, and the commit that does not match the one checked out) read GitHub or try to.
         if: ${{ !cancelled() }}
         env:
+          INSTALL_REFERENCE: ${{ steps.source.outputs.reference }}
           INSTALL_ARTIFACTS: ${{ runner.temp }}/install-check-results
         run: plugins/ghost-protocol/test/install/breaks.sh buzz-app
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

@@ -8,6 +8,8 @@
 #
 # The same checkout, and the same set-up, as run.sh needs. $INSTALL_BRIDGE names an already built bridge; without it one is built.
 # $INSTALL_ARTIFACTS, if set, is a folder that gets the Playwright results of every copy that did not go as it should.
+# Two cases read GitHub (the unreachable host and the commit that does not match), as run.sh does without INSTALL_SOURCE=folder: the branch is
+# $INSTALL_REFERENCE, or the branch this checkout is on, and it has to be pushed.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 plugin=$(cd "$here/../.." && pwd)
@@ -59,6 +61,12 @@ attempt "github-unreachable" '\[network\] the Git importer could not reach GitHu
 for text in 'retrying the clone once' 'Could not resolve host'; do
   grep -q "$text" "$scratch/github-unreachable.log" || { echo "::error::github-unreachable: the log does not say '$text'"; wrong=1; }
 done
+
+# The importer reads GitHub and gets a commit that is not the one the job is told it checked out (a commit id that is nobody's). The check has
+# to end in [commit]: a guard that compared the wrong thing would let a branch that moved, or the wrong branch, pass. This one reads GitHub, so
+# it needs the network, like the install check itself.
+attempt "commit-mismatch" '\[commit\] the importer read' \
+  INSTALL_SOURCE=git INSTALL_COMMIT_OVERRIDE=0123456789abcdef0123456789abcdef01234567
 
 {
   echo "| Copy of the plugin | Install check | Time |"

@@ -3,7 +3,8 @@
 //! plugin commands is routed here; the page, Settings, the review and the loader are the app's own.
 //!
 //! It is a pass-through. Each command is the body of the Tauri command of the same name in src-tauri/src/lib.rs, minus what only the desktop
-//! has (windows, the federated identity of a community repository, deep links). The crate functions it calls, and nothing else:
+//! has: windows, deep links, and the federated identity of a community repository (the assertion and authorization `plugin_import_git` asks for,
+//! and the registrations `plugin_change` retires). The result of each is the same: a catalog read that fails is the `Recovery` reply, as there. The crate functions it calls, and nothing else:
 //!
 //!   Manager::open, Manager::catalog, Manager::module, Manager::change, Manager::managed, Manager::external_plugins_paused,
 //!   Manager::repository_access, imports::prepare_git_authorized, imports::RequiredCommit::parse, imports::prepare_folder,
@@ -46,7 +47,10 @@ fn handle(manager: &Manager, pending: &Pending, folder: Option<&Path>, command: 
     let text = |key: &str| args[key].as_str();
     let required = |key: &str| text(key).ok_or(format!("{command} needs {key}"));
     match command {
-        "plugin_catalog" => manager.catalog().map(|catalog| ready(manager, catalog)),
+        "plugin_catalog" => Ok(match manager.catalog() {
+            Ok(catalog) => ready(manager, catalog),
+            Err(reason) => serde_json::to_value(InstallationResult::Recovery { reason, can_reset: true }).unwrap(),
+        }),
         "plugin_import_git" => {
             let commit = text("commit").map(imports::RequiredCommit::parse).transpose()?;
             let acquire = || {

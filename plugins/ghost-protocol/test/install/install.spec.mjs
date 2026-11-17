@@ -4,7 +4,9 @@
 // `invoke` is routed to. Nothing here stands in for the importer or the loader. The test fails, at a step named in square brackets, when
 //   [network]    the importer cannot reach GitHub (the clone is tried twice, the log says so);
 //   [commit]     the importer read another commit than the one this job checked out (the branch moved after the push, or is another branch).
-//                The Add dialog has no field for a commit, so this is checked after the clone; the importer does not enforce it;
+//                The Add dialog has no field for a commit (its Branch field takes a branch or a tag, and the importer refuses a commit id there), so
+//                this is checked after the clone; the importer does not enforce it. On a push to a branch other merges also reach, it can mean the
+//                branch moved while the job ran: run the job again;
 //   [offered]    the repository does not offer the plugin in "Add a plugin" (the importer refused its folder, or it is not there);
 //   [review]     the review of access does not list exactly what manifest.json declares: every command, process and origin in full, and the count;
 //   [installed]  the catalog does not hold the plugin as an installed, enabled one;
@@ -41,7 +43,7 @@ const manifest = JSON.parse(readFileSync(join(committedDir, "manifest.json"), "u
 const PAGE = "GHOST Protocol";
 
 // What git prints when it cannot reach the host. Only these are retried, and once.
-const NETWORK = /Could not resolve host|unable to access|Failed to connect|Connection (?:timed out|refused|reset)|Operation timed out|Recv failure|SSL|TLS|RPC failed|early EOF|unexpected disconnect|returned error: (?:429|5\d\d)|exceeded 60 seconds/i;
+const NETWORK = /Could not resolve host|unable to access|Failed to connect|Connection (?:timed out|refused|reset)|Operation timed out|Recv failure|\bSSL\b|\bTLS\b|RPC failed|early EOF|unexpected disconnect|returned error: (?:429|5\d\d)|exceeded 60 seconds/i;
 
 test.use({ historyCounts: { alpha: 0, beta: 0 } });
 test.describe.configure({ timeout: 180_000 });
