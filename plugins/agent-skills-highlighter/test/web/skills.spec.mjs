@@ -53,6 +53,13 @@ const leaveSettings = async (page) => {
 };
 // A timer of the page's own: the time the card waits before it closes is what is under test, not the speed of this runner.
 const pageTimer = (page, ms) => page.evaluate((delay) => new Promise((resolve) => setTimeout(resolve, delay)), ms);
+// The skills are on the page, and the host's list has stopped scrolling to the message that holds them. The list keeps scrolling for a moment
+// after a message is on it, and that is a scroll: it closes a card that is open (on purpose; the test of scrolling below), and it moves a
+// box that is measured before and after. A test that acts on a skill waits for the list, the way `open` does, instead of racing it.
+const shown = async (page, count) => {
+  await expect(tokens(page)).toHaveCount(count);
+  await settle(page);
+};
 
 test("a known skill is drawn in a channel, a thread and a DM, and a path, a URL, code and an unknown name are left alone", async ({ page, app }) => {
   await arrange(page, app);
@@ -75,7 +82,7 @@ test("a known skill is drawn in a channel, a thread and a DM, and a path, a URL,
 test("hovering a skill opens the card with its name, description, source and a signal line; mouse-out closes it; the card itself keeps it open", async ({ page, app }) => {
   await arrange(page, app);
   await say(page, "try /brainstorming and /plan-review");
-  await expect(tokens(page)).toHaveCount(2);
+  await shown(page, 2);
   await token(page, "brainstorming").hover();
   await expect(card(page)).toBeVisible();
   await expect(card(page)).toHaveAttribute("role", "tooltip");
@@ -115,7 +122,7 @@ test("hovering a skill opens the card with its name, description, source and a s
 test("by keyboard: a skill is a tab stop, focus opens the card, Esc closes it, moving on closes it", async ({ page, app }) => {
   await arrange(page, app);
   await say(page, "first /brainstorming then /plan-review");
-  await expect(tokens(page)).toHaveCount(2);
+  await shown(page, 2);
   await expect(token(page, "brainstorming")).toHaveAttribute("tabindex", "0");
   await token(page, "brainstorming").focus();
   await expect(card(page)).toBeVisible();
@@ -156,7 +163,7 @@ test("Esc with the card open closes the card and nothing else: the thread behind
   await expect(reply).toBeFocused();
   await page.keyboard.insertText("try /brainstorming here");
   await page.keyboard.press("Enter");
-  await expect(tokens(page)).toHaveCount(1); // the only skill on the page is in the thread
+  await shown(page, 1); // the only skill on the page is in the thread
   // Opened by keyboard focus: Esc closes the card, the thread stays, and the skill keeps the focus.
   await token(page, "brainstorming").focus();
   await expect(card(page)).toBeVisible();
@@ -179,6 +186,7 @@ test("Esc with the card open closes the card and nothing else: the thread behind
 test("Esc with a card the pointer opened while the focus is elsewhere closes the card and still reaches the page; with the focus on the skill it does not", async ({ page, app }) => {
   await arrange(page, app);
   await say(page, "see /brainstorming");
+  await shown(page, 1);
   // What gets as far as the page after the plugin's own listener (which is on the window, in the capture phase).
   await page.evaluate(() => {
     window.__esc = [];
@@ -202,6 +210,7 @@ test("Esc with a card the pointer opened while the focus is elsewhere closes the
 test("a card whose skill is unmounted while it is open closes by itself, with no mouse-out to wait for", async ({ page, app }) => {
   await arrange(page, app);
   await say(page, "see /brainstorming");
+  await shown(page, 1);
   await token(page, "brainstorming").hover();
   await expect(card(page)).toBeVisible();
   // As an edited or a deleted message would do: the node goes, the pointer stays where it was, and no mouseleave is ever sent to it.
@@ -210,6 +219,7 @@ test("a card whose skill is unmounted while it is open closes by itself, with no
   // And it opens again for the next skill.
   await say(page, "and again /plan-review");
   await expect(token(page, "plan-review")).toHaveCount(1);
+  await settle(page);
   await token(page, "plan-review").hover();
   await expect(card(page)).toBeVisible();
 });
@@ -219,6 +229,7 @@ test("a skill is a button for a screen reader: a role, a hint, and whether its c
   await say(page, "run /brainstorming now");
   const button = page.getByRole("button", { name: "/brainstorming", exact: true });
   await expect(button).toHaveCount(1);
+  await settle(page);
   await expect(button).toHaveAttribute("data-skill", "brainstorming");
   await expect(button).toHaveAttribute("aria-description", /Press Enter or Space/);
   await expect(button).toHaveAttribute("aria-expanded", "false");
@@ -244,7 +255,7 @@ test("a long description is clamped to a fixed number of lines and ends in an el
   const longest = Array.from({ length: 73 }, (_, i) => `rl${String(i).padStart(3, "0")}`).join(" "); // 437 characters: the longest of the real descriptions found
   await arrange(page, app, ["@@@\tuser\t\tlong", "name: long", `description: ${words}`, "@@@\tuser\t\treal", "name: real", `description: ${real}`, "@@@\tuser\t\tlongest", "name: longest", `description: ${longest}`, ""].join("\n"));
   await say(page, "/long /real /longest");
-  await expect(tokens(page)).toHaveCount(3);
+  await shown(page, 3);
   const desc = card(page).locator(".megatech-skills__desc");
   const read = () =>
     desc.evaluate((el) => {
@@ -287,6 +298,7 @@ test("a long description is clamped to a fixed number of lines and ends in an el
 test("scrolling the list closes the card, and so does a click elsewhere", async ({ page, app }) => {
   await arrange(page, app);
   await say(page, "see /brainstorming");
+  await shown(page, 1);
   await token(page, "brainstorming").hover();
   await expect(card(page)).toBeVisible();
   await page.locator("[data-message-scroller]").evaluate((el) => el.scrollBy(0, -30));
@@ -300,7 +312,7 @@ test("scrolling the list closes the card, and so does a click elsewhere", async 
 test("the text never changes or moves: no padding, margin or border, the same type, and the same box before and while the card is open", async ({ page, app }) => {
   await arrange(page, app);
   await say(page, "before /brainstorming after, and a long enough line that it wraps onto a second line around /plan-review, then more words to fill it");
-  await expect(tokens(page)).toHaveCount(2);
+  await shown(page, 2);
   const measure = () =>
     page.evaluate(() => {
       const mark = document.querySelector('[data-skill="brainstorming"]');
@@ -338,6 +350,7 @@ test("the glitch stays inside the highlight, behind its own letters: every shado
   await say(page, "see(/brainstorming) now");
   const mark = token(page, "brainstorming");
   await expect(mark).toHaveCount(1);
+  await settle(page);
   // The two strips of page either side of the highlight, which hold "(" and ")": what is drawn there must not change.
   const strips = async () => {
     const box = await mark.boundingBox();
@@ -385,6 +398,7 @@ test("the glitch stays inside the highlight, behind its own letters: every shado
 test("reduced motion: a still brighter highlight and a card that simply appears; otherwise the decloak and the card's glitch run, and nothing moves at rest", async ({ page, app }) => {
   await arrange(page, app);
   await say(page, "see /brainstorming");
+  await shown(page, 1);
   const animation = () => token(page, "brainstorming").evaluate((el) => getComputedStyle(el).animationName);
   const cardAnimation = () => card(page).evaluate((el) => getComputedStyle(el).animationName);
   await page.emulateMedia({ reducedMotion: "no-preference" });
@@ -409,7 +423,7 @@ for (const mode of ["dark", "light"]) {
   test(`${mode} theme: the message's own text stays at 4.5:1 or better on the highlight, in its worst frame, and on the card's plate`, async ({ page, app }) => {
     await arrange(page, app);
     await say(page, "read /brainstorming please");
-    await expect(tokens(page)).toHaveCount(1);
+    await shown(page, 1);
     await page.evaluate((value) => (document.documentElement.dataset.colorMode = value), mode);
     await token(page, "brainstorming").hover();
     await expect(card(page)).toBeVisible();
@@ -482,7 +496,7 @@ for (const mode of ["dark", "light"]) {
 test("the card is the Megatech design system's in dark and the host's own plate and text in light; corners are square", async ({ page, app }) => {
   await arrange(page, app);
   await say(page, "read /brainstorming please");
-  await expect(tokens(page)).toHaveCount(1);
+  await shown(page, 1);
   await token(page, "brainstorming").hover();
   await expect(card(page)).toBeVisible();
   const look = () =>
@@ -587,6 +601,7 @@ test("reading again picks up a new skill and highlights it in a message that is 
 test("disabling the plugin leaves no highlight, no card and no style; enabling it again leaves exactly one of each", async ({ page, app }) => {
   const state = await arrange(page, app);
   await say(page, "see /brainstorming");
+  await shown(page, 1);
   await token(page, "brainstorming").hover();
   await expect(card(page)).toBeVisible();
   await openSettings(page);
