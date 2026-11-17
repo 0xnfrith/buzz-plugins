@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { IMAGE, WORDS } from "../../src/gp/constants";
+import { IMAGE, LIMITS, WORDS } from "../../src/gp/constants";
 import { activate, CreateError, provision, remove, type ActivateInput } from "../../src/gp/flow";
 import { commands } from "../../src/gp/commands";
 import { lineOf } from "../../src/gp/processes";
@@ -19,6 +19,21 @@ afterEach(() => {
   for (const made of rigs.splice(0)) made.cleanup();
   vi.restoreAllMocks();
 });
+
+/**
+ * Runs `body` with the wait for a running agent cut to `ms`, and puts the limit back. The flow reads `LIMITS.running` when the wait starts,
+ * and the gap between two looks stays `LIMITS.pollMs`: only the number of looks changes, never what one look is.
+ */
+async function withWait<T>(ms: number, body: () => Promise<T>): Promise<T> {
+  const limits = LIMITS as { -readonly [K in keyof typeof LIMITS]: number };
+  const was = limits.running;
+  limits.running = ms;
+  try {
+    return await body();
+  } finally {
+    limits.running = was;
+  }
+}
 
 const NAME = "Maple";
 const create = (r: Rig, over: Partial<ActivateInput> = {}) => ({
@@ -275,9 +290,14 @@ describe("every step can fail, and says so in one line", () => {
     const flow = create(r);
     const { pubkey } = await flow.provision();
     r.fake.tweak({ connectingPolls: 1000 });
-    const error = await flow.activate(pubkey).catch((reason: unknown) => reason);
+    // Each look at the status starts the fake docker as a process, so the whole two minutes are 81 processes: more than a busy machine
+    // starts within a test's five seconds. A shorter wait is the same loop with fewer looks, each one through the same fake docker.
+    const looks = 6;
+    const error = await withWait((looks - 1) * LIMITS.pollMs, () => flow.activate(pubkey)).catch((reason: unknown) => reason);
     expect((error as Error).message).toMatch(/could not reach your relay \(wss:\/\/relay\.example\.com\)\. Press Create to try again\.$/);
-    expect(r.slept.length).toBeGreaterThan(10);
+    // It waited the poll gap between looks, and gave up at the first look at or after the end of the wait, not before and not later.
+    expect(r.slept).toEqual(Array(looks - 1).fill(LIMITS.pollMs));
+    expect(r.fake.calls().filter((call) => call.argv.slice(-3).join(" ") === "gp status --json")).toHaveLength(looks);
   });
 
   it("an agent that reports an error ends there with its message", async () => {
