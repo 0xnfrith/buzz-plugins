@@ -3,7 +3,8 @@
 // and the `buzzodz-plugins` crate (the Git importer, the manifest checks, the registry) behind the bridge in bridge.rs, which the browser's
 // `invoke` is routed to. Nothing here stands in for the importer or the loader. The test fails, at a step named in square brackets, when
 //   [network]    the importer cannot reach GitHub (the clone is tried twice, the log says so);
-//   [commit]     the importer read another commit than the one this job checked out (the branch moved after the push, or is another branch);
+//   [commit]     the importer read another commit than the one this job checked out (the branch moved after the push, or is another branch).
+//                The Add dialog has no field for a commit, so this is checked after the clone; the importer does not enforce it;
 //   [offered]    the repository does not offer the plugin in "Add a plugin" (the importer refused its folder, or it is not there);
 //   [review]     the review of access does not list exactly what manifest.json declares: every command, process and origin in full, and the count;
 //   [installed]  the catalog does not hold the plugin as an installed, enabled one;
