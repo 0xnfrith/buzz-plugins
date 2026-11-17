@@ -68,7 +68,7 @@ export function assertStatusShape(status) {
 }
 
 /**
- * Section 15f: `update` is `{available: false, version: null}` with nothing on offer. With a version on offer it is
+ * The update on offer: `update` is `{available: false, version: null}` with nothing on offer. With a version on offer it is
  * `{available: true, version}` (a GHOST Protocol that gives no image), or also `image` and `digest`: the image of that version pinned by
  * digest, `<registry>/ghost-protocol:<version>@<digest>`, and `sha256:<64 hex>`. Both are `null` only for a version offered by hand in a test.
  */

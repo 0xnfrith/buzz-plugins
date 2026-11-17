@@ -78,12 +78,12 @@ describe("the steps for updating by hand, when GHOST Protocol names no image for
   });
 });
 
-// Note 15f: with an update on offer GHOST Protocol names the image of that version pinned by digest, and the pull and the run use it whole.
+// With an update on offer GHOST Protocol names the image of that version pinned by digest, and the pull and the run use it whole.
 const NEW_DIGEST = "c".repeat(64);
 const PINNED = `registry.example/ghost-protocol:0.1.1@sha256:${NEW_DIGEST}`;
 const pinnedOffer = (image: string = PINNED): { version: string; image: UpdateImage } => ({ version: "0.1.1", image: { kind: "pinned", image } });
 
-describe("the steps for updating by hand, when GHOST Protocol names the image of the update (note 15f)", () => {
+describe("the steps for updating by hand, when GHOST Protocol names the image of the update", () => {
   it("are the three commands with the image whole in the pull and in the run, and nothing of a placeholder", () => {
     expect(updateByHand("maple", pinned("registry.example/ghost-protocol", "0.0.0"), pinnedOffer())).toEqual({
       kind: "pinned",

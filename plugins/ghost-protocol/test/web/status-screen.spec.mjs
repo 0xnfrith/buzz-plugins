@@ -551,7 +551,7 @@ test("Update shows the steps to update by hand, instead of the button, when the 
   await expect(button(page, "Restart")).toBeEnabled();
 });
 
-// ---- the update by hand, with the image GHOST Protocol names for the update (note 15f) -----------------------------------------------
+// ---- the update by hand, with the image GHOST Protocol names for the update -----------------------------------------------
 
 const INSPECT_IMAGE = "inspect --format {{.Config.Image}} gp-maple";
 const PLACEHOLDER = /<digest of that version>|<agent image>|<new version>/;

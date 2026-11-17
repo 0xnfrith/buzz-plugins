@@ -20,7 +20,7 @@ export const DEFAULTS = {
   loginCode: null, // the code `gp claude login` wants; null accepts any non-empty line
   relay: "connected", // what the status says once the agent has tried to connect: connected | refused-not-member | unreachable
   connectingPolls: 1, // status calls that say `connecting` before `running`
-  update: { available: false, version: null }, // what the status says about an update; with `image` and `digest` too, as GHOST Protocol gives them (note 15f)
+  update: { available: false, version: null }, // what the status says about an update; with `image` and `digest` too, as GHOST Protocol gives them
   updateStartPolls: 0, // status calls that still say `running` after `gp update request` (the agent finishes its task first)
   updatingPolls: 2, // status calls that say `updating`
   updateGapPolls: 0, // status calls, during the update, for which gp-<slug> is not there (the helper swaps it): a number or "forever"
@@ -48,7 +48,7 @@ export const FAILURES = {
 
 const STATUS_ERROR = { code: "crashed", message: "The agent stopped unexpectedly." };
 
-// The update on offer in the presets: 0.1.1, pinned the way GHOST Protocol's release check does (note 15f) on the registry the seeded agents use.
+// The update on offer in the presets: 0.1.1, pinned the way GHOST Protocol's release check does on the registry the seeded agents use.
 const PINNED_OFFER = { available: true, version: "0.1.1", image: pinnedImage("registry.example", "0.1.1"), digest: `sha256:${digestOf("registry.example", "0.1.1")}` };
 
 export const PRESETS = {
@@ -67,7 +67,7 @@ export const PRESETS = {
   "relay-refuses": { relay: "refused-not-member" },
   "relay-unreachable": { relay: "unreachable" },
   "update-available": { update: { available: true, version: "0.1.1" } },
-  // The status's `update` with the image pinned by digest (note 15f), without `image` and `digest` (an older GHOST Protocol: the preset above),
+  // The status's `update` with the image pinned by digest, without `image` and `digest` (an older GHOST Protocol: the preset above),
   // with both `null` (an offer made by hand in a test), and with an `image` that is not a pinned image of the version on offer.
   "update-pinned": { update: PINNED_OFFER },
   "update-image-null": { update: { available: true, version: "0.1.1", image: null, digest: null } },

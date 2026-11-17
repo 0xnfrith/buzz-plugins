@@ -79,7 +79,7 @@ describe("choosing a scenario", () => {
       fail: { init: { code: "x" }, claudeToken: true, updateRollback: false }, hang: STEPS, delayMs: Object.fromEntries(STEPS.map((step) => [step, 1])),
       loginCode: "123", update: { available: true, version: "2.0.0" }, statusOverride: { future_field: { a: 1 } },
     });
-    // The image of the update on offer and its digest are printed as given, a malformed one too, and null (note 15f).
+    // The image of the update on offer and its digest are printed as given, a malformed one too, and null.
     for (const update of [{ image: null, digest: null }, { image: "not an image", digest: "sha256:abc" }, { image: "registry.example/ghost-protocol:2.0.0" }]) {
       fake.use({ update: { available: true, version: "2.0.0", ...update } });
     }

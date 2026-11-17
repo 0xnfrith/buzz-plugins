@@ -733,8 +733,8 @@ function advance(state, container, name, scenario) {
   // The agent's container runs the new image (the one the offer named, when it was pinned for that version), or the one it ran before when
   // it goes back; the helper keeps the one it was started with.
   const before = container.image;
-  // After an update nothing is on offer: no `image` or `digest` keys (note 15f.1). After a way back the version it left is on offer again,
-  // pinned as before (15f.2) when the scenario's GHOST Protocol gives images: the image the container ran, which is that version's.
+  // After an update nothing is on offer: no `image` or `digest` keys. After a way back the version it left is on offer again,
+  // pinned as before when the scenario's GHOST Protocol gives images: the image the container ran, which is that version's.
   container.update = t.kind === "update" ? { available: false, version: null } : offerAfterRollback(scenario, t.from, before);
   container.image = t.kind === "rollback" && container.previousImage ? container.previousImage : t.image ?? pinnedImage(IMAGE.exec(before).groups.repository, t.to);
   container.previousImage = t.kind === "update" ? before : null;

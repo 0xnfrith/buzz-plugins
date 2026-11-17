@@ -209,8 +209,8 @@ describe("update and way back", () => {
   });
 });
 
-// Note 15f: with an update on offer the status's `update` also carries the image pinned by digest, and its digest.
-describe("the update image, pinned by digest (note 15f)", () => {
+// With an update on offer the status's `update` also carries the image pinned by digest, and its digest.
+describe("the update image, pinned by digest", () => {
   const NEW = imageOfVersion("0.1.1");
   const NEW_DIGEST = `sha256:${NEW.split("@sha256:")[1]}`;
   const image = async (name) => (await fake.run(["inspect", "-f", "{{.Config.Image}}", name])).stdout.trim();
@@ -227,7 +227,7 @@ describe("the update image, pinned by digest (note 15f)", () => {
     assertStatusShape(await status(fake));
   });
 
-  test("update-pinned: the offer names the new version's image, pinned, and its digest, after `version` and in the note's order", async () => {
+  test("update-pinned: the offer names the new version's image, pinned, and its digest, after `version`, in the interface's order", async () => {
     fake = withFake("update-pinned");
     await runningAgent(fake);
     const seen = await status(fake);

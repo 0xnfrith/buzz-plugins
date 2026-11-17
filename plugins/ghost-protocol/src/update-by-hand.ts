@@ -1,7 +1,7 @@
 // The steps for updating an agent by hand, shown instead of the Update button when `gp update request` answers `no-updater`: the agent
 // has no update helper, because its user said no to self-update at install. This file is the one place the commands live.
 //
-// With an update on offer, GHOST Protocol gives the new version's image pinned by digest (`update.image`, note 15f), and the pull and the run
+// With an update on offer, GHOST Protocol gives the new version's image pinned by digest (`update.image`), and the pull and the run
 // use it whole. When it gives none (an older GHOST Protocol, or an offer made by hand in a test), the steps are the tag-only ones with the
 // digest left as a placeholder. When it gives an image that is not a pinned one, there are no steps: a command made from it would be a bad one.
 import { containerOf } from "./commands";

@@ -140,7 +140,7 @@ describe("readStatus", () => {
   });
 });
 
-// Note 15f: with an update on offer, `update` also carries `image`, that version pinned by digest, and `digest`.
+// With an update on offer, `update` also carries `image`, that version pinned by digest, and `digest`.
 describe("readStatus, on the image of the update on offer", () => {
   const HEX = "ab".repeat(32);
   const PINNED = `registry.example/ghost-protocol:0.1.1@sha256:${HEX}`;

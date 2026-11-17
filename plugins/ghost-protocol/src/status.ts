@@ -17,7 +17,7 @@ export const CLAUDES = ["active", "not-active"] as const;
 export type Claude = (typeof CLAUDES)[number];
 
 /**
- * What `update.image` of the status is worth (GHOST Protocol's interface, note 15f). With an update on offer GHOST Protocol gives the image
+ * What `update.image` of the status is worth (GHOST Protocol's interface). With an update on offer GHOST Protocol gives the image
  * of that version pinned by digest, `<registry>/ghost-protocol:<version>@sha256:<64 hex>`, and `digest` (`sha256:<64 hex>`).
  * - `pinned`: it is that, for the version on offer, and the same digest as `update.digest`. Nothing else is `pinned`.
  * - `none`: the keys are not there (an older GHOST Protocol, or nothing on offer), or are `null` (an offer made by hand in a test).
