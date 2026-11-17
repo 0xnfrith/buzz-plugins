@@ -50,11 +50,13 @@ jobs:
       - name: Type check
         run: pnpm exec tsc
       - name: Unit tests
-        # A run that finds no tests passes too, so the machine-readable result says it: some tests ran, every one passed, none was skipped.
+        # Two reporters: `default` prints every failing test to the log, with its name and its error, and `json` writes the report the check
+        # below reads. A run that finds no tests passes too, so the check says it in the machine-readable result: some tests ran, every one
+        # passed, none was skipped. The counts are printed before the check, so a run it fails says why in the log.
         run: |
-          pnpm exec vitest run --reporter=json --outputFile="$RUNNER_TEMP/unit.json"
-          jq -e '.numTotalTests > 0 and .numPassedTests == .numTotalTests and .numFailedTests == 0 and .numPendingTests == 0' "$RUNNER_TEMP/unit.json"
+          pnpm exec vitest run --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/unit.json"
           jq '{tests: .numTotalTests, passed: .numPassedTests, failed: .numFailedTests, skipped: .numPendingTests}' "$RUNNER_TEMP/unit.json"
+          jq -e '.numTotalTests > 0 and .numPassedTests == .numTotalTests and .numFailedTests == 0 and .numPendingTests == 0' "$RUNNER_TEMP/unit.json"
       - name: Fake docker tests
         # The fake `docker` the plugin's later tests put first on the PATH has node:test files and needs no install. The script runs them
         # once the folder exists. From then on it fails when the folder has no *.test.mjs file (`node --test` with a glob that matches
