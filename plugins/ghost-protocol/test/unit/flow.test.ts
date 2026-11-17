@@ -15,9 +15,12 @@ const make = (scenario?: Parameters<typeof rig>[0]) => {
   rigs.push(made);
   return made;
 };
+const FULL_WAIT = LIMITS.running;
 afterEach(() => {
   for (const made of rigs.splice(0)) made.cleanup();
   vi.restoreAllMocks();
+  // `withWait` cuts the wait for one test: a test that leaves it cut would shorten the wait of every test after it.
+  expect(LIMITS.running).toBe(FULL_WAIT);
 });
 
 /**
