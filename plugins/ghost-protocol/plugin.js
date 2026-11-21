@@ -25,7 +25,7 @@ var manifest_default = {
 			{
 				"id": "pull",
 				"program": "docker",
-				"args": ["pull", "registry.invalid/ghost-protocol:0.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000"]
+				"args": ["pull", "ghcr.io/0xnfrith/ghost-protocol:0.15.2@sha256:256dda44a35cdc8306cccd940e66066fb614bad4ecd2d259066d8d32cf84acc0"]
 			},
 			{
 				"id": "run-init",
@@ -329,9 +329,9 @@ var PINNED_IMAGE = /^(?!.*\/ghost-protocol:latest@)[a-z0-9]+(?:[.-][a-z0-9]+)*(?
 * names it (that is the only place it is written, so the review shows the image the plugin may pull and the code runs the same one). The
 * tag tells a person which version it is; the digest is what Docker checks, and a tag can be moved after it was tested where a digest
 * cannot. A bare tag and a bare digest are refused: the image is then an empty name, so the pull does not begin with the words the manifest
-* declares and Create stops before it runs anything. GHOST Protocol sends the registry path, the first version and its digest with its
-* first release; until then the manifest holds a placeholder (version 0.0.0, a digest of zeros) on a name that can never resolve
-* (`.invalid` is reserved for that), so Create ends at the pull with "Docker could not download GHOST Protocol".
+* declares and Create stops before it runs anything. The manifest names the public image `ghcr.io/0xnfrith/ghost-protocol` at version
+* 0.15.2 by the digest that release pins, so Docker finds it by that digest: the plain `0.15.2` tag only exists once the release is
+* promoted from a pre-release. A new release is a new tag and digest in that one entry.
 */
 var IMAGE = pinnedOrNothing((manifest_default.host.processes.find((process) => process.id === "pull")?.args ?? [])[1]);
 function pinnedOrNothing(image) {

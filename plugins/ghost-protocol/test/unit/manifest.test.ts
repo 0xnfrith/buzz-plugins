@@ -109,6 +109,43 @@ describe("manifest.json", () => {
   });
 });
 
+// What a placeholder pin is made of, each part by itself: a registry under `.invalid` (reserved so that a name there never resolves), the
+// version 0.0.0, and a digest of zeros. Each problem is its own entry, so a test can show that every one of them is caught.
+const placeholderProblems = (reference: string | undefined) => {
+  const match = /^(?<registry>[^/]+)\/.+:(?<tag>[^:@/]+)@sha256:(?<digest>[0-9a-f]{64})$/.exec(reference ?? "");
+  if (match?.groups === undefined) return ["not a pinned reference"];
+  const { registry = "", tag = "", digest = "" } = match.groups;
+  const problems: string[] = [];
+  if (/(^|\.)invalid(:[0-9]+)?$/.test(registry)) problems.push("a registry under .invalid");
+  if (/^0(\.0)*$/.test(tag)) problems.push("version 0.0.0");
+  if (/^0{64}$/.test(digest)) problems.push("a digest of zeros");
+  return problems;
+};
+
+describe("the pinned image is not a placeholder", () => {
+  const REAL = "ghcr.io/0xnfrith/ghost-protocol:0.15.2@sha256:256dda44a35cdc8306cccd940e66066fb614bad4ecd2d259066d8d32cf84acc0";
+  const REAL_DIGEST = REAL.slice(REAL.indexOf("@sha256:") + "@sha256:".length);
+
+  it("is what the `pull` process in the manifest names: a real registry, a real version and a real digest", () => {
+    const pulled = manifest.host.processes.find(({ id }) => id === "pull")?.args;
+    expect(placeholderProblems(pulled?.[1])).toEqual([]);
+  });
+
+  it("passes the real pin and refuses each part of a placeholder on its own, so a pin cannot go back to one quietly", () => {
+    expect(placeholderProblems(REAL)).toEqual([]);
+    expect(placeholderProblems(REAL.replace("ghcr.io", "registry.invalid"))).toEqual(["a registry under .invalid"]);
+    expect(placeholderProblems(REAL.replace("ghcr.io", "registry.invalid:5000"))).toEqual(["a registry under .invalid"]);
+    expect(placeholderProblems(REAL.replace(":0.15.2@", ":0.0.0@"))).toEqual(["version 0.0.0"]);
+    expect(placeholderProblems(REAL.replace(REAL_DIGEST, "0".repeat(64)))).toEqual(["a digest of zeros"]);
+  });
+
+  it("refuses the placeholder this plugin held before the first release, whole, and a reference that is not pinned at all", () => {
+    expect(placeholderProblems(`registry.invalid/ghost-protocol:0.0.0@sha256:${"0".repeat(64)}`)).toEqual(["a registry under .invalid", "version 0.0.0", "a digest of zeros"]);
+    expect(placeholderProblems(REAL.slice(0, REAL.indexOf("@")))).toEqual(["not a pinned reference"]);
+    expect(placeholderProblems(undefined)).toEqual(["not a pinned reference"]);
+  });
+});
+
 describe("the process-rule check (so a bad manifest cannot pass quietly)", () => {
   const withProgram = (program: string, args: string[] = []) => ({ host: { processes: [{ id: "x", program, args }] } });
   it("refuses a program that is a path, an argument over 1024 bytes, more than 16 arguments and a NUL", () => {
