@@ -3,7 +3,6 @@ import { IMAGE, PINNED_IMAGE } from "../../src/gp/constants";
 import manifest from "../../manifest.json" with { type: "json" };
 
 const DIGEST = "a".repeat(64);
-const ZEROS = "0".repeat(64);
 
 describe("the image the plugin may use is pinned by tag and digest", () => {
   it("is the form `<registry>/ghost-protocol:<tag>@sha256:<64 lower-case hex>`", () => {
@@ -59,8 +58,8 @@ describe("the image the plugin may use is pinned by tag and digest", () => {
     ]) expect(PINNED_IMAGE.test(image), JSON.stringify(image)).toBe(false);
   });
 
-  it("is, until GHOST Protocol sends the real one, a placeholder that can never resolve: version 0.0.0 and a digest of zeros on .invalid", () => {
-    expect(IMAGE).toBe(`registry.invalid/ghost-protocol:0.0.0@sha256:${ZEROS}`);
+  it("is the public image at v0.15.2, by the digest that release pins (the plain tag only exists after the release is promoted)", () => {
+    expect(IMAGE).toBe("ghcr.io/0xnfrith/ghost-protocol:0.15.2@sha256:256dda44a35cdc8306cccd940e66066fb614bad4ecd2d259066d8d32cf84acc0");
     expect(PINNED_IMAGE.test(IMAGE)).toBe(true);
   });
 });
