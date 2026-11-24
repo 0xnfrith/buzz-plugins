@@ -8,7 +8,8 @@ import { STEP_ORDER } from "../../src/gp/progress";
 // What a stranger with only the Buzz desktop app reads before a GHOST Protocol agent runs: this plugin's README and AGENTS.md, the
 // repository's README and AGENTS.md. They must link to GHOST Protocol's own docs and back, say the same true thing about when Claude is
 // connected (held against the step order the code runs), name the paid plans the Claude guide names, give the relay admin's step, and
-// say that the desktop route has not run.
+// say that the desktop route has not run. The relay must have owner attestations on: a relay without them is not supported yet, and no
+// doc offers the agent as a relay member as a way that works.
 
 const folder = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const root = join(folder, "../..");
@@ -23,6 +24,13 @@ const QUICK_START = `${GP}/blob/main/docs/quick-start.md`;
 const GP_AGENTS = `${GP}/blob/main/AGENTS.md`;
 const GP_README = `${GP}#readme`;
 const PLANS = "Pro, Max, Ultra, Team or Enterprise";
+const RELAY_SETTING = `${QUICK_START}#the-relay-setting-owner-attestations-on`;
+const NOT_YET = "a relay without it is not supported yet";
+// A line that names making the agent a relay member, the member fallback, or skipping the tag; such a line must say it is not supported.
+const MEMBER_WAY = /\b(add|adds|added|adding|make|makes|making|made)\b[^.]{0,30}\b(as )?a (relay )?member\b|member.fallback|can be skipped|tag is then not needed/i;
+/** The lines of a doc that offer the agent as a relay member without saying that way is not supported. */
+const memberOffers = (text: string): string[] =>
+  text.split("\n").filter((line) => MEMBER_WAY.test(line) && !line.includes("not supported"));
 
 /** The text of one `## ` section of a Markdown file, up to the next `## ` heading ("" when there is no such section). */
 function section(text: string, heading: string): string {
@@ -69,10 +77,26 @@ describe("the plugin's README", () => {
     expect(before).toContain(`**A paid Claude plan:** ${PLANS}.`);
     expect(before).toContain("The free plan does not include Claude Code");
   });
-  it("gives the relay admin's step: owner attestations on (off by default), or the agent as a member", () => {
+  it("says the relay must have owner attestations on (off by default), and a relay without it is not supported yet", () => {
+    expect(before).toContain("- **A relay with owner attestations on.**");
     expect(before).toContain("(`BUZZ_ALLOW_NIP_OA_AUTH=true`), which is **off by default**");
-    expect(before).toContain("the relay's admin must add the agent as a member");
+    expect(before).toContain(`The relay must have owner attestations on: ${NOT_YET}.`);
     expect(before).toContain("**Or create a community** in Buzz (it needs an account)");
+  });
+  it("keeps the symptom, with its one cure: owner attestations turned on", () => {
+    expect(before).toContain('the relay refuses the agent ("not a relay member") and it never runs');
+    expect(before).toContain("The one cure is for the relay's admin to turn owner attestations on");
+  });
+  it("links the quick start's relay setting by its heading, never the member fallback's", () => {
+    expect(before).toContain(`](${RELAY_SETTING})`);
+    expect(readme).not.toContain("member-fallback");
+  });
+  it("says the refusal text's member suggestion is not supported", () => {
+    const line = readme.split("\n").find((l) => l.includes("GHOST Protocol's text for it")) ?? "";
+    expect(line).toContain("Only the first way is supported: the agent as a relay member is not supported for now");
+  });
+  it("offers no member admission as a supported way", () => {
+    expect(memberOffers(readme)).toEqual([]);
   });
   it("says when Claude is connected, for each way", () => {
     const form = section(readme, "The create form and the agent's tab");
@@ -108,7 +132,8 @@ describe("the plugin's AGENTS.md", () => {
   });
   it("says a paid Claude plan, the relay admin's step and when Claude is connected", () => {
     expect(agents).toContain(`**A paid Claude plan:** ${PLANS}.`);
-    expect(agents).toContain("(`BUZZ_ALLOW_NIP_OA_AUTH=true`, **off by default**). Otherwise the relay's admin adds the agent as a member");
+    expect(agents).toContain("4. **A relay with owner attestations on.**");
+    expect(agents).toContain(`(\`BUZZ_ALLOW_NIP_OA_AUTH=true\`, **off by default**). The relay must have owner attestations on: ${NOT_YET}.`);
     expect(agents).toContain("**Create agent** signs the agent in itself, at step 7, after the attestation and before the wait.");
     expect(agents).toContain("step 7 is skipped and the agent waits at `needs-claude`");
   });
@@ -117,6 +142,12 @@ describe("the plugin's AGENTS.md", () => {
     expect(row).toContain("With a token, a relay without owner attestations on refuses the agent in step 8");
     expect(row).toContain("With the address, Create agent ends at the Claude sign-in (\"Waiting for you to sign in to Claude\") and does not report the refusal. The agent's tab shows it instead");
     expect(agents).toContain("**Or create a community** in Buzz (it needs an account)");
+  });
+  it("keeps the symptom with its one cure, and offers no member admission as a supported way", () => {
+    expect(agents).toContain('the agent is refused ("not a relay member") and never runs');
+    expect(agents).toContain("The one cure is for the relay's admin to turn owner attestations on");
+    expect(agents).toContain("that way is not supported for now, so do not offer it");
+    expect(memberOffers(agents)).toEqual([]);
   });
   it("gives the terminal way, and what has not run", () => {
     expect(agents).toContain("\n## The other way\n");
@@ -129,7 +160,12 @@ describe("the repository's README and AGENTS.md", () => {
     const line = rootReadme.split("\n").find((l) => l.startsWith("**GHOST Protocol** needs more than the plugin")) ?? "";
     for (const link of ["](plugins/ghost-protocol#before-you-start)", `](${QUICK_START})`, "](plugins/ghost-protocol/AGENTS.md)"]) expect(line).toContain(link);
     expect(line).toContain(`a paid Claude plan (${PLANS})`);
-    expect(line).toContain("owner attestations turned on by its admin (off by default) or with the agent added as a member");
+    expect(line).toContain("a relay with owner attestations on (`BUZZ_ALLOW_NIP_OA_AUTH=true`, turned on by its admin; off by default)");
+    expect(line).toContain("A relay without it is not supported yet.");
+  });
+  it("README and AGENTS.md: offer no member admission as a supported way", () => {
+    expect(memberOffers(rootReadme)).toEqual([]);
+    expect(memberOffers(rootAgents)).toEqual([]);
   });
   it("AGENTS.md: points to the plugin's AGENTS.md", () => {
     expect(rootAgents).toContain("](plugins/ghost-protocol/AGENTS.md)");
