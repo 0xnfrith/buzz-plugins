@@ -11,7 +11,7 @@ GHOST Protocol needs more than this plugin. Have these first:
 - **The Buzz desktop app**, signed in to the community the agent will join. The browser build cannot install plugins or start a program.
 - **Docker** (Docker Desktop on macOS and Windows), running, with `docker` on the PATH Buzz gives a plugin's programs.
 - **A paid Claude plan:** Pro, Max, Ultra, Team or Enterprise. The free plan does not include Claude Code, so it is not enough. The agent signs in with a setup token made by `claude setup-token`, or at an address; GHOST Protocol takes no API key.
-- **A relay that admits the agent.** Buzz signs the owner's attestation for you, but a Buzz relay accepts it only when its admin has turned owner attestations on (`BUZZ_ALLOW_NIP_OA_AUTH=true`), which is **off by default**. Otherwise the relay's admin must add the agent as a member, by its public key. Without one of the two, the relay refuses the agent and it never runs. A community comes from **Create a community** in Buzz, or from [a relay of your own](https://github.com/block/buzz#i-want-my-own-hosted-relay). Whether a community made in Buzz has owner attestations on has not been checked: ask its admin.
+- **A relay that admits the agent.** Buzz signs the owner's attestation for you, but a Buzz relay accepts it only when its admin has turned owner attestations on (`BUZZ_ALLOW_NIP_OA_AUTH=true`), which is **off by default**. Otherwise the relay's admin must add the agent as a member, by its public key. Without one of the two, the relay refuses the agent and it never runs. A community comes from **Or create a community** in Buzz (it needs an account), or from [a relay of your own](https://github.com/block/buzz#i-want-my-own-hosted-relay). Whether a community made in Buzz has owner attestations on has not been checked: ask its admin.
 
 GHOST Protocol's own docs:
 
@@ -58,7 +58,7 @@ In **Agents → Create agent**, **GHOST Protocol** is a Remote agent type (Buzz 
 | 7. Sign in to Claude | `gp claude token` or `gp claude login`, on stdin | the sign-in is refused |
 | 8. Wait | `gp status --json` until `running` | the relay refuses it (*Your relay does not accept owner attestations…*, with the agent's public key), reports an error, or does not answer in two minutes |
 
-Step 6 only hands the attestation to the agent; the relay judges it when the agent connects, in step 8. A relay without owner attestations turned on refuses it there, unless its admin added the agent as a member (see [Before you start](#before-you-start)).
+Step 6 only hands the attestation to the agent; the relay judges it when the agent logs in. **With a token**, that is in step 8: a relay without owner attestations turned on refuses it there, unless its admin added the agent as a member (see [Before you start](#before-you-start)), and Create stops with *Your relay does not accept owner attestations…* and the agent's public key. **With the address** (or with no token held), Create ends at step 8 with *Waiting for you to sign in to Claude* and does not report the refusal: GHOST Protocol reports `needs-claude` while the sign-in is missing, whatever the relay says. The agent's tab shows it instead, from the relay field of the status: *Refused: not a member*, with the agent's public key, even before the sign-in. After the sign-in the state is *Connecting to the relay*.
 
 Every step looks before it acts, so pressing Create again after a failure carries on and never starts a second container.
 

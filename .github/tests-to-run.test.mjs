@@ -82,8 +82,10 @@ test("a change to one plugin calls only that plugin's tests, and the plugin-asse
   assert.deepEqual(pullRequest({ "plugins/agent-stats/plugin.js": "changed\n" }), ["agent-stats", "plugin-assets"]);
 });
 
-test("a change to the README or docs/ calls the plugin-assets check; a change outside plugins/, docs/, assets/ and .github/ calls none", () => {
-  assert.deepEqual(pullRequest({ "README.md": "changed\n" }), ["plugin-assets"]);
+test("a change to the README or docs/ calls the plugin-assets check, the README and AGENTS.md the GHOST Protocol tests; any other change outside plugins/, docs/, assets/ and .github/ calls none", () => {
+  // GHOST Protocol's doc test (test/unit/readme-docs.test.ts) reads the root README.md and AGENTS.md too.
+  assert.deepEqual(pullRequest({ "README.md": "changed\n" }), ["ghost-protocol", "plugin-assets"]);
+  assert.deepEqual(pullRequest({ "AGENTS.md": "changed\n" }), ["ghost-protocol"]);
   assert.deepEqual(pullRequest({ "docs/new.md": "new\n" }), ["plugin-assets"]);
   assert.deepEqual(pullRequest({ "assets/icons/new.svg": "new\n" }), ["plugin-assets"]);
   assert.deepEqual(pullRequest({ "CONTRIBUTING.md": "changed\n", "LICENSE": "changed\n" }), []);
@@ -124,8 +126,8 @@ test("a pull request is read from its merge base, as GitHub lists its files: a l
     const head = repo.commit({ "README.md": "topic\n" });
     repo.git("checkout", "-q", "main");
     const main = repo.commit({ "plugins/vim/plugin.js": "main moved on\n" });
-    assert.deepEqual(running(run(repo.dir, "pull_request", main, head)), ["plugin-assets"]);
-    assert.deepEqual(running(run(repo.dir, "pull_request", start, head)), ["plugin-assets"]);
+    assert.deepEqual(running(run(repo.dir, "pull_request", main, head)), ["ghost-protocol", "plugin-assets"]);
+    assert.deepEqual(running(run(repo.dir, "pull_request", start, head)), ["ghost-protocol", "plugin-assets"]);
   } finally {
     repo.done();
   }

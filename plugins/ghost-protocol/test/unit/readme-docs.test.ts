@@ -45,6 +45,9 @@ describe("the order the docs describe is the order the code runs", () => {
     expect(wait).toBe(claude + 1);
     expect(claude + 1).toBe(7); // step 7 of 8, as the docs number it
   });
+  it("ends Create at the Claude sign-in with the words the docs quote", () => {
+    expect(read(join(folder, "src/gp/flow.ts"))).toContain('"Waiting for you to sign in to Claude"');
+  });
   it("names the same paid plans as the Claude guide", () => {
     expect(GUIDE.subscription).toContain(`a paid Claude plan: ${PLANS}`);
   });
@@ -69,15 +72,18 @@ describe("the plugin's README", () => {
   it("gives the relay admin's step: owner attestations on (off by default), or the agent as a member", () => {
     expect(before).toContain("(`BUZZ_ALLOW_NIP_OA_AUTH=true`), which is **off by default**");
     expect(before).toContain("the relay's admin must add the agent as a member");
-    expect(before).toContain("**Create a community**");
+    expect(before).toContain("**Or create a community** in Buzz (it needs an account)");
   });
   it("says when Claude is connected, for each way", () => {
     const form = section(readme, "The create form and the agent's tab");
     expect(form).toContain("**When Claude is connected:** a token pasted here is sent by **Create agent** itself, at step 7, after the attestation and before the wait.");
     expect(form).toContain("With the address, step 7 is skipped and the agent waits at *Waiting for a Claude sign-in*; you sign in afterwards on the agent's **GHOST Protocol** tab.");
   });
-  it("says the relay judges the attestation in step 8, not step 6", () => {
-    expect(section(readme, "The create form and the agent's tab")).toContain("Step 6 only hands the attestation to the agent; the relay judges it when the agent connects, in step 8.");
+  it("says where a refusal shows: Create stops at step 8 with a token; with the address, the tab shows it, even before the sign-in", () => {
+    const form = section(readme, "The create form and the agent's tab");
+    expect(form).toContain("Step 6 only hands the attestation to the agent; the relay judges it when the agent logs in. **With a token**, that is in step 8");
+    expect(form).toContain("**With the address** (or with no token held), Create ends at step 8 with *Waiting for you to sign in to Claude* and does not report the refusal");
+    expect(form).toContain("The agent's tab shows it instead, from the relay field of the status: *Refused: not a member*, with the agent's public key, even before the sign-in.");
   });
   it("keeps Not covered honest: the desktop route never ran, and the one hand run stopped at the attestation", () => {
     const row = readme.split("\n").find((line) => line.startsWith("| **Not covered** |")) ?? "";
@@ -105,6 +111,12 @@ describe("the plugin's AGENTS.md", () => {
     expect(agents).toContain("(`BUZZ_ALLOW_NIP_OA_AUTH=true`, **off by default**). Otherwise the relay's admin adds the agent as a member");
     expect(agents).toContain("**Create agent** signs the agent in itself, at step 7, after the attestation and before the wait.");
     expect(agents).toContain("step 7 is skipped and the agent waits at `needs-claude`");
+  });
+  it("says where a refusal shows, for each way, and names the Buzz button as Buzz does", () => {
+    const row = agents.split("\n").find((line) => line.startsWith("| 4. Create agent |")) ?? "";
+    expect(row).toContain("With a token, a relay without owner attestations on refuses the agent in step 8");
+    expect(row).toContain("With the address, Create agent ends at the Claude sign-in (\"Waiting for you to sign in to Claude\") and does not report the refusal. The agent's tab shows it instead");
+    expect(agents).toContain("**Or create a community** in Buzz (it needs an account)");
   });
   it("gives the terminal way, and what has not run", () => {
     expect(agents).toContain("\n## The other way\n");
