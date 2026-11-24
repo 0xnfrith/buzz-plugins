@@ -85,6 +85,8 @@ good/vim
 
 Some plugins need one more step, such as pasting your own token or key: each plugin's page says how. Updating, turning a plugin off and safe mode are in [`docs/install.md`](docs/install.md).
 
+**GHOST Protocol** needs more than the plugin: Docker, a paid Claude plan (Pro, Max, Ultra, Team or Enterprise), and a relay that admits the agent, either with owner attestations turned on by its admin (off by default) or with the agent added as a member. Start at [its plugin page](plugins/ghost-protocol#before-you-start), then GHOST Protocol's own [quick start](https://github.com/0xnfrith/ghost-protocol/blob/main/docs/quick-start.md). [`plugins/ghost-protocol/AGENTS.md`](plugins/ghost-protocol/AGENTS.md) has the whole chain, from adding the plugin to a running agent.
+
 > [!IMPORTANT]
 > Plugins run as trusted code inside the app, not in a sandbox. Read the code before you install it; it is all plain JavaScript.
 
