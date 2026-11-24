@@ -7,8 +7,8 @@ The plugin is screens and `docker` commands only. GHOST Protocol itself is one c
 ## What the person needs before anything else
 
 1. **The Buzz desktop app**, signed in to a community. The browser build cannot install plugins or start a program.
-2. **Docker** (Docker Desktop on macOS and Windows), running.
-3. **A paid Claude plan:** Pro, Max, Ultra, Team or Enterprise. The free plan does not include Claude Code. The agent signs in with a setup token from `claude setup-token`, or at an address it shows. GHOST Protocol takes no API key.
+2. **Docker**, running. Docker Desktop or OrbStack were used on the Mac run; no other Docker engine has been tried.
+3. **A paid Claude plan:** Pro, Max, Ultra, Team or Enterprise. The free plan does not include Claude Code. The agent signs in with a setup token from `claude setup-token`, or at an address it shows. `claude setup-token` needs Claude Code installed, on any computer: the person pastes the token it prints into Buzz. GHOST Protocol takes no API key.
 4. **A relay with owner attestations on.** Buzz signs the owner's attestation, and the relay accepts it only when owner attestations are on (`BUZZ_ALLOW_NIP_OA_AUTH=true`, **off by default**). The relay must have owner attestations on: a relay without it is not supported yet. Without it, the agent is refused ("not a relay member") and never runs. The one cure is for the relay's admin to turn owner attestations on, then restart the agent, or wait about a minute. The same refusal has one other cause: the owner key that signs the attestation must itself be a member of the relay (the person's own Buzz account there is), and GHOST Protocol's `gp attest --relay` checks it. This is the owner's key, not the agent's. The refusal's text also suggests adding the agent as a relay member: that way is not supported for now, so do not offer it. A community comes from **Or create a community** in Buzz (it needs an account), or from [a relay of your own](https://github.com/block/buzz#i-want-my-own-hosted-relay). Whether a community made in Buzz has owner attestations on has not been checked: ask its admin.
 
 ## The chain
@@ -17,7 +17,7 @@ The plugin is screens and `docker` commands only. GHOST Protocol itself is one c
 |---|---|---|---|
 | 1. Add the plugin | **Settings → Plugins → Manage plugins → Add**. Enter `https://github.com/0xnfrith/buzz-plugins` and press **Find**. Pick **GHOST Protocol**, press **Continue**, check the review (one **Run docker** and eleven **Start docker**), then press **Install plugin**. | The browser build cannot install it. The plugin does not start: the error is in **Manage plugins**. | [README.md](README.md#how-to-install), "How to install" |
 | 2. Check Docker | Open the **GHOST Protocol** page (Cmd+K or Ctrl+K, type `GHOST`). It should say **Docker is running**. | **Docker didn't answer**: Docker is not running, or Buzz cannot find `docker` on its PATH (a Buzz started from the macOS Dock may not have a terminal's PATH). | [README.md](README.md#what-the-page-shows-first), "What the page shows first" |
-| 3. The create form | **Agents → New agent → Create a new agent**, with **GHOST Protocol** as the **Harness**. Give a name and choose **This computer**. Answer **Your Claude account** (paste a token, or choose the address) and **Let GHOST Protocol update itself?** | **Create agent** is held back until both are answered and, for the token way, a token with no space in it is pasted. | [README.md](README.md#the-create-form-and-the-agents-tab), "The create form and the agent's tab" |
+| 3. The create form | **Agents → New agent → GHOST Protocol → This computer**. Give a name. Answer **Your Claude account** (paste a token, or choose the address) and **Let GHOST Protocol update itself?** | **Create agent** is held back until both are answered and, for the token way, a token with no space in it is pasted. | [README.md](README.md#the-create-form-and-the-agents-tab), "The create form and the agent's tab" |
 | 4. Create agent | Press **Create agent**. Eight steps run: check Docker, download, make the key, start the agent, start the helper (after a yes), hand over the attestation, sign in to Claude, wait until running. | A failure names its step in one line. The first download is about 1 GB on disk. With a token, a relay without owner attestations on refuses the agent in step 8 ("Your relay does not accept owner attestations…"), with the agent's public key. With the address, Create agent ends at the Claude sign-in ("Waiting for you to sign in to Claude") and does not report the refusal. The agent's tab shows it instead (*Refused: not a member*, with the public key), even before the sign-in. | the table in the same section |
 | 5. Running | The agent's **GHOST Protocol** tab says **Running**, with Claude **Active**. Mention the agent in a channel. | *Waiting for a Claude sign-in*: sign in on the tab. *Connecting to the relay* with *Refused: not a member*: prerequisite 4. | [README.md](README.md#what-it-does), the status screen |
 
@@ -46,9 +46,12 @@ Without Buzz, GHOST Protocol installs from a terminal with its `get.sh` or `get.
   - the unit tests;
   - the fake `docker` tests;
   - the browser suite, and the install check in Buzz's web build;
-  - once, by hand on Linux without Buzz, the create flow against the real image, which stopped at the attestation.
+  - once, by hand on Linux without Buzz, the create flow against the real image, which stopped at the attestation;
+  - once, by hand on a Mac, the desktop route from a plugin already installed: an agent made with **Create agent** showed **Running**, Claude **Active** and the relay **Connected**, and answered a direct message (Docker Desktop or OrbStack were used on the Mac run).
 - **Not run:**
-  - the desktop route: no install in the desktop app, no **Create agent**, no real relay accepting the attestation, no mention answered;
-  - anything on a Mac or on Windows.
+  - the desktop route from a stranger's own install: no install through the Git importer in the desktop app (the plugin was already installed on that Mac);
+  - the address way of signing in to Claude;
+  - the desktop app on Windows and on Linux;
+  - other Docker engines.
 
 Say so when you help someone, and do not promise more. The [README's "What was and was not checked"](README.md#what-was-and-was-not-checked) is the record.

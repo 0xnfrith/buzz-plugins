@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { GUIDE } from "../../src/claude-words";
@@ -8,8 +8,9 @@ import { STEP_ORDER } from "../../src/gp/progress";
 // What a stranger with only the Buzz desktop app reads before a GHOST Protocol agent runs: this plugin's README and AGENTS.md, the
 // repository's README and AGENTS.md. They must link to GHOST Protocol's own docs and back, say the same true thing about when Claude is
 // connected (held against the step order the code runs), name the paid plans the Claude guide names, give the relay admin's step, and
-// say that the desktop route has not run. The relay must have owner attestations on: a relay without them is not supported yet, and no
-// doc offers the agent as a relay member as a way that works.
+// say what the one hand run on a Mac covered and what is still not run, and give the menu path one way. The relay must have owner
+// attestations on: a relay without them is not supported yet, and no doc offers the agent as a relay member as a way that works. Every
+// link to a heading in these four docs lands on one.
 
 const folder = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const root = join(folder, "../..");
@@ -28,17 +29,32 @@ const RELAY_SETTING = `${QUICK_START}#the-relay-setting-owner-attestations-on`;
 const NOT_YET = "a relay without it is not supported yet";
 // A sentence that names making the agent a relay member, membership, the member fallback, or skipping the tag. Such a sentence passes
 // only with the docs' own words after it, NOT_SUPPORTED; any other "not supported" (one that says it works after all) does not count.
-const MEMBER = String.raw`\b(add|adds|added|adding|make|makes|making|made)\b[^.]{0,30}\b(as )?a (relay )?member\b|\bmembership\b|\bmembers? needs? no tag|member.fallback|can be skipped|tag is then not needed`;
+const VERB = String.raw`add|adds|added|adding|admit|admits|admitted|admitting|make|makes|making|made|register|registers|registered|registering|enrol|enrols|enroll|enrolls|enrolled|enrolling|enrolment|enrollment|invite|invites|invited|inviting|list|lists|listed|listing`;
+const MEMBER = String.raw`\b(${VERB})\b[^.]{0,30}\b(as )?a (relay )?member\b|\bmembership\b|\bmembers? needs? no tag|member.fallback|can be skipped|tag is then not needed`;
 const NOT_SUPPORTED = ": that way is not supported for now";
 const MEMBER_WAY = new RegExp(MEMBER, "i");
 const MEMBER_WAY_DISOWNED = new RegExp(`(${MEMBER}).*${NOT_SUPPORTED}`, "i");
+/** A line that starts a block of its own in Markdown (a blank line, a heading, a table row, a list item or a quote); any other line
+ * continues the one before it, as a wrapped line of the same paragraph. */
+const STARTS_BLOCK = /^\s*($|#|\||[-*+] |\d+[.)] |>)/;
+/** A doc's paragraphs, each with its wrapped lines joined by a space, so a sentence is read whole wherever its lines break. */
+const paragraphs = (text: string): string[] =>
+  text.split("\n").reduce<string[]>((blocks, line) => {
+    if (STARTS_BLOCK.test(line) || blocks.length === 0 || blocks[blocks.length - 1] === "") blocks.push(line.trim());
+    else blocks[blocks.length - 1] += ` ${line.trim()}`;
+    return blocks;
+  }, []);
 /** The sentences of a doc that offer the agent as a relay member without the docs' words that this way is not supported. */
 const memberOffers = (text: string): string[] =>
-  text
-    .split("\n")
-    .flatMap((line) => line.split(/(?<=[.!?]) /))
+  paragraphs(text)
+    .flatMap((paragraph) => paragraph.split(/(?<=[.!?]) /))
     .filter((sentence) => MEMBER_WAY.test(sentence) && !MEMBER_WAY_DISOWNED.test(sentence));
 const OWNER_MEMBER = "the owner key that signs the attestation must itself be a member of the relay";
+const STILL_NOT_RUN =
+  "a stranger's own install through the Git importer (the plugin was already installed on that Mac), the address way of signing in to Claude, the desktop app on Windows and on Linux, and other Docker engines";
+const ENGINES = "Docker Desktop or OrbStack were used on the Mac run";
+/** The menu path to the create form, as Buzz 1.0.6 shows it: the one way the docs write it. */
+const MENU_PATH = "**Agents → New agent → GHOST Protocol → This computer**";
 
 /** The text of one `## ` section of a Markdown file, up to the next `## ` heading ("" when there is no such section). */
 function section(text: string, heading: string): string {
@@ -52,6 +68,39 @@ const linesOf = (text: string, needles: readonly string[]): number[] => {
   const lines = text.split("\n");
   return needles.map((needle) => lines.findIndex((line) => line.includes(needle)));
 };
+/** The anchors GitHub gives a Markdown file's headings: the text as shown, in lower case, with every character that is not a letter, a
+ * digit, a space, `-` or `_` removed, spaces made `-`, and `-1`, `-2` and on after a slug already taken. Headings in code blocks do not count. */
+function slugs(text: string): string[] {
+  const seen = new Map<string, number>();
+  let fenced = false;
+  const out: string[] = [];
+  for (const line of text.split("\n")) {
+    if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
+    const heading = fenced ? null : /^#{1,6}\s+(.*?)\s*#*\s*$/.exec(line);
+    if (!heading) continue;
+    const shown = heading[1].replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/<[^>]+>/g, "").replace(/[`*]/g, "");
+    const base = shown.toLowerCase().replace(/[^\p{L}\p{M}\p{N}\p{Pc}\- ]/gu, "").replace(/ /g, "-");
+    const count = seen.get(base) ?? 0;
+    seen.set(base, count + 1);
+    out.push(count === 0 ? base : `${base}-${count}`);
+  }
+  return out;
+}
+/** Every link in the given docs (path from the repository's root, and text) to a heading of a file in the repository, `](#...)` or
+ * `](<path>#...)` with a relative path (a folder means its README.md), whose heading is not there: "<doc>: <link>". */
+function brokenAnchors(docs: Record<string, string>): string[] {
+  const broken: string[] = [];
+  for (const [doc, text] of Object.entries(docs)) {
+    for (const [, target, anchor] of text.matchAll(/\]\(([^)\s#]*)#([^)\s]+)\)/g)) {
+      if (/^[a-z]+:/i.test(target)) continue;
+      let file = target === "" ? doc : relative(root, join(root, dirname(doc), target));
+      if (!file.endsWith(".md")) file = join(file, "README.md");
+      const body = docs[file] ?? read(join(root, file));
+      if (!slugs(body).includes(decodeURIComponent(anchor))) broken.push(`${doc}: ${target}#${anchor}`);
+    }
+  }
+  return broken;
+}
 
 describe("the order the docs describe is the order the code runs", () => {
   it("hands over the attestation, then signs in to Claude, then waits", () => {
@@ -79,9 +128,22 @@ describe("the member check", () => {
       "A member needs no tag, so ask the admin.",
       "See the member fallback.",
       "Add it as a relay member: that way is not supported elsewhere.",
+      "Or the admin can admit the agent as a member.",
+      "Or the admin can register the agent as a relay member.",
+      "Ask the admin to enrol it as a member.",
+      "Ask the admin to enroll the agent as a member.",
+      "Or invite the agent to be a member.",
+      "Or the admin can list the agent's key as a member.",
     ]) {
       expect(memberOffers(sentence), sentence).toEqual([sentence]);
     }
+  });
+  it("reads a sentence whole when its lines are wrapped", () => {
+    expect(memberOffers("Or the admin can register the agent\nas a relay member, by its public key.")).toEqual([
+      "Or the admin can register the agent as a relay member, by its public key.",
+    ]);
+    expect(memberOffers("- One item.\n- Or invite the agent\n  to be a member.\n\nA new paragraph.")).toEqual(["- Or invite the agent to be a member."]);
+    expect(memberOffers("Adding the agent as a relay member: that way is\nnot supported for now.")).toEqual([]);
   });
   it("lets through the docs' own sentences", () => {
     for (const sentence of [
@@ -145,10 +207,14 @@ describe("the plugin's README", () => {
     expect(form).toContain("**With the address** (or with no token held), Create ends at step 8 with *Waiting for you to sign in to Claude* and does not report the refusal");
     expect(form).toContain("The agent's tab shows it instead, from the relay field of the status: *Refused: not a member*, with the agent's public key, even before the sign-in.");
   });
-  it("keeps Not covered honest: the desktop route never ran, and the one hand run stopped at the attestation", () => {
+  it("keeps Not covered honest: one hand run on a Mac worked, what is still not run, and the Linux run that stopped at the attestation", () => {
     const row = readme.split("\n").find((line) => line.startsWith("| **Not covered** |")) ?? "";
-    expect(row).toContain("**The desktop route, ever.** Nobody has yet installed this plugin in the Buzz desktop app and made an agent with **Create agent**, on any system");
+    expect(row).toContain("**The desktop route, beyond one hand run on a Mac.** One hand run on a Mac worked: an agent made with **Create agent** in the Buzz desktop app showed *Running*, Claude *Active* and the relay *Connected*, and answered a direct message.");
+    expect(row).toContain(`Not run yet: ${STILL_NOT_RUN}.`);
+    expect(row).toContain(ENGINES);
     expect(row).toContain("then stopped at the attestation");
+    const platforms = readme.split("\n").find((line) => line.startsWith("| Platforms |")) ?? "";
+    expect(platforms).toContain("**macOS:** one hand run worked, from a plugin already installed");
   });
 });
 
@@ -188,7 +254,15 @@ describe("the plugin's AGENTS.md", () => {
   });
   it("gives the terminal way, and what has not run", () => {
     expect(agents).toContain("\n## The other way\n");
-    expect(agents).toContain("the desktop route: no install in the desktop app, no **Create agent**");
+    expect(agents).toContain("once, by hand on a Mac, the desktop route from a plugin already installed: an agent made with **Create agent** showed **Running**, Claude **Active** and the relay **Connected**, and answered a direct message");
+    for (const notRun of [
+      "the desktop route from a stranger's own install: no install through the Git importer in the desktop app (the plugin was already installed on that Mac);",
+      "the address way of signing in to Claude;",
+      "the desktop app on Windows and on Linux;",
+      "other Docker engines.",
+    ]) {
+      expect(section(agents, "What has and has not been run")).toContain(`  - ${notRun}`);
+    }
   });
 });
 
@@ -207,5 +281,55 @@ describe("the repository's README and AGENTS.md", () => {
   });
   it("AGENTS.md: points to the plugin's AGENTS.md", () => {
     expect(rootAgents).toContain("](plugins/ghost-protocol/AGENTS.md)");
+  });
+  it("README: says one hand run on a Mac worked, and what is still not run", () => {
+    const row = rootReadme.split("\n").find((l) => l.startsWith("| [GHOST Protocol](plugins/ghost-protocol) |")) ?? "";
+    expect(row).toContain("| one hand run worked ⁸ |");
+    const note = rootReadme.split("\n").find((l) => l.includes("⁸ It checks that Docker is running")) ?? "";
+    expect(note).toContain("One hand run on a Mac worked: an agent made in the desktop app ran, with Claude active and the relay connected, and answered a direct message");
+    expect(note).toContain(`Not run yet: ${STILL_NOT_RUN}`);
+    expect(note).toContain(ENGINES);
+  });
+});
+
+describe("the four docs, together", () => {
+  const docs = { "README.md": rootReadme, "AGENTS.md": rootAgents, "plugins/ghost-protocol/README.md": readme, "plugins/ghost-protocol/AGENTS.md": agents };
+  it("write the menu path one way, as Buzz 1.0.6 shows it", () => {
+    expect(readme).toContain(MENU_PATH);
+    expect(agents).toContain(MENU_PATH);
+    for (const [name, text] of Object.entries(docs)) {
+      for (const other of ["Create a new agent", "Agents → Create agent", "as the Harness", "as the **Harness**"]) expect(text, `${name}: ${other}`).not.toContain(other);
+      for (const path of text.match(/Agents → [^*]*/g) ?? []) expect(`**${path}**`, name).toBe(MENU_PATH);
+    }
+  });
+  it("name the Docker engines the Mac run used, and no Docker Desktop as the only one", () => {
+    for (const text of [readme, agents, rootReadme]) expect(text).toContain(ENGINES);
+    for (const [name, text] of Object.entries(docs)) {
+      expect(text, name).not.toContain("Docker Desktop on macOS and Windows");
+      expect(text, name).not.toContain("Needs Docker Desktop");
+    }
+  });
+  it("say that `claude setup-token` needs Claude Code installed, on any computer", () => {
+    expect(section(readme, "Before you start")).toContain("`claude setup-token` needs Claude Code installed, on any computer");
+    expect(agents).toContain("`claude setup-token` needs Claude Code installed, on any computer");
+  });
+  it("link only to headings that are there", () => {
+    expect(brokenAnchors(docs)).toEqual([]);
+  });
+});
+
+describe("the anchor check", () => {
+  it("makes GitHub's slugs", () => {
+    expect(slugs("## The create form and the agent's tab\n## What `gp` asks for\n### Step 1: *Docker*, [the page](x.md)\n## Tests\n## Tests\n```\n## Not a heading\n```")).toEqual([
+      "the-create-form-and-the-agents-tab",
+      "what-gp-asks-for",
+      "step-1-docker-the-page",
+      "tests",
+      "tests-1",
+    ]);
+  });
+  it("catches an anchor that names no heading, in this file or in another", () => {
+    const fixture = { "plugins/ghost-protocol/README.md": "# Title\n\n## Before you start\n\nSee [it](#before-you-start).\n", "plugins/ghost-protocol/AGENTS.md": "[a](README.md#before-you-start) [b](README.md#no-such-heading) [c](#nowhere)\n" };
+    expect(brokenAnchors(fixture)).toEqual(["plugins/ghost-protocol/AGENTS.md: README.md#no-such-heading", "plugins/ghost-protocol/AGENTS.md: #nowhere"]);
   });
 });
