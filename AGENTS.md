@@ -2,6 +2,8 @@
 
 For any agent that builds or reviews in this repository.
 
+Helping someone get a GHOST Protocol agent running from Buzz? The whole chain is in [`plugins/ghost-protocol/AGENTS.md`](plugins/ghost-protocol/AGENTS.md).
+
 ## Production, and the pipeline every change needs
 
 - **`main` is production.** People install plugins straight from this repository's default branch through the Buzz desktop app's Git importer (`docs/install.md`), so whatever lands on `main` reaches every user who installs or updates from it. A plugin must work in the real Buzz desktop app.
