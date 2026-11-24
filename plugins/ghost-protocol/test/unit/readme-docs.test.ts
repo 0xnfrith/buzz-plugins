@@ -51,8 +51,9 @@ const memberOffers = (text: string): string[] =>
     .filter((sentence) => MEMBER_WAY.test(sentence) && !MEMBER_WAY_DISOWNED.test(sentence));
 const OWNER_MEMBER = "the owner key that signs the attestation must itself be a member of the relay";
 const STILL_NOT_RUN =
-  "a stranger's own install through the Git importer (the plugin was already installed on that Mac), the address way of signing in to Claude, the desktop app on Windows and on Linux, and other Docker engines";
-const ENGINES = "Docker Desktop or OrbStack were used on the Mac run";
+  "a stranger's own install through the Git importer (the plugin was already installed on that Mac), the address way of signing in to Claude, the desktop app on Windows and on Linux, Docker Desktop and other Docker engines";
+const ENGINES = "OrbStack was used on the Mac run";
+const DOCKER_DESKTOP = "Docker Desktop is the engine Buzz's docs expect, but it has not been run here";
 /** The menu path to the create form, as Buzz 1.0.6 shows it: the one way the docs write it. */
 const MENU_PATH = "**Agents → New agent → GHOST Protocol → This computer**";
 
@@ -259,7 +260,7 @@ describe("the plugin's AGENTS.md", () => {
       "the desktop route from a stranger's own install: no install through the Git importer in the desktop app (the plugin was already installed on that Mac);",
       "the address way of signing in to Claude;",
       "the desktop app on Windows and on Linux;",
-      "other Docker engines.",
+      "Docker Desktop (the engine Buzz's docs expect) and other Docker engines.",
     ]) {
       expect(section(agents, "What has and has not been run")).toContain(`  - ${notRun}`);
     }
@@ -302,9 +303,14 @@ describe("the four docs, together", () => {
       for (const path of text.match(/Agents → [^*]*/g) ?? []) expect(`**${path}**`, name).toBe(MENU_PATH);
     }
   });
-  it("name the Docker engines the Mac run used, and no Docker Desktop as the only one", () => {
-    for (const text of [readme, agents, rootReadme]) expect(text).toContain(ENGINES);
+  it("name OrbStack as the one engine the Mac run used, and Docker Desktop as expected but not run", () => {
+    for (const text of [readme, agents, rootReadme]) {
+      expect(text).toContain(ENGINES);
+      expect(text).toContain(DOCKER_DESKTOP);
+    }
     for (const [name, text] of Object.entries(docs)) {
+      expect(text, name).not.toMatch(/Docker Desktop (or|and) OrbStack|OrbStack (or|and) Docker Desktop/);
+      expect(text, name).not.toMatch(/Docker Desktop[^.;|]{0,40}\bwere used\b/);
       expect(text, name).not.toContain("Docker Desktop on macOS and Windows");
       expect(text, name).not.toContain("Needs Docker Desktop");
     }

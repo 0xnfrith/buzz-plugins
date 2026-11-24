@@ -10,7 +10,7 @@
 # register the plugin from a fixture, so they do not run the Git importer, the loader or the install review. The `install` job does: it adds
 # the plugin through Buzz's own "Add a plugin" dialog (plugins/ghost-protocol/test/install), with Buzz's `buzzodz-plugins` crate behind the
 # plugin commands, and holds the review, the start-up and the page's place in Search and the sidebar to the committed manifest.json. Neither
-# is a run in the desktop app, which is not built yet (AGENTS.md), and the plugin's first real check is a run on a real Mac.
+# is a run in the desktop app, which is not built yet (AGENTS.md); by hand, one run in the desktop app on a Mac, with OrbStack, worked.
 name: GHOST Protocol tests
 
 on:

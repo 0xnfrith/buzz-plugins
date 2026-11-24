@@ -7,7 +7,7 @@ The plugin is screens and `docker` commands only. GHOST Protocol itself is one c
 ## What the person needs before anything else
 
 1. **The Buzz desktop app**, signed in to a community. The browser build cannot install plugins or start a program.
-2. **Docker**, running. Docker Desktop or OrbStack were used on the Mac run; no other Docker engine has been tried.
+2. **Docker**, running. OrbStack was used on the Mac run. Docker Desktop is the engine Buzz's docs expect, but it has not been run here, and no other Docker engine has been tried.
 3. **A paid Claude plan:** Pro, Max, Ultra, Team or Enterprise. The free plan does not include Claude Code. The agent signs in with a setup token from `claude setup-token`, or at an address it shows. `claude setup-token` needs Claude Code installed, on any computer: the person pastes the token it prints into Buzz. GHOST Protocol takes no API key.
 4. **A relay with owner attestations on.** Buzz signs the owner's attestation, and the relay accepts it only when owner attestations are on (`BUZZ_ALLOW_NIP_OA_AUTH=true`, **off by default**). The relay must have owner attestations on: a relay without it is not supported yet. Without it, the agent is refused ("not a relay member") and never runs. The one cure is for the relay's admin to turn owner attestations on, then restart the agent, or wait about a minute. The same refusal has one other cause: the owner key that signs the attestation must itself be a member of the relay (the person's own Buzz account there is), and GHOST Protocol's `gp attest --relay` checks it. This is the owner's key, not the agent's. The refusal's text also suggests adding the agent as a relay member: that way is not supported for now, so do not offer it. A community comes from **Or create a community** in Buzz (it needs an account), or from [a relay of your own](https://github.com/block/buzz#i-want-my-own-hosted-relay). Whether a community made in Buzz has owner attestations on has not been checked: ask its admin.
 
@@ -47,11 +47,11 @@ Without Buzz, GHOST Protocol installs from a terminal with its `get.sh` or `get.
   - the fake `docker` tests;
   - the browser suite, and the install check in Buzz's web build;
   - once, by hand on Linux without Buzz, the create flow against the real image, which stopped at the attestation;
-  - once, by hand on a Mac, the desktop route from a plugin already installed: an agent made with **Create agent** showed **Running**, Claude **Active** and the relay **Connected**, and answered a direct message (Docker Desktop or OrbStack were used on the Mac run).
+  - once, by hand on a Mac, the desktop route from a plugin already installed: an agent made with **Create agent** showed **Running**, Claude **Active** and the relay **Connected**, and answered a direct message (OrbStack was used on the Mac run).
 - **Not run:**
   - the desktop route from a stranger's own install: no install through the Git importer in the desktop app (the plugin was already installed on that Mac);
   - the address way of signing in to Claude;
   - the desktop app on Windows and on Linux;
-  - other Docker engines.
+  - Docker Desktop (the engine Buzz's docs expect) and other Docker engines.
 
 Say so when you help someone, and do not promise more. The [README's "What was and was not checked"](README.md#what-was-and-was-not-checked) is the record.
