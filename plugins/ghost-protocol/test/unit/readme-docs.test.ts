@@ -26,11 +26,19 @@ const GP_README = `${GP}#readme`;
 const PLANS = "Pro, Max, Ultra, Team or Enterprise";
 const RELAY_SETTING = `${QUICK_START}#the-relay-setting-owner-attestations-on`;
 const NOT_YET = "a relay without it is not supported yet";
-// A line that names making the agent a relay member, the member fallback, or skipping the tag; such a line must say it is not supported.
-const MEMBER_WAY = /\b(add|adds|added|adding|make|makes|making|made)\b[^.]{0,30}\b(as )?a (relay )?member\b|member.fallback|can be skipped|tag is then not needed/i;
-/** The lines of a doc that offer the agent as a relay member without saying that way is not supported. */
+// A sentence that names making the agent a relay member, membership, the member fallback, or skipping the tag. Such a sentence passes
+// only with the docs' own words after it, NOT_SUPPORTED; any other "not supported" (one that says it works after all) does not count.
+const MEMBER = String.raw`\b(add|adds|added|adding|make|makes|making|made)\b[^.]{0,30}\b(as )?a (relay )?member\b|\bmembership\b|\bmembers? needs? no tag|member.fallback|can be skipped|tag is then not needed`;
+const NOT_SUPPORTED = ": that way is not supported for now";
+const MEMBER_WAY = new RegExp(MEMBER, "i");
+const MEMBER_WAY_DISOWNED = new RegExp(`(${MEMBER}).*${NOT_SUPPORTED}`, "i");
+/** The sentences of a doc that offer the agent as a relay member without the docs' words that this way is not supported. */
 const memberOffers = (text: string): string[] =>
-  text.split("\n").filter((line) => MEMBER_WAY.test(line) && !line.includes("not supported"));
+  text
+    .split("\n")
+    .flatMap((line) => line.split(/(?<=[.!?]) /))
+    .filter((sentence) => MEMBER_WAY.test(sentence) && !MEMBER_WAY_DISOWNED.test(sentence));
+const OWNER_MEMBER = "the owner key that signs the attestation must itself be a member of the relay";
 
 /** The text of one `## ` section of a Markdown file, up to the next `## ` heading ("" when there is no such section). */
 function section(text: string, heading: string): string {
@@ -61,6 +69,30 @@ describe("the order the docs describe is the order the code runs", () => {
   });
 });
 
+describe("the member check", () => {
+  it("catches the member way, however it is put, and a 'not supported' that is not the docs' own words", () => {
+    for (const sentence of [
+      "Or ask the admin to add the agent as a member: not supported elsewhere but works.",
+      "Otherwise the relay's admin must add the agent as a member, by its public key.",
+      "Or give the agent membership of the relay.",
+      "Members need no tag.",
+      "A member needs no tag, so ask the admin.",
+      "See the member fallback.",
+      "Add it as a relay member: that way is not supported elsewhere.",
+    ]) {
+      expect(memberOffers(sentence), sentence).toEqual([sentence]);
+    }
+  });
+  it("lets through the docs' own sentences", () => {
+    for (const sentence of [
+      "The refusal's text also suggests adding the agent as a relay member: that way is not supported for now, so do not offer it.",
+      "The same refusal has one other cause: the owner key that signs the attestation must itself be a member of the relay (your own Buzz account there is).",
+    ]) {
+      expect(memberOffers(sentence), sentence).toEqual([]);
+    }
+  });
+});
+
 describe("the plugin's README", () => {
   const before = section(readme, "Before you start");
   it("has a Before you start section, before what it does", () => {
@@ -85,15 +117,19 @@ describe("the plugin's README", () => {
   });
   it("keeps the symptom, with its one cure: owner attestations turned on", () => {
     expect(before).toContain('the relay refuses the agent ("not a relay member") and it never runs');
-    expect(before).toContain("The one cure is for the relay's admin to turn owner attestations on");
+    expect(before).toContain("The one cure is for the relay's admin to turn owner attestations on, then restart the agent, or wait about a minute.");
+  });
+  it("says the owner's own key must be a relay member, and that gp attest --relay checks it", () => {
+    expect(before).toContain(`The same refusal has one other cause: ${OWNER_MEMBER} (your own Buzz account there is)`);
+    expect(before).toContain("`gp attest --relay` checks it. This is the owner's key, not the agent's.");
   });
   it("links the quick start's relay setting by its heading, never the member fallback's", () => {
     expect(before).toContain(`](${RELAY_SETTING})`);
     expect(readme).not.toContain("member-fallback");
   });
   it("says the refusal text's member suggestion is not supported", () => {
-    const line = readme.split("\n").find((l) => l.includes("GHOST Protocol's text for it")) ?? "";
-    expect(line).toContain("Only the first way is supported: the agent as a relay member is not supported for now");
+    const line = readme.split("\n").find((l) => l.includes("the plugin's text for it")) ?? "";
+    expect(line).toContain("(the second way, adding the agent as a relay member: that way is not supported for now)");
   });
   it("offers no member admission as a supported way", () => {
     expect(memberOffers(readme)).toEqual([]);
@@ -145,7 +181,8 @@ describe("the plugin's AGENTS.md", () => {
   });
   it("keeps the symptom with its one cure, and offers no member admission as a supported way", () => {
     expect(agents).toContain('the agent is refused ("not a relay member") and never runs');
-    expect(agents).toContain("The one cure is for the relay's admin to turn owner attestations on");
+    expect(agents).toContain("The one cure is for the relay's admin to turn owner attestations on, then restart the agent, or wait about a minute.");
+    expect(agents).toContain(`The same refusal has one other cause: ${OWNER_MEMBER} (the person's own Buzz account there is)`);
     expect(agents).toContain("that way is not supported for now, so do not offer it");
     expect(memberOffers(agents)).toEqual([]);
   });
@@ -162,6 +199,7 @@ describe("the repository's README and AGENTS.md", () => {
     expect(line).toContain(`a paid Claude plan (${PLANS})`);
     expect(line).toContain("a relay with owner attestations on (`BUZZ_ALLOW_NIP_OA_AUTH=true`, turned on by its admin; off by default)");
     expect(line).toContain("A relay without it is not supported yet.");
+    expect(line).toContain("The owner key that signs the attestation must itself be a member of the relay (your own Buzz account there is).");
   });
   it("README and AGENTS.md: offer no member admission as a supported way", () => {
     expect(memberOffers(rootReadme)).toEqual([]);
