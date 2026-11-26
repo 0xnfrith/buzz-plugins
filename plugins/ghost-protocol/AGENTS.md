@@ -47,8 +47,9 @@ Without Buzz, GHOST Protocol installs from a terminal with its `get.sh` or `get.
   - the fake `docker` tests;
   - the browser suite, and the install check in Buzz's web build;
   - once, by hand on Linux without Buzz, the create flow against the real image, which stopped at the attestation;
-  - once, by hand on a Mac, the desktop route from a plugin already installed: an agent made with **Create agent** showed **Running**, Claude **Active** and the relay **Connected**, and answered a direct message (OrbStack was used on the Mac run).
+  - once, by hand on a Mac, the desktop route from a plugin already installed: an agent made with **Create agent** showed **Running**, Claude **Active** and the relay **Connected**, and answered a direct message (OrbStack was used on the Mac run; that run was of the form before the Harness entry was renamed Megatech and had three choices).
 - **Not run:**
+  - the Megatech Harness entry and its three choices in the desktop app (the Mac run was before them);
   - the desktop route from a stranger's own install: no install through the Git importer in the desktop app (the plugin was already installed on that Mac);
   - the address way of signing in to Claude;
   - the desktop app on Windows and on Linux;

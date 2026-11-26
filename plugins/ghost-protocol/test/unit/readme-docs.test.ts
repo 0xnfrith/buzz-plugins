@@ -51,7 +51,7 @@ const memberOffers = (text: string): string[] =>
     .filter((sentence) => MEMBER_WAY.test(sentence) && !MEMBER_WAY_DISOWNED.test(sentence));
 const OWNER_MEMBER = "the owner key that signs the attestation must itself be a member of the relay";
 const STILL_NOT_RUN =
-  "a stranger's own install through the Git importer (the plugin was already installed on that Mac), the address way of signing in to Claude, the desktop app on Windows and on Linux, Docker Desktop and other Docker engines";
+  "the Megatech Harness entry and its three choices in the desktop app, a stranger's own install through the Git importer (the plugin was already installed on that Mac), the address way of signing in to Claude, the desktop app on Windows and on Linux, Docker Desktop and other Docker engines";
 const ENGINES = "OrbStack was used on the Mac run";
 const DOCKER_DESKTOP = "Docker Desktop is the engine Buzz's docs expect, but it has not been run here";
 /** The menu path to the create form, as Buzz 1.0.6 shows it: the one way the docs write it. */
@@ -257,6 +257,7 @@ describe("the plugin's AGENTS.md", () => {
     expect(agents).toContain("\n## The other way\n");
     expect(agents).toContain("once, by hand on a Mac, the desktop route from a plugin already installed: an agent made with **Create agent** showed **Running**, Claude **Active** and the relay **Connected**, and answered a direct message");
     for (const notRun of [
+      "the Megatech Harness entry and its three choices in the desktop app (the Mac run was before them);",
       "the desktop route from a stranger's own install: no install through the Git importer in the desktop app (the plugin was already installed on that Mac);",
       "the address way of signing in to Claude;",
       "the desktop app on Windows and on Linux;",
@@ -290,6 +291,27 @@ describe("the repository's README and AGENTS.md", () => {
     expect(note).toContain("One hand run on a Mac worked: an agent made in the desktop app ran, with Claude active and the relay connected, and answered a direct message");
     expect(note).toContain(`Not run yet: ${STILL_NOT_RUN}`);
     expect(note).toContain(ENGINES);
+  });
+});
+
+describe("what the docs say of the Megatech Harness entry and the hand run", () => {
+  it("README: the browser suite row names the Megatech entry, the disabled choice and the content machine's held-back Create", () => {
+    const row = readme.split("\n").find((line) => line.startsWith("| Browser suite (`test/web`) |")) ?? "";
+    for (const part of [
+      "the type in the Harness list as Megatech (one entry, and none still named GHOST Protocol)",
+      "**Personal agent, hosted** disabled with *coming soon* and no call",
+      "**Content machine, hosted** showing the megatech sign-in text, hiding the two questions and holding Create back",
+      "starting nothing from a press of Create, Enter in the name, the form submitted by the page, the button's own click method or a submit event",
+    ]) {
+      expect(row, part).toContain(part);
+    }
+  });
+  it("say the one Mac hand run was of the form before the Megatech entry, in each doc that gives it", () => {
+    expect(readme).toContain("That run was of the form before this version: the Harness entry then said GHOST Protocol and the form had two choices, so the Megatech entry and its three choices have not been seen in the desktop app.");
+    const row = readme.split("\n").find((line) => line.startsWith("| **Not covered** |")) ?? "";
+    expect(row).toContain("That run was of the form before this version, with the Harness entry named GHOST Protocol and two choices (**This computer**, and **Hosted**, disabled): the Megatech entry and its three choices have not been seen in the desktop app.");
+    expect(agents).toContain("that run was of the form before the Harness entry was renamed Megatech and had three choices");
+    expect(rootReadme).toContain("(that run was before the Harness entry was renamed Megatech and had three choices)");
   });
 });
 
