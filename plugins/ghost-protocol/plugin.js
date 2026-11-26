@@ -372,8 +372,11 @@ var startingConfig = (leads = CLAUDE_LEADS) => ({
 	selfUpdate: null,
 	claudeWay: leads
 });
+/** What Create says of the content machine, and what its form says when it is chosen. */
+var CONTENT_MACHINE_SOON = "The content machine runs on a megatech machine. It needs a megatech sign-in, and sign-up is coming soon.";
 function chosenFrom(config) {
 	const value = typeof config === "object" && config !== null ? config : {};
+	if (value.machine !== void 0) return { problem: value.machine === "content" ? CONTENT_MACHINE_SOON : "Choose which agent to make." };
 	if (value.place === "hosted") return { problem: "Hosted is coming soon." };
 	if (value.place !== "local") return { problem: "Choose where the agent runs." };
 	if (typeof value.selfUpdate !== "boolean") return { problem: "Answer the question about updating itself." };
@@ -1056,8 +1059,8 @@ function agentType(deps) {
 	};
 	return {
 		id: TYPE_ID,
-		title: "GHOST Protocol",
-		description: "Your personal GHOST Protocol agent, running in Docker on this computer.",
+		title: "Megatech",
+		description: "Megatech agents: your personal GHOST Protocol agent, running in Docker on this computer. Hosted agents are coming soon.",
 		defaults: () => ({ config: startingConfig() }),
 		summary: () => "On this computer",
 		...deps.CreateConfiguration ? { CreateConfiguration: deps.CreateConfiguration } : {},
@@ -1692,7 +1695,8 @@ function createParts(progress, secrets) {
 		const token = React.useSyncExternalStore(secrets.subscribe, secrets.token);
 		const claude = React.useSyncExternalStore(progress.subscribe, progress.view).steps.find((step) => step.id === "claude");
 		const signedIn = claude?.state === "done";
-		const ready = config.selfUpdate !== null && (config.claudeWay === "login" || signedIn || tokenFit(token));
+		const content = config.machine === "content";
+		const ready = !content && config.selfUpdate !== null && (config.claudeWay === "login" || signedIn || tokenFit(token));
 		React.useEffect(() => {
 			onReadyChange?.(ready);
 		}, [ready, onReadyChange]);
@@ -1706,23 +1710,42 @@ function createParts(progress, secrets) {
 		}, harnessControl, /* @__PURE__ */ React.createElement("fieldset", {
 			className: "gp-create-group",
 			disabled
-		}, /* @__PURE__ */ React.createElement("legend", null, "Where it runs"), /* @__PURE__ */ React.createElement("label", { className: "gp-choice" }, /* @__PURE__ */ React.createElement("input", {
+		}, /* @__PURE__ */ React.createElement("legend", null, "Agent type"), /* @__PURE__ */ React.createElement("label", { className: "gp-choice" }, /* @__PURE__ */ React.createElement("input", {
 			type: "radio",
-			name: "gp-where",
-			value: "local",
-			checked: true,
-			readOnly: true
-		}), /* @__PURE__ */ React.createElement("span", null, "This computer")), /* @__PURE__ */ React.createElement("label", {
+			name: "gp-machine",
+			value: "personal",
+			checked: !content,
+			onChange: () => onChange({
+				place: config.place,
+				selfUpdate: config.selfUpdate,
+				claudeWay: config.claudeWay
+			})
+		}), /* @__PURE__ */ React.createElement("span", null, "Personal agent, this computer")), /* @__PURE__ */ React.createElement("p", { className: "gp-hint gp-detail" }, "Runs in Docker, on your own computer."), /* @__PURE__ */ React.createElement("label", {
 			className: "gp-choice",
 			"aria-disabled": "true"
 		}, /* @__PURE__ */ React.createElement("input", {
 			type: "radio",
-			name: "gp-where",
-			value: "hosted",
+			name: "gp-machine",
+			value: "personal-hosted",
 			checked: false,
 			disabled: true,
 			readOnly: true
-		}), /* @__PURE__ */ React.createElement("span", null, "Hosted"), /* @__PURE__ */ React.createElement("span", { className: "gp-soon" }, "coming soon"))), /* @__PURE__ */ React.createElement("fieldset", { className: "gp-create-group" }, /* @__PURE__ */ React.createElement("legend", null, "Your Claude account"), /* @__PURE__ */ React.createElement("p", {
+		}), /* @__PURE__ */ React.createElement("span", null, "Personal agent, hosted"), /* @__PURE__ */ React.createElement("span", { className: "gp-soon" }, "coming soon")), /* @__PURE__ */ React.createElement("p", { className: "gp-hint gp-detail" }, "Would run on a megatech machine, not on your computer."), /* @__PURE__ */ React.createElement("label", { className: "gp-choice" }, /* @__PURE__ */ React.createElement("input", {
+			type: "radio",
+			name: "gp-machine",
+			value: "content",
+			checked: content,
+			onChange: () => onChange({
+				...config,
+				machine: "content"
+			})
+		}), /* @__PURE__ */ React.createElement("span", null, "Content machine, hosted")), /* @__PURE__ */ React.createElement("p", { className: "gp-hint gp-detail" }, "Runs on a megatech machine, not on your computer.")), content ? /* @__PURE__ */ React.createElement("fieldset", {
+			className: "gp-create-group",
+			"data-gp": "content-machine"
+		}, /* @__PURE__ */ React.createElement("legend", null, "Megatech sign-in"), /* @__PURE__ */ React.createElement("p", {
+			className: "gp-hint",
+			role: "status"
+		}, CONTENT_MACHINE_SOON), /* @__PURE__ */ React.createElement("p", { className: "gp-hint" }, "Create agent stays off until then. Nothing is made and nothing is charged.")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("fieldset", { className: "gp-create-group" }, /* @__PURE__ */ React.createElement("legend", null, "Your Claude account"), /* @__PURE__ */ React.createElement("p", {
 			className: "gp-hint",
 			role: "status",
 			"data-gp": "claude-status"
@@ -1773,7 +1796,7 @@ function createParts(progress, secrets) {
 				...config,
 				selfUpdate: false
 			})
-		}), /* @__PURE__ */ React.createElement("span", null, "No"))));
+		}), /* @__PURE__ */ React.createElement("span", null, "No")))));
 	}
 	function Steps({ steps }) {
 		return /* @__PURE__ */ React.createElement("ol", {
@@ -1789,8 +1812,9 @@ function createParts(progress, secrets) {
 			"aria-hidden": "true"
 		}, MARKS[step.state]), /* @__PURE__ */ React.createElement("span", { className: "gp-step-label" }, step.label), /* @__PURE__ */ React.createElement("span", { className: "gp-step-state" }, step.state === "skipped" ? "skipped" : step.state === "failed" ? "stopped" : ""), step.note !== "" && step.state !== "failed" && /* @__PURE__ */ React.createElement("span", { className: "gp-step-note" }, step.note))));
 	}
-	function Progression() {
+	function Progression({ config }) {
 		const view = React.useSyncExternalStore(progress.subscribe, progress.view);
+		if (config.machine === "content") return null;
 		if (!view.active) return /* @__PURE__ */ React.createElement("p", { className: "gp-hint gp-create" }, "Press Create and the steps show here.");
 		return /* @__PURE__ */ React.createElement("div", {
 			className: "gp-create",
@@ -2367,6 +2391,7 @@ var CREATE_CSS = `
 .gp-choice[aria-disabled="true"] { opacity: 0.6; cursor: default; }
 .gp-soon { color: var(--gp-muted); font-size: 12px; }
 .gp-hint { margin: 0; color: var(--gp-muted); overflow-wrap: anywhere; }
+.gp-choice + .gp-detail { margin: -2px 0 4px 24px; font-size: 12px; }
 .gp-question { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
 .gp-input { width: 100%; min-width: 0; height: 30px; padding: 0 8px; border: 1px solid var(--gp-line); border-radius: 4px; background: transparent; color: inherit; font: inherit; }
 .gp-create code { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }

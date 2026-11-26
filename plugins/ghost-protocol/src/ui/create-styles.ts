@@ -20,6 +20,7 @@ export const CREATE_CSS = /* css */ `
 .gp-choice[aria-disabled="true"] { opacity: 0.6; cursor: default; }
 .gp-soon { color: var(--gp-muted); font-size: 12px; }
 .gp-hint { margin: 0; color: var(--gp-muted); overflow-wrap: anywhere; }
+.gp-choice + .gp-detail { margin: -2px 0 4px 24px; font-size: 12px; }
 .gp-question { margin: 0; font-weight: 500; overflow-wrap: anywhere; }
 .gp-input { width: 100%; min-width: 0; height: 30px; padding: 0 8px; border: 1px solid var(--gp-line); border-radius: 4px; background: transparent; color: inherit; font: inherit; }
 .gp-create code { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }

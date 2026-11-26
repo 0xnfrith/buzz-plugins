@@ -1,6 +1,8 @@
-// The "GHOST Protocol" agent type: a Remote type, so Buzz holds no key and runs nothing. It makes Buzz's `provision` and `activate` the two
-// halves of src/gp/flow.ts, and its `remove` the flow's removal. The type is screens and docker commands only: the agent's key is made
-// inside the agent's own data volume, and the plugin never sees it.
+// The "Megatech" agent type (its id stays "ghost-protocol", the key of every agent made before it was renamed): a Remote type, so Buzz holds
+// no key and runs nothing. Buzz lists one entry per type in its Harness row, with no way to disable one, so the choice between a
+// personal agent and a content machine is made inside the type's own form (src/ui/CreateForm.tsx). It makes Buzz's `provision` and
+// `activate` the two halves of src/gp/flow.ts, and its `remove` the flow's removal. The type is screens and docker commands only: the
+// agent's key is made inside the agent's own data volume, and the plugin never sees it.
 import type { AgentType, Relay } from "./agents.d";
 import type { Host } from "./buzz";
 import type { Book } from "./gp/book";
@@ -55,8 +57,8 @@ export function agentType(deps: TypeDeps): AgentType<Config> {
 
   return {
     id: TYPE_ID,
-    title: "GHOST Protocol",
-    description: "Your personal GHOST Protocol agent, running in Docker on this computer.",
+    title: "Megatech",
+    description: "Megatech agents: your personal GHOST Protocol agent, running in Docker on this computer. Hosted agents are coming soon.",
     defaults: () => ({ config: startingConfig() }),
     summary: () => "On this computer",
     ...(deps.CreateConfiguration ? { CreateConfiguration: deps.CreateConfiguration } : {}),

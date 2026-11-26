@@ -20,12 +20,17 @@ const REFUSED = "Your relay does not accept owner attestations. Ask its admin to
 
 test.afterEach(cleanupFakes);
 
-test("the type is in the Harness list, and its form asks the three things and holds Create back until they are answered", async ({ page, app }) => {
+test("the type is in the Harness list as Megatech, and its form asks the three things and holds Create back until they are answered", async ({ page, app }) => {
   const fake = await arrange(page, app);
   const dialog = await openForm(page);
-  await expect(dialog.getByRole("combobox", { name: "Harness" })).toContainText("GHOST Protocol");
-  await expect(form(page).getByText("Where it runs", { exact: true })).toBeVisible();
-  await expect(form(page).getByRole("radio", { name: "This computer" })).toBeChecked();
+  await expect(dialog.getByRole("combobox", { name: "Harness" })).toContainText("Megatech");
+  // One entry in the list, called Megatech: no entry still named GHOST Protocol, and none for each of the three agent types.
+  await dialog.getByRole("combobox", { name: "Harness" }).click();
+  await expect(page.getByRole("option", { name: "Megatech" })).toHaveCount(1);
+  await expect(page.getByRole("option", { name: /GHOST Protocol|Personal agent|Content machine/ })).toHaveCount(0);
+  await page.getByRole("option", { name: "Megatech" }).click(); // the same entry again: closes the list, changes nothing
+  await expect(form(page).getByText("Agent type", { exact: true })).toBeVisible();
+  await expect(form(page).getByRole("radio", { name: "Personal agent, this computer" })).toBeChecked();
   await expect(form(page).getByText(QUESTION, { exact: true })).toBeVisible();
   await expect(form(page).getByRole("radio", { name: "Yes", exact: true })).not.toBeChecked();
   await expect(form(page).getByRole("radio", { name: "No", exact: true })).not.toBeChecked();
@@ -52,17 +57,99 @@ test("the type is in the Harness list, and its form asks the three things and ho
   expect(fake.calls()).toEqual([]);
 });
 
-test("Hosted is shown, disabled, and says coming soon; it makes no call and cannot be chosen", async ({ page, app }) => {
+test("Personal agent, hosted is shown, disabled, and says coming soon; it makes no call and cannot be chosen", async ({ page, app }) => {
   const fake = await arrange(page, app);
   const dialog = await openForm(page);
-  const hosted = form(page).getByRole("radio", { name: /^Hosted/ });
+  const hosted = form(page).getByRole("radio", { name: /^Personal agent, hosted/ });
   await expect(hosted).toBeDisabled();
   await expect(form(page).getByText("coming soon", { exact: true })).toBeVisible();
   await hosted.click({ force: true });
-  await expect(form(page).getByRole("radio", { name: "This computer" })).toBeChecked();
+  await expect(form(page).getByRole("radio", { name: "Personal agent, this computer" })).toBeChecked();
   await fill(dialog);
   await expect(dialog.getByRole("button", { name: "Create agent" })).toBeEnabled();
   expect(await gp(page)).toEqual({ calls: [], kills: 0 });
+});
+
+test("each choice says where it runs, and Content machine, hosted says it needs a megatech sign-in, hides the personal agent's questions, and holds Create back", async ({ page, app }) => {
+  const fake = await arrange(page, app);
+  const dialog = await openForm(page);
+  const personal = form(page).getByRole("radio", { name: "Personal agent, this computer" });
+  const content = form(page).getByRole("radio", { name: "Content machine, hosted" });
+  await expect(form(page).getByText("Runs in Docker, on your own computer.", { exact: true })).toBeVisible();
+  await expect(form(page).getByText("Would run on a megatech machine, not on your computer.", { exact: true })).toBeVisible();
+  await expect(form(page).getByText("Runs on a megatech machine, not on your computer.", { exact: true })).toBeVisible();
+  // None of the three lines contains "on this computer": that is a listed agent's summary, and the specs wait for it by its text.
+  await expect(page.getByText("On this computer")).toHaveCount(0);
+  await expect(content).toBeEnabled();
+  await expect(content).not.toBeChecked();
+  await expect(form(page).locator('[data-gp="content-machine"]')).toHaveCount(0);
+
+  await fill(dialog); // a name, a yes and a token: a personal agent could be made now
+  const submit = dialog.getByRole("button", { name: "Create agent" });
+  await expect(submit).toBeEnabled();
+  await content.check();
+  await expect(content).toBeChecked();
+  await expect(personal).not.toBeChecked();
+  const signIn = form(page).locator('[data-gp="content-machine"]');
+  await expect(signIn).toContainText("The content machine runs on a megatech machine. It needs a megatech sign-in, and sign-up is coming soon.");
+  await expect(signIn).toContainText("Nothing is made and nothing is charged.");
+  // The personal agent's two questions are not shown, and there are no steps to press Create for.
+  await expect(form(page).getByText(QUESTION, { exact: true })).toHaveCount(0);
+  await expect(form(page).getByLabel("Claude setup token")).toHaveCount(0);
+  await expect(form(page).locator('[data-gp="claude-status"]')).toHaveCount(0);
+  await expect(page.getByText("Press Create and the steps show here.")).toHaveCount(0);
+  await expect(submit).toBeDisabled();
+  await shot(page, "form-3-content-machine");
+
+  // Choosing back gives the personal agent's form again, still answered, and Create is open again.
+  await personal.check();
+  await expect(personal).toBeChecked();
+  await expect(signIn).toHaveCount(0);
+  await expect(form(page).getByText(QUESTION, { exact: true })).toBeVisible();
+  await expect(form(page).getByRole("radio", { name: "Yes", exact: true })).toBeChecked();
+  await expect(submit).toBeEnabled();
+  expect(await gp(page)).toEqual({ calls: [], kills: 0 });
+  expect(fake.calls()).toEqual([]);
+});
+
+test("a content machine makes nothing by any way Create can be reached: no call, no step, no intro, no agent", async ({ page, app }) => {
+  const fake = await arrange(page, app);
+  const dialog = await openForm(page);
+  await fill(dialog);
+  await form(page).getByRole("radio", { name: "Content machine, hosted" }).check();
+  const submit = dialog.getByRole("button", { name: "Create agent" });
+  await expect(submit).toBeDisabled();
+
+  const untouched = async (way) => {
+    // The dialog is still the form: no "Meet your remote agent" screen, no steps, nothing run, nothing made.
+    await expect(dialog, way).toBeVisible();
+    await expect(introOf(page), way).toHaveCount(0);
+    await expect(progress(page), way).toHaveCount(0);
+    expect(await gp(page), way).toEqual({ calls: [], kills: 0 });
+    expect(fake.calls(), way).toEqual([]);
+    expect(fake.state().containers, way).toEqual({});
+  };
+  // The button, pressed in spite of being off; Enter in the name; the form submitted by the page itself; the button's own click method.
+  await submit.click({ force: true });
+  await untouched("a press of Create");
+  await dialog.getByPlaceholder("Name").press("Enter");
+  await untouched("Enter in the name");
+  await page.locator('form[aria-label="New agent"]').evaluate((element) => element.requestSubmit());
+  await untouched("the form submitted by the page");
+  await submit.evaluate((element) => element.click());
+  await untouched("the button's click method");
+  // The form's own submit button, were there another: a submit event dispatched straight at the form.
+  await page.locator('form[aria-label="New agent"]').evaluate((element) => element.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+  await untouched("a submit event");
+  // Nothing about this in the list of agents either.
+  await expect(page.getByText("On this computer")).toHaveCount(0);
+
+  // A personal agent is still made the usual way afterwards, from the same dialog.
+  await form(page).getByRole("radio", { name: "Personal agent, this computer" }).check();
+  await expect(submit).toBeEnabled();
+  await create(page, dialog);
+  await expect(page.getByText("On this computer")).toBeVisible({ timeout: 60_000 });
+  expect(Object.keys(fake.state().containers).sort()).toEqual(["gp-maple", "gp-maple.updater"]);
 });
 
 test("Create goes from the form to a listed agent: every step through the fake, in order, with the helper after a yes", async ({ page, app }) => {
