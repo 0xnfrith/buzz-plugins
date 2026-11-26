@@ -31,7 +31,7 @@ describe("apply", () => {
     const { ctx } = setup();
     expect(ctx.pages.register).toHaveBeenCalledTimes(1);
     expect(ctx.agents.register).toHaveBeenCalledTimes(1);
-    expect(ctx.agents.register.mock.calls[0]?.[0]).toMatchObject({ id: "ghost-protocol", title: "GHOST Protocol" });
+    expect(ctx.agents.register.mock.calls[0]?.[0]).toMatchObject({ id: "ghost-protocol", title: "Megatech" });
     expect(Object.keys(ctx.agents.register.mock.calls[0]?.[0].remote).sort()).toEqual(["activate", "profile", "provision", "remove"]);
   });
 

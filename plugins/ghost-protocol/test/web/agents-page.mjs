@@ -73,14 +73,14 @@ export const step = (page, id) => progress(page).locator(`[data-step="${id}"]`);
 export const calls = (fake) => fake.calls().map((call) => call.argv.join(" "));
 export const gp = (page) => page.evaluate(() => ({ calls: window.__gp.calls, kills: window.__gp.kills }));
 
-/** New agent, Create a new agent, and the GHOST Protocol harness. */
+/** New agent, Create a new agent, and the Megatech harness (the plugin's agent type, which was named GHOST Protocol before). */
 export async function openForm(page) {
   await page.getByRole("button", { name: "New agent" }).click();
   await page.getByRole("menuitem", { name: /Create a new agent/ }).click();
   const dialog = dialogOf(page);
   await expect(dialog).toBeVisible();
   await dialog.getByRole("combobox", { name: "Harness" }).click();
-  await page.getByRole("option", { name: "GHOST Protocol" }).click();
+  await page.getByRole("option", { name: "Megatech" }).click();
   await expect(form(page)).toBeVisible();
   return dialog;
 }

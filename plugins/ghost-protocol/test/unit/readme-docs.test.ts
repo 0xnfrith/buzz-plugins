@@ -55,7 +55,7 @@ const STILL_NOT_RUN =
 const ENGINES = "OrbStack was used on the Mac run";
 const DOCKER_DESKTOP = "Docker Desktop is the engine Buzz's docs expect, but it has not been run here";
 /** The menu path to the create form, as Buzz 1.0.6 shows it: the one way the docs write it. */
-const MENU_PATH = "**Agents → New agent → GHOST Protocol → This computer**";
+const MENU_PATH = "**Agents → New agent → Megatech → Personal agent, this computer**";
 
 /** The text of one `## ` section of a Markdown file, up to the next `## ` heading ("" when there is no such section). */
 function section(text: string, heading: string): string {

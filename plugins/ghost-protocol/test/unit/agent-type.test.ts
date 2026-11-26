@@ -36,9 +36,11 @@ const activateInput = (pubkey: string, over: Record<string, unknown> = {}) => ({
 describe("the type", () => {
   it("is a Remote type with the four steps Buzz needs, and a starting config that asks both questions", () => {
     const { type } = setup();
-    expect(type).toMatchObject({ id: "ghost-protocol", title: "GHOST Protocol" });
+    // The title is what Buzz's Harness row shows; the id is the key of every agent made before the title changed, so it stays.
+    expect(type).toMatchObject({ id: "ghost-protocol", title: "Megatech" });
     expect(Object.keys(type.remote).sort()).toEqual(["activate", "profile", "provision", "remove"]);
     expect(type.defaults()).toEqual({ config: { place: "local", selfUpdate: null, claudeWay: CLAUDE_LEADS } });
+    expect(type.defaults().config).not.toHaveProperty("machine");
     expect(type.summary?.({})).toBe("On this computer");
   });
 
@@ -96,6 +98,21 @@ describe("the type", () => {
     await expect(type.remote.provision(provisionInput({ config: { ...config, claudeWay: "email" } }))).rejects.toThrow(/Choose how to sign in/);
     await expect(type.remote.activate(activateInput("a".repeat(64), { config: { ...config, selfUpdate: null } }))).rejects.toThrow(/Answer the question/);
     expect(calls).toEqual([]);
+  });
+
+  it("makes nothing for the content machine: provision and activate refuse it before any call, whatever else the config holds", async () => {
+    const { type, calls, fake, secrets, book } = setup();
+    secrets.setToken(TOKEN);
+    const soon = "The content machine runs on a megatech machine. It needs a megatech sign-in, and sign-up is coming soon.";
+    for (const machine of [{ ...config, machine: "content" }, { place: "hosted", machine: "content" }, { machine: "content" }]) {
+      await expect(type.remote.provision(provisionInput({ config: machine }))).rejects.toThrow(soon);
+      await expect(type.remote.activate(activateInput("a".repeat(64), { config: machine }))).rejects.toThrow(soon);
+    }
+    await expect(type.remote.provision(provisionInput({ config: { ...config, machine: "other" } }))).rejects.toThrow("Choose which agent to make.");
+    expect(calls).toEqual([]);
+    expect(fake.calls()).toEqual([]);
+    expect(fake.state().containers).toEqual({});
+    expect(book.get("a".repeat(64))).toBeUndefined();
   });
 
   it("says so in the web build, which cannot start a program", async () => {
